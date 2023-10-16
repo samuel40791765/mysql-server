@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -172,7 +172,7 @@ static inline int ut_ulint_cmp(ulint a, ulint b);
 /** Calculates fast the 2-logarithm of a number, rounded upward to an
  integer.
  @return logarithm in the base 2, rounded upward */
-static inline ulint ut_2_log(ulint n); /*!< in: number */
+constexpr ulint ut_2_log(ulint n); /*!< in: number */
 
 /** Calculates 2 to power n.
 @param[in]      n       power of 2
@@ -295,7 +295,7 @@ namespace ib {
 
 /** For measuring time elapsed. Since std::chrono::high_resolution_clock
 may be influenced by a change in system time, it might not be steady.
-So we use std::chrono::steady_clock for ellapsed time. */
+So we use std::chrono::steady_clock for elapsed time. */
 class Timer {
  public:
   using SC = std::chrono::steady_clock;

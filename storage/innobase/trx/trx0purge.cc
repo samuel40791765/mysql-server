@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -43,6 +43,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "fsp0types.h"
 #include "fut0fut.h"
 #include "ha_prototypes.h"
+#include "log0buf.h"
+#include "log0chkp.h"
 #include "mach0data.h"
 #include "mtr0log.h"
 #include "my_compiler.h"
@@ -218,13 +220,12 @@ void trx_purge_sys_mem_create() {
   new (&purge_sys->iter) purge_iter_t;
   new (&purge_sys->limit) purge_iter_t;
   new (&purge_sys->undo_trunc) undo::Truncate;
-  new (&purge_sys->thds) ut::unordered_set<THD *>;
   new (&purge_sys->rsegs_queue) std::vector<trx_rseg_t *>;
 #ifdef UNIV_DEBUG
   new (&purge_sys->done) purge_iter_t;
 #endif /* UNIV_DEBUG */
 
-  rw_lock_create(trx_purge_latch_key, &purge_sys->latch, SYNC_PURGE_LATCH);
+  rw_lock_create(trx_purge_latch_key, &purge_sys->latch, LATCH_ID_TRX_PURGE);
 
   mutex_create(LATCH_ID_PURGE_SYS_PQ, &purge_sys->pq_mutex);
 
@@ -299,7 +300,6 @@ void trx_purge_sys_close() {
 
   ut::delete_(purge_sys->rseg_iter);
 
-  call_destructor(&purge_sys->thds);
   call_destructor(&purge_sys->undo_trunc);
   call_destructor(&purge_sys->rsegs_queue);
 
@@ -875,11 +875,9 @@ void Tablespace::set_file_name(const char *file_name) {
   m_file_name[len] = '\0';
 }
 
-/** Populate log file name based on space_id
-@param[in]      space_id        id of the undo tablespace.
-@return DB_SUCCESS or error code */
-char *Tablespace::make_log_file_name(space_id_t space_id) {
-  size_t size = strlen(srv_log_group_home_dir) + 22 + 1 /* NUL */
+char *Tablespace::make_log_file_name(space_id_t space_id,
+                                     const char *location) {
+  size_t size = strlen(location) + 22 + 1 /* NUL */
                 + strlen(undo::s_log_prefix) + strlen(undo::s_log_ext);
 
   char *name =
@@ -887,7 +885,7 @@ char *Tablespace::make_log_file_name(space_id_t space_id) {
 
   memset(name, 0, size);
 
-  strcpy(name, srv_log_group_home_dir);
+  strcpy(name, location);
   ulint len = strlen(name);
 
   if (name[len - 1] != OS_PATH_SEPARATOR) {
@@ -1043,14 +1041,22 @@ bool is_active_truncate_log_present(space_id_t space_num) {
   /* Calling id2num(space_num) will return the first space_id for this
   space_num. That is good enough since we only need the log_file_name. */
   Tablespace undo_space(id2num(space_num));
+
+  /* The truncation log file location changed to a new default location.
+  Check if it exists in either location. */
   char *log_file_name = undo_space.log_file_name();
+  if (!os_file_exists(log_file_name)) {
+    log_file_name = undo_space.log_file_name_old();
+    if (!os_file_exists(log_file_name)) {
+      log_file_name = nullptr;
+    }
+  }
 
   /* If the log file exists, check it for presence of magic
   number.  If found, then delete the file and report file
   doesn't exist as presence of magic number suggest that
   truncate action was complete. */
-
-  if (os_file_exists(log_file_name)) {
+  if (log_file_name != nullptr) {
     bool ret;
     pfs_os_file_t handle = os_file_create_simple_no_error_handling(
         innodb_log_file_key, log_file_name, OS_FILE_OPEN, OS_FILE_READ_WRITE,
@@ -1115,7 +1121,7 @@ void add_space_to_construction_list(space_id_t space_id) {
 /** Clear the s_under_construction vector. */
 void clear_construction_list() { s_under_construction.clear(); }
 
-/** Is an undo tablespace under constuction at the moment.
+/** Is an undo tablespace under construction at the moment.
 @param[in]      space_id        space id to check
 @return true if marked for truncate, else false. */
 bool is_under_construction(space_id_t space_id) {
@@ -2273,7 +2279,7 @@ static ulint trx_purge_attach_undo_recs(const ulint n_purge_threads,
   Purge_groups_t purge_groups(n_purge_threads, heap);
   purge_groups.init();
 
-  for (ulint i = 0; n_pages_handled < batch_size; ++i) {
+  while (n_pages_handled < batch_size) {
     /* Track the max {trx_id, undo_no} for truncating the
     UNDO logs once we have purged the records. */
 
@@ -2417,40 +2423,23 @@ ulint trx_purge(ulint n_purge_threads, /*!< in: number of purge tasks
   /* Fetch the UNDO recs that need to be purged. */
   n_pages_handled = trx_purge_attach_undo_recs(n_purge_threads, batch_size);
 
-  /* Do we do an asynchronous purge or not ? */
-  if (n_purge_threads > 1) {
-    /* Submit the tasks to the work queue. */
-    for (ulint i = 0; i < n_purge_threads - 1; ++i) {
-      thr = que_fork_scheduler_round_robin(purge_sys->query, thr);
-
-      ut_a(thr != nullptr);
-
-      srv_que_task_enqueue_low(thr);
-    }
-
+  /* Submit the tasks to the work queue. */
+  for (ulint i = 0; i < n_purge_threads - 1; ++i) {
     thr = que_fork_scheduler_round_robin(purge_sys->query, thr);
+
     ut_a(thr != nullptr);
 
-    purge_sys->n_submitted += n_purge_threads - 1;
-
-    goto run_synchronously;
-
-    /* Do it synchronously. */
-  } else {
-    thr = que_fork_scheduler_round_robin(purge_sys->query, nullptr);
-    ut_ad(thr);
-
-  run_synchronously:
-    ++purge_sys->n_submitted;
-
-    que_run_threads(thr);
-
-    purge_sys->n_completed.fetch_add(1);
-
-    if (n_purge_threads > 1) {
-      trx_purge_wait_for_workers_to_complete();
-    }
+    srv_que_task_enqueue_low(thr);
   }
+
+  thr = que_fork_scheduler_round_robin(purge_sys->query, thr);
+  ut_a(thr != nullptr);
+
+  purge_sys->n_submitted += n_purge_threads - 1;
+
+  que_run_threads(thr);
+
+  trx_purge_wait_for_workers_to_complete();
 
   ut_a(purge_sys->n_submitted == purge_sys->n_completed);
 
@@ -2615,7 +2604,7 @@ void undo::Tablespaces::init() {
   m_latch = static_cast<rw_lock_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*m_latch)));
 
-  rw_lock_create(undo_spaces_lock_key, m_latch, SYNC_UNDO_SPACES);
+  rw_lock_create(undo_spaces_lock_key, m_latch, LATCH_ID_UNDO_SPACES);
 
   mutex_create(LATCH_ID_UNDO_DDL, &ddl_mutex);
 }

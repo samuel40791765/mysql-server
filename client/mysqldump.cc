@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -38,7 +38,6 @@
 
 #include "client/client_priv.h"
 #include "compression.h"
-#include "m_ctype.h"
 #include "m_string.h"
 #include "map_helpers.h"
 #include "my_compiler.h"
@@ -53,11 +52,16 @@
 #include "my_user.h"
 #include "mysql.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_version.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "prealloced_array.h"
 #include "print_version.h"
 #include "scope_guard.h"
+#include "string_with_len.h"
+#include "strmake.h"
+#include "strxmov.h"
 #include "template_utils.h"
 #include "typelib.h"
 #include "welcome_copyright_notice.h" /* ORACLE_WELCOME_COPYRIGHT_NOTICE */
@@ -93,6 +97,12 @@
 
 /* Maximum number of fields per table */
 #define MAX_FIELDS 4000
+
+/* One year in seconds */
+#define LONG_TIMEOUT (3600UL * 24UL * 365UL)
+
+/*  First mysql version supporting column statistics. */
+#define FIRST_COLUMN_STATISTICS_VERSION 80002
 
 using std::string;
 
@@ -153,10 +163,13 @@ static uint opt_enable_cleartext_plugin = 0;
 static bool using_opt_enable_cleartext_plugin = false;
 static uint opt_mysql_port = 0, opt_master_data;
 static uint opt_slave_data;
+static ulong opt_long_query_time = 0;
+static bool long_query_time_opt_provided = false;
 static uint my_end_arg;
 static char *opt_mysql_unix_port = nullptr;
 static char *opt_bind_addr = nullptr;
 static int first_error = 0;
+#include "authentication_kerberos_clientopt-vars.h"
 #include "caching_sha2_passwordopt-vars.h"
 #include "multi_factor_passwordopt-vars.h"
 #include "sslopt-vars.h"
@@ -181,6 +194,7 @@ static char *shared_memory_base_name = 0;
 #endif
 static uint opt_protocol = 0;
 static char *opt_plugin_dir = nullptr, *opt_default_auth = nullptr;
+static bool opt_skip_gipk = false;
 
 Prealloced_array<uint, 12> ignore_error(PSI_NOT_INSTRUMENTED);
 static int parse_ignore_error();
@@ -444,6 +458,11 @@ static struct my_option my_long_options[] = {
      "Append warnings and errors to given file.", &log_error_file,
      &log_error_file, nullptr, GET_STR, REQUIRED_ARG, 0, 0, 0, nullptr, 0,
      nullptr},
+    {"mysqld-long-query-time", OPT_LONG_QUERY_TIME,
+     "Set long_query_time for the session of this dump. Ommitting flag means "
+     "using the server value.",
+     &opt_long_query_time, &opt_long_query_time, nullptr, GET_ULONG,
+     REQUIRED_ARG, 0, 0, LONG_TIMEOUT, nullptr, 0, nullptr},
     {"source-data", OPT_SOURCE_DATA,
      "This causes the binary log position and filename to be appended to the "
      "output. If equal to 1, will print it as a CHANGE MASTER command; if equal"
@@ -643,6 +662,12 @@ static struct my_option my_long_options[] = {
      "inclusive. Default is 3.",
      &opt_zstd_compress_level, &opt_zstd_compress_level, nullptr, GET_UINT,
      REQUIRED_ARG, 3, 1, 22, nullptr, 0, nullptr},
+    {"skip-generated-invisible-primary-key", 0,
+     "Controls whether generated invisible primary key and key column should "
+     "be dumped or not.",
+     &opt_skip_gipk, &opt_skip_gipk, nullptr, GET_BOOL, NO_ARG, 0, 0, 0,
+     nullptr, 0, nullptr},
+#include "authentication_kerberos_clientopt-longopts.h"
     {nullptr, 0, nullptr, nullptr, nullptr, nullptr, GET_NO_ARG, NO_ARG, 0, 0,
      0, nullptr, 0, nullptr}};
 
@@ -668,6 +693,7 @@ bool is_infoschema_db(const char *db);
 static char *primary_key_fields(const char *table_name);
 static bool get_view_structure(char *table, char *db);
 static bool dump_all_views_in_db(char *database);
+static bool get_gtid_mode(MYSQL *mysql_con);
 static int dump_all_tablespaces();
 static int dump_tablespaces_for_tables(char *db, char **table_names,
                                        int tables);
@@ -879,6 +905,8 @@ static bool get_one_option(int optid, const struct my_option *opt,
       break;
 #include "sslopt-case.h"
 
+#include "authentication_kerberos_clientopt-case.h"
+
     case 'V':
       print_version();
       exit(0);
@@ -981,6 +1009,12 @@ static bool get_one_option(int optid, const struct my_option *opt,
     case (int)OPT_MYSQLDUMP_IGNORE_ERROR:
       /* Store the supplied list of errors into an array. */
       if (parse_ignore_error()) exit(EX_EOM);
+      break;
+    case (int)OPT_LONG_QUERY_TIME:
+      long_query_time_opt_provided = true;
+      break;
+    case 'C':
+      CLIENT_WARN_DEPRECATED("--compress", "--compression-algorithms");
       break;
   }
   return false;
@@ -1222,8 +1256,8 @@ static char *my_case_str(char *str, size_t str_len, const char *token,
                          size_t token_len) {
   my_match_t match;
 
-  uint status = my_charset_latin1.coll->strstr(&my_charset_latin1, str, str_len,
-                                               token, token_len, &match, 1);
+  const uint status = my_charset_latin1.coll->strstr(
+      &my_charset_latin1, str, str_len, token, token_len, &match, 1);
 
   return status ? str + match.end : nullptr;
 }
@@ -1574,6 +1608,14 @@ static int connect_to_db(char *host, char *user) {
   set_get_server_public_key_option(&mysql_connection);
   set_password_options(&mysql_connection);
 
+#if defined(_WIN32)
+  char error[256]{0};
+  if (set_authentication_kerberos_client_mode(&mysql_connection, error, 255)) {
+    fprintf(stderr, "%s", error);
+    return 1;
+  }
+#endif /* _WIN32 */
+
   if (opt_compress_algorithm)
     mysql_options(&mysql_connection, MYSQL_OPT_COMPRESSION_ALGORITHMS,
                   opt_compress_algorithm);
@@ -1660,12 +1702,26 @@ static int connect_to_db(char *host, char *user) {
   /*
     set network read/write timeout value to a larger value to allow tables with
     large data to be sent on network without causing connection lost error due
-    to timeout
+    to timeout.
+    Additionally set long_query_time value for mysqldump session in the same
+    query to possibly reduce one RTT.
   */
-  if (opt_network_timeout) {
-    snprintf(buff, sizeof(buff),
-             "SET SESSION NET_READ_TIMEOUT= 86400, "
-             "SESSION NET_WRITE_TIMEOUT= 86400 ");  // 1 day in seconds
+  if (opt_network_timeout || long_query_time_opt_provided) {
+    size_t len = snprintf(buff, sizeof(buff), "SET ");
+    if (opt_network_timeout) {
+      len += snprintf(buff + len, sizeof(buff) - len,
+                      "SESSION NET_READ_TIMEOUT= 86400, "
+                      "SESSION NET_WRITE_TIMEOUT= 86400");  // 1 day in seconds
+      if (long_query_time_opt_provided) {
+        // delimiter needed for appending next variable
+        len += snprintf(buff + len, sizeof(buff) - len, ", ");
+      }
+    }
+    if (long_query_time_opt_provided) {
+      // add snprintf result to len if new option gets added in the same request
+      snprintf(buff + len, sizeof(buff) - len, "SESSION long_query_time=%lu",
+               opt_long_query_time);
+    }
     if (mysql_query_with_error_report(mysql, nullptr, buff)) return 1;
   }
 
@@ -1673,6 +1729,13 @@ static int connect_to_db(char *host, char *user) {
       mysql_query_with_error_report(
           mysql, nullptr,
           "/*!80018 SET SESSION show_create_table_skip_secondary_engine=1 */"))
+    return 1;
+
+  if (opt_skip_gipk &&
+      mysql_query_with_error_report(
+          mysql, nullptr,
+          "/*!80030 SET SESSION "
+          "show_gipk_in_create_table_and_information_schema = OFF */"))
     return 1;
 
   return 0;
@@ -1726,7 +1789,7 @@ static bool test_if_special_chars(const char *str) {
 */
 static char *quote_name(char *name, char *buff, bool force) {
   char *to = buff;
-  char qtype = ansi_quotes_mode ? '"' : '`';
+  const char qtype = ansi_quotes_mode ? '"' : '`';
 
   if (!force && !opt_quoted && !test_if_special_chars(name)) return name;
   *to++ = qtype;
@@ -3365,7 +3428,7 @@ static int dump_trigger(FILE *sql_file, MYSQL_RES *show_create_trigger_rs,
 static int dump_triggers_for_table(char *table_name, char *db_name) {
   char name_buff[NAME_LEN * 4 + 3];
   char query_buff[QUERY_LENGTH];
-  bool old_ansi_quotes_mode = ansi_quotes_mode;
+  const bool old_ansi_quotes_mode = ansi_quotes_mode;
   MYSQL_RES *show_triggers_rs;
   MYSQL_ROW row;
   FILE *sql_file = md_result_file;
@@ -3457,7 +3520,7 @@ static bool dump_column_statistics_for_table(char *table_name, char *db_name) {
   char name_buff[NAME_LEN * 4 + 3];
   char column_buffer[NAME_LEN * 4 + 3];
   char query_buff[QUERY_LENGTH * 3 / 2];
-  bool old_ansi_quotes_mode = ansi_quotes_mode;
+  const bool old_ansi_quotes_mode = ansi_quotes_mode;
   char *quoted_table;
   MYSQL_RES *column_statistics_rs;
   MYSQL_ROW row;
@@ -3843,6 +3906,7 @@ static void dump_table(char *table, char *db) {
     while ((row = mysql_fetch_row(res))) {
       uint i;
       ulong *lengths = mysql_fetch_lengths(res);
+      bool first_column = true;
       rownr++;
       if (!extended_insert && !opt_xml) {
         fputs(insert_pat.str, md_result_file);
@@ -3857,7 +3921,7 @@ static void dump_table(char *table, char *db) {
 
       for (i = 0; i < mysql_num_fields(res); i++) {
         int is_blob;
-        ulong length = lengths[i];
+        const ulong length = lengths[i];
 
         if (!(field = mysql_fetch_field(res)))
           die(EX_CONSCHECK, "Not enough fields from table %s! Aborting.\n",
@@ -3881,9 +3945,10 @@ static void dump_table(char *table, char *db) {
                 ? 1
                 : 0;
         if (extended_insert && !opt_xml) {
-          if (i == 0)
+          if (first_column) {
             dynstr_set_checked(&extended_row, "(");
-          else
+            first_column = false;
+          } else
             dynstr_append_checked(&extended_row, ",");
 
           if (row[i]) {
@@ -4570,7 +4635,7 @@ static int dump_all_tables_in_db(char *database) {
   char hash_key[2 * NAME_LEN + 2]; /* "db.tablename" */
   char *afterdot;
   bool general_log_table_exists = false, slow_log_table_exists = false;
-  int using_mysql_db = !my_strcasecmp(charset_info, database, "mysql");
+  const int using_mysql_db = !my_strcasecmp(charset_info, database, "mysql");
   bool real_columns[MAX_FIELDS];
 
   DBUG_TRACE;
@@ -4802,7 +4867,7 @@ static char *get_actual_table_name(const char *old_table_name, MEM_ROOT *root) {
   if (mysql_query_with_error_report(mysql, nullptr, query)) return NullS;
 
   if ((table_res = mysql_store_result(mysql))) {
-    uint64_t num_rows = mysql_num_rows(table_res);
+    const uint64_t num_rows = mysql_num_rows(table_res);
     if (num_rows > 0) {
       ulong *lengths;
       /*
@@ -5338,7 +5403,7 @@ static char *primary_key_fields(const char *table_name) {
   size_t result_length = 0;
   char *result = nullptr;
   char buff[NAME_LEN * 2 + 3];
-  char *quoted_field;
+  char *order_by_part;
 
   snprintf(show_keys_buff, sizeof(show_keys_buff), "SHOW KEYS FROM %s",
            table_name);
@@ -5358,31 +5423,67 @@ static char *primary_key_fields(const char *table_name) {
    * row, and UNIQUE keys come before others.  So we only need to check
    * the first key, not all keys.
    */
-  if ((row = mysql_fetch_row(res)) && atoi(row[1]) == 0) {
-    /* Key is unique */
-    do {
-      quoted_field = quote_name(row[4], buff, false);
-      result_length += strlen(quoted_field) + 1; /* + 1 for ',' or \0 */
-    } while ((row = mysql_fetch_row(res)) && atoi(row[3]) > 1);
+  while (nullptr != (row = mysql_fetch_row(res))) {
+    unsigned braces_length = 0;
+    if (!row[3] || !*row[3]) {
+      fprintf(stderr,
+              "Warning: Couldn't read key column index from table %s. "
+              "Inspect the output from 'SHOW KEYS FROM %s. "
+              "Records are probably not fully sorted.'\n",
+              table_name, table_name);
+      continue;
+    }
+    if (atoi(row[3]) < 1) break;
+    if (row[4] && *row[4]) order_by_part = quote_name(row[4], buff, false);
+#ifdef USABLE_EXPR_IN_SHOW_INDEX_BUG35273994
+    else if (mysql_num_fields(res) > 14 && row[14] &&
+             *row[14]) /* there's an Expression column */
+    {
+      order_by_part = row[14];
+      braces_length = 2;
+    }
+#endif
+    else {
+      fprintf(
+          stderr,
+          "Warning: Couldn't read key column name or expression from table %s;"
+          " position %d. Inspect the output from 'SHOW KEYS FROM %s."
+          " Records are probably not fully sorted.\n",
+          table_name, atoi(row[3]), table_name);
+      continue;
+    }
+    result_length +=
+        strlen(order_by_part) + braces_length + 1; /* + 1 for ',' or \0 */
   }
 
   /* Build the ORDER BY clause result */
   if (result_length) {
-    char *end;
     /* result (terminating \0 is already in result_length) */
-    result = static_cast<char *>(
+    char *end = result = static_cast<char *>(
         my_malloc(PSI_NOT_INSTRUMENTED, result_length + 10, MYF(MY_WME)));
     if (!result) {
       fprintf(stderr, "Error: Not enough memory to store ORDER BY clause\n");
       goto cleanup;
     }
     mysql_data_seek(res, 0);
-    row = mysql_fetch_row(res);
-    quoted_field = quote_name(row[4], buff, false);
-    end = my_stpcpy(result, quoted_field);
-    while ((row = mysql_fetch_row(res)) && atoi(row[3]) > 1) {
-      quoted_field = quote_name(row[4], buff, false);
-      end = strxmov(end, ",", quoted_field, NullS);
+    while (nullptr != (row = mysql_fetch_row(res))) {
+      unsigned braces_length = 0;
+      if (!row[3] || !*row[3]) continue;
+      if (atoi(row[3]) < 1) break;
+      if (row[4] && *row[4]) order_by_part = quote_name(row[4], buff, false);
+#ifdef USABLE_EXPR_IN_SHOW_INDEX_BUG35273994
+      else if (mysql_num_fields(res) > 14 && row[14] && *row[14]) {
+        order_by_part = row[14];
+        braces_length = 2;
+      }
+#endif
+      else
+        continue;
+      if (end != result) end = my_stpcpy(end, ",");
+      if (braces_length)
+        end = strxmov(end, "(", order_by_part, ")", NullS);
+      else
+        end = my_stpcpy(end, order_by_part);
     }
   }
 
@@ -5421,6 +5522,38 @@ static int replace(DYNAMIC_STRING *ds_str, const char *search_str,
   dynstr_set_checked(ds_str, ds_tmp.str);
   dynstr_free(&ds_tmp);
   return 0;
+}
+
+/**
+  This function checks if GTIDs are enabled on the server.
+
+  @param[in]          mysql_con         the connection to the server
+
+  @retval             true              if GTIDs are enabled on the server
+
+  @retval             false             if GTIDs are disabled on the server
+*/
+static bool get_gtid_mode(MYSQL *mysql_con) {
+  MYSQL_RES *gtid_mode_res;
+  MYSQL_ROW gtid_mode_row;
+  bool gtid_mode = false;
+  char *gtid_mode_val = nullptr;
+
+  if (mysql_query_with_error_report(mysql_con, &gtid_mode_res,
+                                    "SHOW VARIABLES LIKE 'gtid_mode'"))
+    return false;
+
+  gtid_mode_row = mysql_fetch_row(gtid_mode_res);
+
+  /*
+     gtid_mode_row is NULL for pre 5.6 versions. For versions >= 5.6,
+     get the gtid_mode value from the second column.
+  */
+  gtid_mode_val = gtid_mode_row ? (char *)gtid_mode_row[1] : nullptr;
+  gtid_mode = (gtid_mode_val && strcmp(gtid_mode_val, "OFF")) ? true : false;
+  mysql_free_result(gtid_mode_res);
+
+  return gtid_mode;
 }
 
 /**
@@ -5511,39 +5644,18 @@ static bool add_set_gtid_purged(MYSQL *mysql_con) {
 
   @param[in]          mysql_con     the connection to the server
 
+  @param[in]          is_gtid_enabled  true if server has gtid_mode on
+
   @retval             false         successful according to the value
                                     of opt_set_gtid_purged.
   @retval             true          fail.
 */
 
-static bool process_set_gtid_purged(MYSQL *mysql_con) {
-  MYSQL_RES *gtid_mode_res;
-  MYSQL_ROW gtid_mode_row;
-  char *gtid_mode_val = nullptr;
-  char buf[32], query[64];
-
+static bool process_set_gtid_purged(MYSQL *mysql_con, bool is_gtid_enabled) {
   if (opt_set_gtid_purged_mode == SET_GTID_PURGED_OFF)
     return false; /* nothing to be done */
 
-  /*
-    Check if the server has the knowledge of GTIDs(pre mysql-5.6)
-    or if the gtid_mode is ON or OFF.
-  */
-  snprintf(query, sizeof(query), "SHOW VARIABLES LIKE %s",
-           quote_for_like("gtid_mode", buf));
-
-  if (mysql_query_with_error_report(mysql_con, &gtid_mode_res, query))
-    return true;
-
-  gtid_mode_row = mysql_fetch_row(gtid_mode_res);
-
-  /*
-     gtid_mode_row is NULL for pre 5.6 versions. For versions >= 5.6,
-     get the gtid_mode value from the second column.
-  */
-  gtid_mode_val = gtid_mode_row ? (char *)gtid_mode_row[1] : nullptr;
-
-  if (gtid_mode_val && strcmp(gtid_mode_val, "OFF")) {
+  if (is_gtid_enabled) {
     /*
        For any gtid_mode !=OFF and irrespective of --set-gtid-purged
        being AUTO or ON,  add GTID_PURGED in the output.
@@ -5559,9 +5671,21 @@ static bool process_set_gtid_purged(MYSQL *mysql_con) {
               "--all-databases --triggers --routines --events. \n");
     }
 
+    if (!opt_single_transaction && !opt_lock_all_tables && !opt_master_data) {
+      fprintf(stderr,
+              "Warning: A dump from a server that has GTIDs "
+              "enabled will by default include the GTIDs "
+              "of all transactions, even those that were "
+              "executed during its extraction and might "
+              "not be represented in the dumped data. "
+              "This might result in an inconsistent data dump. \n"
+              "In order to ensure a consistent backup of the "
+              "database, pass --single-transaction or "
+              "--lock-all-tables or --master-data. \n");
+    }
+
     set_session_binlog(false);
     if (add_set_gtid_purged(mysql_con)) {
-      mysql_free_result(gtid_mode_res);
       return true;
     }
   } else /* gtid_mode is off */
@@ -5569,12 +5693,10 @@ static bool process_set_gtid_purged(MYSQL *mysql_con) {
     if (opt_set_gtid_purged_mode == SET_GTID_PURGED_ON ||
         opt_set_gtid_purged_mode == SET_GTID_PURGED_COMMENTED) {
       fprintf(stderr, "Error: Server has GTIDs disabled.\n");
-      mysql_free_result(gtid_mode_res);
       return true;
     }
   }
 
-  mysql_free_result(gtid_mode_res);
   return false;
 }
 
@@ -5804,6 +5926,8 @@ static void dynstr_realloc_checked(DYNAMIC_STRING *str,
 }
 
 int main(int argc, char **argv) {
+  bool server_with_gtids_and_opt_purge_not_off = false;
+  bool server_has_gtid_enabled = false;
   char bin_log_name[FN_REFLEN];
   int exit_code, md_result_fd = 0;
   MY_INIT("mysqldump");
@@ -5839,8 +5963,15 @@ int main(int argc, char **argv) {
 
   if (opt_slave_data && do_stop_slave_sql(mysql)) goto err;
 
+  server_has_gtid_enabled = get_gtid_mode(mysql);
+
+  server_with_gtids_and_opt_purge_not_off =
+      (server_has_gtid_enabled &&
+       (opt_set_gtid_purged_mode != SET_GTID_PURGED_OFF));
+
   if ((opt_lock_all_tables || opt_master_data ||
-       (opt_single_transaction && flush_logs)) &&
+       (opt_single_transaction &&
+        (flush_logs || server_with_gtids_and_opt_purge_not_off))) &&
       do_flush_tables_read_lock(mysql))
     goto err;
 
@@ -5849,7 +5980,9 @@ int main(int argc, char **argv) {
     this causes implicit commit starting mysql-5.5.
   */
   if (opt_lock_all_tables || opt_master_data ||
-      (opt_single_transaction && flush_logs) || opt_delete_master_logs) {
+      (opt_single_transaction &&
+       (flush_logs || server_with_gtids_and_opt_purge_not_off)) ||
+      opt_delete_master_logs) {
     if (flush_logs || opt_delete_master_logs) {
       if (mysql_refresh(mysql, REFRESH_LOG)) {
         DB_error(mysql, "when doing refresh");
@@ -5866,6 +5999,7 @@ int main(int argc, char **argv) {
     if (get_bin_log_name(mysql, bin_log_name, sizeof(bin_log_name))) goto err;
   }
 
+  /* Start the transaction */
   if (opt_single_transaction && start_transaction(mysql)) goto err;
 
   /* Add 'STOP SLAVE to beginning of dump */
@@ -5873,13 +6007,20 @@ int main(int argc, char **argv) {
 
   /* Process opt_set_gtid_purged and add SET @@GLOBAL.GTID_PURGED if required.
    */
-  if (process_set_gtid_purged(mysql)) goto err;
+  if (process_set_gtid_purged(mysql, server_has_gtid_enabled)) goto err;
 
   if (opt_master_data && do_show_master_status(mysql)) goto err;
   if (opt_slave_data && do_show_slave_status(mysql)) goto err;
   if (opt_single_transaction &&
       do_unlock_tables(mysql)) /* unlock but no commit! */
     goto err;
+
+  if (column_statistics &&
+      mysql_get_server_version(mysql) < FIRST_COLUMN_STATISTICS_VERSION) {
+    column_statistics = false;
+    fprintf(stderr,
+            "-- Warning: column statistics not supported by the server.\n");
+  }
 
   if (opt_alltspcs) dump_all_tablespaces();
 
@@ -5892,7 +6033,7 @@ int main(int argc, char **argv) {
     // that escaped name will be not longer than NAME_LEN*2 + 2 bytes long.
     int argument;
     for (argument = 0; argument < argc; argument++) {
-      size_t argument_length = strlen(argv[argument]);
+      const size_t argument_length = strlen(argv[argument]);
       if (argument_length > NAME_LEN) {
         die(EX_CONSCHECK,
             "[ERROR] Argument '%s' is too long, it cannot be "

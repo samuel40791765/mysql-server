@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2004, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,7 +29,6 @@
 #include <string>
 #include <utility>
 
-#include "m_ctype.h"
 #include "m_string.h"
 #include "my_base.h"
 #include "my_compiler.h"
@@ -38,6 +37,7 @@
 #include "my_psi_config.h"
 #include "my_sys.h"
 #include "mysql/psi/mysql_sp.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
 #include "sql/auth/auth_acls.h"
@@ -68,6 +68,7 @@
 #include "sql/table_trigger_dispatcher.h"  // Table_trigger_dispatcher
 #include "sql/transaction.h"               // trans_commit_stmt, trans_commit
 #include "sql_string.h"
+#include "string_with_len.h"
 #include "thr_lock.h"
 
 namespace dd {
@@ -77,7 +78,7 @@ class Schema;
 
 bool get_table_for_trigger(THD *thd, const LEX_CSTRING &db_name,
                            const LEX_STRING &trigger_name,
-                           bool continue_if_not_exist, TABLE_LIST **table) {
+                           bool continue_if_not_exist, Table_ref **table) {
   DBUG_TRACE;
   LEX *lex = thd->lex;
   *table = nullptr;
@@ -130,7 +131,7 @@ bool get_table_for_trigger(THD *thd, const LEX_CSTRING &db_name,
 
   size_t table_name_length = strlen(table_name_ptr);
 
-  *table = new (thd->mem_root) TABLE_LIST(
+  *table = new (thd->mem_root) Table_ref(
       thd->strmake(db_name.str, db_name.length), db_name.length,
       thd->strmake(table_name_ptr, table_name_length), table_name_length,
       thd->mem_strdup(table_name_ptr), TL_IGNORE, MDL_SHARED_NO_WRITE);
@@ -222,8 +223,8 @@ bool acquire_mdl_for_trigger(THD *thd, const char *db, const char *trg_name,
 */
 
 bool Sql_cmd_ddl_trigger_common::check_trg_priv_on_subj_table(
-    THD *thd, TABLE_LIST *table) const {
-  TABLE_LIST **save_query_tables_own_last = thd->lex->query_tables_own_last;
+    THD *thd, Table_ref *table) const {
+  Table_ref **save_query_tables_own_last = thd->lex->query_tables_own_last;
   thd->lex->query_tables_own_last = nullptr;
 
   bool err_status =
@@ -245,7 +246,7 @@ bool Sql_cmd_ddl_trigger_common::check_trg_priv_on_subj_table(
 */
 
 TABLE *Sql_cmd_ddl_trigger_common::open_and_lock_subj_table(
-    THD *thd, TABLE_LIST *tables, MDL_ticket **mdl_ticket) const {
+    THD *thd, Table_ref *tables, MDL_ticket **mdl_ticket) const {
   /* We should have only one table in table list. */
   assert(tables->next_global == nullptr);
 
@@ -420,6 +421,15 @@ bool Sql_cmd_create_trigger::execute(THD *thd) {
   TABLE *table = open_and_lock_subj_table(thd, m_trigger_table, &mdl_ticket);
   if (table == nullptr) return true;
 
+  /* We don't allow creating triggers on external tables */
+  if ((table->file->ht->flags & HTON_NO_TRIGGER_SUPPORT) != 0U) {
+    std::string errorMsg =
+        "by " + std::string(ha_resolve_storage_engine_name(table->file->ht));
+    my_error(ER_FEATURE_UNSUPPORTED, MYF(0), "TRIGGER", errorMsg.c_str());
+    restore_original_mdl_state(thd, mdl_ticket);
+    return true;
+  }
+
   if (acquire_exclusive_mdl_for_trigger(thd, thd->lex->spname->m_db.str,
                                         thd->lex->spname->m_name.str)) {
     restore_original_mdl_state(thd, mdl_ticket);
@@ -510,7 +520,7 @@ bool Sql_cmd_drop_trigger::execute(THD *thd) {
   String stmt_query;
   stmt_query.set_charset(system_charset_info);
 
-  TABLE_LIST *tables = nullptr;
+  Table_ref *tables = nullptr;
   if (get_table_for_trigger(thd, thd->lex->spname->m_db,
                             thd->lex->spname->m_name, thd->lex->drop_if_exists,
                             &tables))

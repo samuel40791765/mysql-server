@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -38,7 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "dict0dd.h"
 #include "dict0dict.h"
 #include "ibuf0ibuf.h"
-#include "log0log.h"
+#include "log0chkp.h"
 #include "mach0data.h"
 #include "que0que.h"
 #include "row0log.h"
@@ -56,7 +56,7 @@ IMPORTANT NOTE: Any operation that generates redo MUST check that there
 is enough space in the redo log before for that operation. This is
 done by calling log_free_check(). The reason for checking the
 availability of the redo log space before the start of the operation is
-that we MUST not hold any synchonization objects when performing the
+that we MUST not hold any synchronization objects when performing the
 check.
 If you make a change in this module make sure that no codepath is
 introduced where a call to log_free_check() is bypassed. */
@@ -109,8 +109,8 @@ introduced where a call to log_free_check() is bypassed. */
   if (online && dict_index_is_online_ddl(index)) {
     const rec_t *rec = btr_cur_get_rec(btr_cur);
     mem_heap_t *heap = nullptr;
-    const ulint *offsets =
-        rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+    const ulint *offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                                           UT_LOCATION_HERE, &heap);
     row_log_table_delete(rec, node->row, index, offsets, nullptr);
     mem_heap_free(heap);
   }

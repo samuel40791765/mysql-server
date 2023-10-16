@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -371,8 +371,12 @@ dberr_t Merge_file_sort::Output_file::flush() noexcept {
   /* Start writing the next page from the start. */
   m_ptr = m_buffer.first;
 
-  IF_ENABLED("ddl_merge_sort_interrupt", ut_a(err == DB_SUCCESS);
-             m_interrupt_check = TRX_INTERRUPTED_CHECK;);
+#ifdef UNIV_DEBUG
+  if (Sync_point::enabled(m_ctx.thd(), "ddl_merge_sort_interrupt")) {
+    ut_a(err == DB_SUCCESS);
+    m_interrupt_check = TRX_INTERRUPTED_CHECK;
+  }
+#endif
 
   if (err == DB_SUCCESS && !(m_interrupt_check++ % TRX_INTERRUPTED_CHECK) &&
       m_ctx.is_interrupted()) {
@@ -475,14 +479,16 @@ dberr_t Merge_file_sort::sort(Builder *builder,
   const auto n_buffers = (m_merge_ctx->m_n_threads * N_WAY_MERGE) + 1;
   const auto io_buffer_size = ctx.merge_io_buffer_size(n_buffers);
 
-  Aligned_buffer aligned_buffer{};
+  ut::unique_ptr_aligned<byte[]> aligned_buffer =
+      ut::make_unique_aligned<byte[]>(ut::make_psi_memory_key(mem_key_ddl),
+                                      UNIV_SECTOR_SIZE, io_buffer_size);
 
-  if (!aligned_buffer.allocate(io_buffer_size)) {
+  if (!aligned_buffer) {
     return DB_OUT_OF_MEMORY;
   }
 
   /* Buffer for writing the merged rows to the output file. */
-  auto io_buffer = aligned_buffer.io_buffer();
+  IO_buffer io_buffer{aligned_buffer.get(), io_buffer_size};
 
   /* This is the output file for the first pass. */
   auto tmpfd = ddl::file_create_low(builder->tmpdir());

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2012, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -546,6 +546,14 @@ extern void popp(task_env *p);
 extern double seconds();  /* Return time as double */
 extern double task_now(); /* Return result of last call to seconds() */
 extern void task_delay_until(double time);
+
+/**
+  Return time in microseconds. Uses std::chrono::high_resolution_clock
+
+  @retval Number of microseconds since the Epoch, 1970-01-01 00:00:00 +0000
+  (UTC)
+*/
+unsigned long long int get_time_since_the_epoch();
 
 extern int unblock_fd(int fd);
 extern int block_fd(int fd);

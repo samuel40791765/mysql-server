@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -495,7 +495,7 @@ dberr_t z_insert(InsertContext *ctx, trx_t *trx, ref_t &ref,
     }
   }
 
-  /* Must have inserted atleast one chunk. */
+  /* Must have inserted at least one chunk. */
   ut_ad(nth_chunk > 0);
 
   field_ref = ctx->get_field_ref(field->field_no);
@@ -693,7 +693,7 @@ frag_id_t z_frag_page_t::alloc_fragment(ulint size, z_frag_entry_t &entry) {
       return (frag_id);
 
     } else if (payload >= (size + overhead + 1)) {
-      /* Break the current fragment into two. Atleast 1 byte
+      /* Break the current fragment into two. At least 1 byte
       payload must be there in the other node. */
 
       split_free_frag(frag, size);

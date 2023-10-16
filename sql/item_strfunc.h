@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,12 +31,12 @@
 
 #include "lex_string.h"
 #include "libbinlogevents/include/uuid.h"  // Uuid
-#include "m_ctype.h"
 
 #include "my_hostname.h"  // HOSTNAME_LENGTH
 #include "my_inttypes.h"
 #include "my_table_map.h"
 #include "my_time.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysql_time.h"
@@ -103,7 +103,9 @@ class Item_str_func : public Item_func {
 
   Item_str_func(const POS &pos, Item *a, Item *b, Item *c, Item *d, Item *e)
       : Item_func(pos, a, b, c, d, e) {}
-
+  Item_str_func(const POS &pos, Item *a, Item *b, Item *c, Item *d, Item *e,
+                Item *f)
+      : Item_func(pos, a, b, c, d, e, f) {}
   explicit Item_str_func(mem_root_deque<Item *> *list) : Item_func(list) {}
 
   Item_str_func(const POS &pos, PT_item_list *opt_list)
@@ -133,6 +135,10 @@ class Item_str_func : public Item_func {
     @return error_str().
    */
   String *push_packet_overflow_warning(THD *thd, const char *func);
+
+  void add_json_info(Json_object *obj) override {
+    obj->add_alias("func_name", create_dom_ptr<Json_string>(func_name()));
+  }
 };
 
 /*
@@ -279,8 +285,15 @@ class Item_func_aes_encrypt final : public Item_str_func {
       : Item_str_func(pos, a, b) {}
   Item_func_aes_encrypt(const POS &pos, Item *a, Item *b, Item *c)
       : Item_str_func(pos, a, b, c) {}
-
-  bool itemize(Parse_context *pc, Item **res) override;
+  Item_func_aes_encrypt(const POS &pos, Item *a, Item *b, Item *c, Item *d)
+      : Item_str_func(pos, a, b, c, d) {}
+  Item_func_aes_encrypt(const POS &pos, Item *a, Item *b, Item *c, Item *d,
+                        Item *e)
+      : Item_str_func(pos, a, b, c, d, e) {}
+  Item_func_aes_encrypt(const POS &pos, Item *a, Item *b, Item *c, Item *d,
+                        Item *e, Item *f)
+      : Item_str_func(pos, a, b, c, d, e, f) {}
+  bool do_itemize(Parse_context *pc, Item **res) override;
   String *val_str(String *) override;
   bool resolve_type(THD *) override;
   const char *func_name() const override { return "aes_encrypt"; }
@@ -294,8 +307,15 @@ class Item_func_aes_decrypt : public Item_str_func {
       : Item_str_func(pos, a, b) {}
   Item_func_aes_decrypt(const POS &pos, Item *a, Item *b, Item *c)
       : Item_str_func(pos, a, b, c) {}
-
-  bool itemize(Parse_context *pc, Item **res) override;
+  Item_func_aes_decrypt(const POS &pos, Item *a, Item *b, Item *c, Item *d)
+      : Item_str_func(pos, a, b, c, d) {}
+  Item_func_aes_decrypt(const POS &pos, Item *a, Item *b, Item *c, Item *d,
+                        Item *e)
+      : Item_str_func(pos, a, b, c, d, e) {}
+  Item_func_aes_decrypt(const POS &pos, Item *a, Item *b, Item *c, Item *d,
+                        Item *e, Item *f)
+      : Item_str_func(pos, a, b, c, d, e, f) {}
+  bool do_itemize(Parse_context *pc, Item **res) override;
   String *val_str(String *) override;
   bool resolve_type(THD *thd) override;
   const char *func_name() const override { return "aes_decrypt"; }
@@ -310,11 +330,14 @@ class Item_func_random_bytes : public Item_str_func {
  public:
   Item_func_random_bytes(const POS &pos, Item *a) : Item_str_func(pos, a) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
   bool resolve_type(THD *thd) override;
   String *val_str(String *a) override;
 
   const char *func_name() const override { return "random_bytes"; }
+  table_map get_initial_pseudo_tables() const override {
+    return RAND_TABLE_BIT;
+  }
 };
 
 class Item_func_concat : public Item_str_func {
@@ -588,7 +611,7 @@ class Item_func_database : public Item_func_sysconst {
  public:
   explicit Item_func_database(const POS &pos) : Item_func_sysconst(pos) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
 
   String *val_str(String *) override;
   bool resolve_type(THD *) override {
@@ -623,14 +646,15 @@ class Item_func_user : public Item_func_sysconst {
     return INNER_TABLE_BIT;
   }
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
 
   bool check_function_as_value_generator(uchar *checker_args) override {
     Check_function_as_value_generator_parameters *func_arg =
         pointer_cast<Check_function_as_value_generator_parameters *>(
             checker_args);
     func_arg->banned_function_name = func_name();
-    return true;
+    return ((func_arg->source == VGS_GENERATED_COLUMN) ||
+            (func_arg->source == VGS_CHECK_CONSTRAINT));
   }
   bool resolve_type(THD *) override {
     set_data_type_string(uint32{USERNAME_CHAR_LENGTH + HOSTNAME_LENGTH + 1U});
@@ -660,7 +684,7 @@ class Item_func_current_user : public Item_func_user {
  public:
   explicit Item_func_current_user(const POS &pos) : super(pos) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
   const char *func_name() const override { return "current_user"; }
   const Name_string fully_qualified_func_name() const override {
     return NAME_STRING("current_user()");
@@ -701,7 +725,7 @@ class Item_func_make_set final : public Item_str_func {
   Item_func_make_set(const POS &pos, Item *a, PT_item_list *opt_list)
       : Item_str_func(pos, opt_list), item(a) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
   String *val_str(String *str) override;
   bool fix_fields(THD *thd, Item **ref) override {
     assert(fixed == 0);
@@ -765,6 +789,11 @@ class Item_func_char final : public Item_str_func {
     return false;
   }
   const char *func_name() const override { return "char"; }
+  void add_json_info(Json_object *obj) override {
+    Item_str_func::add_json_info(obj);
+    obj->add_alias("charset",
+                   create_dom_ptr<Json_string>(collation.collation->csname));
+  }
 };
 
 class Item_func_repeat final : public Item_str_func {
@@ -954,6 +983,11 @@ class Item_charset_conversion : public Item_str_func {
 
   bool resolve_type(THD *thd) override;
 
+  void add_json_info(Json_object *obj) override {
+    Item_str_func::add_json_info(obj);
+    obj->add_alias("charset", create_dom_ptr<Json_string>(m_cast_cs->csname));
+  }
+
  public:
   Item_charset_conversion(THD *thd, Item *a, const CHARSET_INFO *cs_arg,
                           bool cache_if_const)
@@ -981,6 +1015,9 @@ class Item_charset_conversion : public Item_str_func {
 };
 
 class Item_typecast_char final : public Item_charset_conversion {
+ protected:
+  void add_json_info(Json_object *obj) override;
+
  public:
   Item_typecast_char(THD *thd, Item *a, longlong length_arg,
                      const CHARSET_INFO *cs_arg)
@@ -1007,7 +1044,7 @@ class Item_load_file final : public Item_str_func {
  public:
   Item_load_file(const POS &pos, Item *a) : Item_str_func(pos, a) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
   String *val_str(String *) override;
   const char *func_name() const override { return "load_file"; }
   table_map get_initial_pseudo_tables() const override {
@@ -1016,7 +1053,7 @@ class Item_load_file final : public Item_str_func {
   bool resolve_type(THD *thd) override {
     if (param_type_is_default(thd, 0, 1)) return true;
     collation.set(&my_charset_bin, DERIVATION_COERCIBLE);
-    set_data_type_blob(MAX_BLOB_WIDTH);
+    set_data_type_blob(MYSQL_TYPE_LONG_BLOB, MAX_BLOB_WIDTH);
     set_nullable(true);
     return false;
   }
@@ -1080,7 +1117,7 @@ class Item_func_set_collation final : public Item_str_func {
                           const LEX_STRING &collation_string_arg)
       : super(pos, a, nullptr), collation_string(collation_string_arg) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
   String *val_str(String *) override;
   bool resolve_type(THD *) override;
   bool eq(const Item *item, bool binary_cmp) const override;
@@ -1091,6 +1128,13 @@ class Item_func_set_collation final : public Item_str_func {
   Item_field *field_for_view_update() override {
     /* this function is transparent for view updating */
     return args[0]->field_for_view_update();
+  }
+
+ protected:
+  void add_json_info(Json_object *obj) override {
+    obj->add_alias("collation",
+                   create_dom_ptr<Json_string>(collation_string.str,
+                                               collation_string.length));
   }
 };
 
@@ -1143,7 +1187,7 @@ class Item_func_weight_string final : public Item_str_func {
         result_length(result_length_arg),
         as_binary(as_binary_arg) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
 
   const char *func_name() const override { return "weight_string"; }
   bool eq(const Item *item, bool binary_cmp) const override;
@@ -1216,7 +1260,7 @@ class Item_func_uuid final : public Item_str_func {
   Item_func_uuid() : Item_str_func() {}
   explicit Item_func_uuid(const POS &pos) : Item_str_func(pos) {}
 
-  bool itemize(Parse_context *pc, Item **res) override;
+  bool do_itemize(Parse_context *pc, Item **res) override;
   table_map get_initial_pseudo_tables() const override {
     return RAND_TABLE_BIT;
   }
@@ -1231,17 +1275,6 @@ class Item_func_uuid final : public Item_str_func {
     return ((func_arg->source == VGS_GENERATED_COLUMN) ||
             (func_arg->source == VGS_CHECK_CONSTRAINT));
   }
-};
-
-class Item_func_gtid_subtract final : public Item_str_ascii_func {
-  String buf1, buf2;
-
- public:
-  Item_func_gtid_subtract(const POS &pos, Item *a, Item *b)
-      : Item_str_ascii_func(pos, a, b) {}
-  bool resolve_type(THD *) override;
-  const char *func_name() const override { return "gtid_subtract"; }
-  String *val_str_ascii(String *) override;
 };
 
 class Item_func_current_role final : public Item_func_sysconst {

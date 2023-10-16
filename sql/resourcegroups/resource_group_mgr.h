@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,7 +28,6 @@
 #include <string>
 #include <vector>
 
-#include "m_string.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "mysql/components/service.h"
@@ -45,6 +44,7 @@
 #include "sql/mdl.h"
 #include "sql/resourcegroups/resource_group_basic_types.h"
 #include "sql/sql_class.h"
+#include "string_with_len.h"
 
 namespace dd {
 class Resource_group;
@@ -91,7 +91,8 @@ class Resource_group_mgr {
   /**
     Reason for resource group not being supported.
 
-    @return pointer to string which indicate reason for resource group unsupport
+    @return pointer to string which indicate reason for resource group
+            unsupported
   */
 
   const char *unsupport_reason() { return m_unsupport_reason.c_str(); }
@@ -99,7 +100,7 @@ class Resource_group_mgr {
   /**
     Set reason for resource group not being supported.
 
-    @param  reason string representing reason for resource group unsupport.
+    @param  reason string representing reason for resource group unsupported.
   */
 
   void set_unsupport_reason(const std::string &reason) {
@@ -319,11 +320,11 @@ class Resource_group_mgr {
   }
 
   /**
-    String corressponding to the type of resource group.
+    String corresponding to the type of resource group.
 
     @param type Type of resource group.
 
-    @return string corressponding to resource group type.
+    @return string corresponding to resource group type.
   */
 
   const char *resource_group_type_str(const Type &type) {
@@ -447,7 +448,7 @@ class Resource_group_mgr {
 
   /**
     Value indicating the number of vcpus in the system. This is initialized
-    during startup so that we do not call the platform API everytime
+    during startup so that we do not call the platform API every time
     which is expensive.
   */
   uint32_t m_num_vcpus;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -152,7 +152,7 @@ Arg_def audit_log_primary_args_def[] = {
     {audit_log_primary_args, array_elements(audit_log_primary_args)}};
 
 /**
-  Optional arguments defition (key, value).
+  Optional arguments definition (key, value).
 */
 Arg_def audit_log_extra_args_def[] = {
     {audit_log_key_value_string_args,
@@ -190,7 +190,7 @@ char *collation_name = const_cast<char *>(collation);
   @param [in, out]  args      UDF arguments structure
   @param [out]      handler   Error handler
 
-  @retval false Set the charset of all arguments successully
+  @retval false Set the charset of all arguments successfully
   @retval true  Otherwise
 */
 static bool set_args_charset_info(UDF_ARGS *args, IError_handler &handler) {
@@ -207,7 +207,7 @@ static bool set_args_charset_info(UDF_ARGS *args, IError_handler &handler) {
 }
 
 /**
-  Sets the charset info of the return value to utf8.
+  Sets the charset info of the return value to utf8mb4.
 
   @param [in, out]  initid    A pointer to the UDF_INIT structure
   @param [out]      handler   Error handler that keeps the error message
@@ -262,7 +262,7 @@ static int arg_check(IError_handler &handler, unsigned int arg_count,
       result = true;
 
   /*
-    At least one argument count was matched againts definition.
+    At least one argument count was matched against definition.
   */
   if (result == false) {
     handler.error("Invalid argument count.");
@@ -400,7 +400,7 @@ class String_error_handler : public IError_handler {
       MY_ATTRIBUTE((format(printf, 2, 3))) {
     va_list va;
     va_start(va, message);
-    int copied = vsnprintf(m_buffer, m_size - 1, message, va);
+    const int copied = vsnprintf(m_buffer, m_size - 1, message, va);
     va_end(va);
     m_buffer[copied] = '\0';
 
@@ -476,9 +476,9 @@ static char *emit(UDF_INIT *initid [[maybe_unused]], UDF_ARGS *args,
                        arg_lengths, false)) < 0)
       return result;
 
-    std::string key(*arguments, *arg_lengths);
+    const std::string key(*arguments, *arg_lengths);
 
-    std::map<std::string, mysql_event_message_key_value_t>::const_iterator
+    const std::map<std::string, mysql_event_message_key_value_t>::const_iterator
         iter = key_values.find(key);
     if (iter != key_values.end()) {
       handler.error("Duplicated key [%d].", args->arg_count - arg_count);
@@ -518,7 +518,7 @@ static char *emit(UDF_INIT *initid [[maybe_unused]], UDF_ARGS *args,
   /**
     Allocate array that is used by the audit api service.
   */
-  std::unique_ptr<mysql_event_message_key_value_t[]> key_value_map(
+  const std::unique_ptr<mysql_event_message_key_value_t[]> key_value_map(
       key_values.size() > 0
           ? new mysql_event_message_key_value_t[key_values.size()]
           : nullptr);

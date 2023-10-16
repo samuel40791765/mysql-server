@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -43,15 +43,25 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 #include "client/pattern_matcher.h"
 #include "compression.h"
 #include "lex_string.h"
-#include "m_ctype.h"
+#include "m_string.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_default.h"
 #include "my_dir.h"
 #include "my_inttypes.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
+#include "mysql/my_loglevel.h"
+#include "mysql/plugin_client_telemetry.h"
+#include "mysql/strings/int2str.h"
+#include "mysql/strings/m_ctype.h"
+#include "nulls.h"
+#include "str2int.h"
+#include "strcont.h"
+#include "string_with_len.h"
+#include "strmake.h"
+#include "strxmov.h"
+#include "strxnmov.h"
 #include "typelib.h"
 #include "user_registration.h"
 #include "violite.h"
@@ -130,6 +140,8 @@ static char *server_version = nullptr;
 
 #define MAX_BATCH_BUFFER_SIZE (1024L * 1024L * 1024L)
 
+client_query_attributes *telemetry_client_attrs = nullptr;
+
 /** default set of patterns used for history exclusion filter */
 const static std::string HI_DEFAULTS("*IDENTIFIED*:*PASSWORD*");
 
@@ -167,7 +179,7 @@ static bool ignore_errors = false, wait_flag = false, quick = false,
 static bool opt_binary_as_hex_set_explicitly = false;
 static bool debug_info_flag, debug_check_flag;
 static bool column_types_flag;
-static bool preserve_comments = false;
+static bool preserve_comments = true;
 static ulong opt_max_allowed_packet, opt_net_buffer_length;
 static uint verbose = 0, opt_silent = 0, opt_mysql_port = 0,
             opt_local_infile = 0;
@@ -187,11 +199,15 @@ static char *current_prompt = nullptr;
 static char *delimiter_str = nullptr;
 static char *opt_init_command = nullptr;
 static const char *default_charset = MYSQL_AUTODETECT_CHARSET_NAME;
+#ifdef HAVE_READLINE
 static char *histfile;
 static char *histfile_tmp;
+#endif
 static char *opt_histignore = nullptr;
 static String glob_buffer, old_buffer;
 static String processed_prompt;
+static String dollar_quote;
+static bool dollar_quote_supported = false;
 static char *full_username = nullptr, *part_username = nullptr,
             *default_prompt = nullptr;
 static char *current_os_user = nullptr, *current_os_sudouser = nullptr;
@@ -231,7 +247,12 @@ static const CHARSET_INFO *charset_info = &my_charset_latin1;
 
 static char *opt_fido_register_factor = nullptr;
 static char *opt_oci_config_file = nullptr;
+static char *opt_authentication_oci_client_config_profile = nullptr;
 
+static bool opt_tel_plugin = false;
+static const char *opt_tel_plugin_name = "telemetry_client";
+
+#include "authentication_kerberos_clientopt-vars.h"
 #include "caching_sha2_passwordopt-vars.h"
 #include "multi_factor_passwordopt-vars.h"
 #include "sslopt-vars.h"
@@ -1218,7 +1239,7 @@ inline int get_command_index(char cmd_char) {
     All client-specific commands are in the first part of commands array
     and have a function to implement it.
   */
-  for (uint i = 0; *commands[i].func != nullptr; i++)
+  for (uint i = 0; commands[i].func != nullptr; i++)
     if (commands[i].cmd_char == cmd_char) return i;
   return -1;
 }
@@ -1244,6 +1265,15 @@ BOOL windows_ctrl_handler(DWORD fdwCtrlType) {
   return false;
 }
 #endif
+
+static bool server_supports_dollar_quote(MYSQL *con) {
+  // This query will fail with parse error if dollar quotes are supported
+  if (mysql_real_query(con, "select $$", 9) &&
+      mysql_errno(&mysql) == ER_PARSE_ERROR) {
+    return true;
+  }
+  return false;
+}
 
 int main(int argc, char *argv[]) {
   char buff[80];
@@ -1337,6 +1367,7 @@ int main(int argc, char *argv[]) {
   completion_hash_init(&ht, 128);
   memset(&mysql, 0, sizeof(mysql));
   global_attrs = new client_query_attributes();
+
   if (sql_connect(current_host, current_db, current_user, opt_silent)) {
     quick = true;  // Avoid history
     status.exit_status = 1;
@@ -1367,6 +1398,25 @@ int main(int argc, char *argv[]) {
   put_info(glob_buffer.ptr(), INFO_INFO);
 
   put_info(ORACLE_WELCOME_COPYRIGHT_NOTICE("2000"), INFO_INFO);
+
+  if (opt_tel_plugin) {
+    /* Load a telemetry plugin if required */
+    struct st_mysql_client_plugin *tel_plugin = mysql_load_plugin(
+        &mysql, opt_tel_plugin_name, MYSQL_CLIENT_TELEMETRY_PLUGIN, 3,
+        my_defaults_file, my_defaults_group_suffix, my_defaults_extra_file);
+    if (!tel_plugin) {
+      snprintf(glob_buffer.ptr(), glob_buffer.alloced_length(),
+               "Cannot load the client telemetry plugin <%s>.\n",
+               opt_tel_plugin_name);
+      put_info(glob_buffer.ptr(), INFO_ERROR);
+      return EXIT_FAILURE;
+    }
+
+    telemetry_client_attrs = new client_query_attributes();
+    snprintf(glob_buffer.ptr(), glob_buffer.alloced_length(),
+             "Telemetry plugin <%s> is loaded.\n", opt_tel_plugin_name);
+    put_info(glob_buffer.ptr(), INFO_INFO);
+  }
 
   if (!status.batch) {
     // history ignore patterns are initialized to default values
@@ -1443,7 +1493,12 @@ int main(int argc, char *argv[]) {
           INFO_INFO);
   }
 
+  dollar_quote_supported = server_supports_dollar_quote(&mysql);
+
   status.exit_status = read_and_execute(!status.batch);
+
+  mysql_client_plugin_deinit();
+
   if (opt_outfile) end_tee();
   mysql_end(0);
   return 0;  // Keep compiler happy
@@ -1452,8 +1507,8 @@ int main(int argc, char *argv[]) {
 void mysql_end(int sig) {
 #ifndef _WIN32
   /*
-    Ingnoring SIGQUIT, SIGINT and SIGHUP signals when cleanup process starts.
-    This will help in resolving the double free issues, which occures in case
+    Ignoring SIGQUIT, SIGINT and SIGHUP signals when cleanup process starts.
+    This will help in resolving the double free issues, which occurs in case
     the signal handler function is started in between the clean up function.
   */
   signal(SIGQUIT, SIG_IGN);
@@ -1488,6 +1543,7 @@ void mysql_end(int sig) {
   glob_buffer.mem_free();
   old_buffer.mem_free();
   processed_prompt.mem_free();
+  dollar_quote.mem_free();
   my_free(server_version);
   free_passwords();
   my_free(opt_mysql_unix_port);
@@ -1507,6 +1563,10 @@ void mysql_end(int sig) {
   if (global_attrs != nullptr) {
     delete global_attrs;
     global_attrs = nullptr;
+  }
+  if (telemetry_client_attrs != nullptr) {
+    delete telemetry_client_attrs;
+    telemetry_client_attrs = nullptr;
   }
   exit(status.exit_status);
 }
@@ -1547,7 +1607,7 @@ void handle_ctrlc_signal(int) {
   @param sig              Signal number
 */
 
-void handle_quit_signal(int sig) {
+void handle_quit_signal(int sig [[maybe_unused]]) {
   const char *reason = "Terminal close";
 
   if (!executing_query) {
@@ -1684,9 +1744,9 @@ static struct my_option my_long_options[] = {
      nullptr, 0, nullptr},
     {"comments", 'c',
      "Preserve comments. Send comments to the server."
-     " The default is --skip-comments (discard comments), enable with "
-     "--comments.",
-     &preserve_comments, &preserve_comments, nullptr, GET_BOOL, NO_ARG, 0, 0, 0,
+     " The default is --comments (keep comments), disable with "
+     "--skip-comments.",
+     &preserve_comments, &preserve_comments, nullptr, GET_BOOL, NO_ARG, 1, 0, 0,
      nullptr, 0, nullptr},
     {"compress", 'C', "Use compression in server/client protocol.",
      &opt_compress, &opt_compress, nullptr, GET_BOOL, NO_ARG, 0, 0, 0, nullptr,
@@ -1952,11 +2012,21 @@ static struct my_option my_long_options[] = {
      "done.",
      &opt_fido_register_factor, &opt_fido_register_factor, nullptr, GET_STR,
      REQUIRED_ARG, 0, 0, 0, nullptr, 0, nullptr},
+    {"authentication-oci-client-config-profile", 0,
+     "Specifies the configuration profile whose configuration options are to "
+     "be read from the OCI configuration file. Default is DEFAULT.",
+     &opt_authentication_oci_client_config_profile,
+     &opt_authentication_oci_client_config_profile, nullptr, GET_STR,
+     REQUIRED_ARG, 0, 0, 0, nullptr, 0, nullptr},
     {"oci-config-file", 0,
      "Specifies the location of the OCI configuration file. Default for Linux "
      "is ~/.oci/config and %HOME/.oci/config on Windows.",
      &opt_oci_config_file, &opt_oci_config_file, nullptr, GET_STR, REQUIRED_ARG,
      0, 0, 0, nullptr, 0, nullptr},
+    {"telemetry-client", 0, "Load the telemetry_client plugin.",
+     &opt_tel_plugin, &opt_tel_plugin, nullptr, GET_BOOL, NO_ARG, 0, 0, 0,
+     nullptr, 0, nullptr},
+#include "authentication_kerberos_clientopt-longopts.h"
     {nullptr, 0, nullptr, nullptr, nullptr, nullptr, GET_NO_ARG, NO_ARG, 0, 0,
      0, nullptr, 0, nullptr}};
 
@@ -2083,6 +2153,8 @@ bool get_one_option(int optid, const struct my_option *opt [[maybe_unused]],
       break;
 #include "sslopt-case.h"
 
+#include "authentication_kerberos_clientopt-case.h"
+
     case 'V':
       usage(1);
       exit(0);
@@ -2093,6 +2165,9 @@ bool get_one_option(int optid, const struct my_option *opt [[maybe_unused]],
     case OPT_MYSQL_BINARY_AS_HEX:
       opt_binhex = (argument != disabled_my_option);
       opt_binary_as_hex_set_explicitly = true;
+      break;
+    case 'C':
+      CLIENT_WARN_DEPRECATED("--compress", "--compression-algorithms");
       break;
   }
   return false;
@@ -2229,16 +2304,34 @@ static int read_and_execute(bool interactive) {
       line_number++;
       if (!glob_buffer.length()) status.query_start_line = line_number;
     } else {
-      const char *prompt =
-          (ml_comment
-               ? "   /*> "
-               : glob_buffer.is_empty()
-                     ? construct_prompt()
-                     : !in_string
-                           ? "    -> "
-                           : in_string == '\''
-                                 ? "    '> "
-                                 : (in_string == '`' ? "    `> " : "    \"> "));
+      const char *prompt;
+      if (ml_comment) {
+        prompt = "   /*> ";
+      } else if (glob_buffer.is_empty()) {
+        prompt = construct_prompt();
+      } else {
+        switch (in_string) {
+          case 0:
+            prompt = "    -> ";
+            break;
+          case '\'':
+            prompt = "    '> ";
+            break;
+          case '`':
+            prompt = "    `> ";
+            break;
+          case '"':
+            prompt = "    \"> ";
+            break;
+          case '$':
+            prompt = "    $> ";
+            break;
+          default:
+            assert(false);
+            prompt = "    -> ";
+        }
+      }
+
       if (opt_outfile && glob_buffer.is_empty()) fflush(OUTFILE);
 
 #if defined(_WIN32)
@@ -2437,6 +2530,47 @@ static COMMANDS *find_command(char *name) {
   return (COMMANDS *)nullptr;
 }
 
+/**
+   Check if there is a dollar quote at current position.
+   @param pos                Current position of input line
+   @param last_end_of_mb_pos Last byte of previous multi-byte character.
+                             Used to check if preceeding char is an mb char.
+   @param end_of_line        End of input line
+   @return length of dollar quote, 0 if not found
+*/
+static size_t check_for_dollar_quote(const char *pos,
+                                     const char *last_end_of_mb_pos,
+                                     const char *end_of_line) {
+  assert(*pos == '$');
+  if (!dollar_quote_supported) return 0;
+
+  // Character set state maps should always be initialized
+  assert(charset_info->ident_map);
+  // (We need info on valid characters in identifiers to ignore
+  // the case when the dollar sign is inside an identifier
+  const uchar *ident_map = charset_info->ident_map;
+  if (last_end_of_mb_pos == pos - 1 ||
+      ident_map[static_cast<uchar>(*(pos - 1))])
+    return 0;
+
+  // $ is first char of token
+  const char *p = pos + 1;
+  while (*p != '$' && ident_map[static_cast<uchar>(*p)] && p < end_of_line) {
+    int l;
+    if (use_mb(charset_info) &&
+        (l = my_ismbchar(charset_info, p, end_of_line)) > 1) {
+      p += l - 1;
+    }
+    ++p;
+  }
+  if (*p != '$') return 0;
+
+  // We have found the start of a dollar quote
+  size_t length = p - pos + 1;
+  dollar_quote.copy(pos, length, charset_info);
+  return length;
+}
+
 static bool add_line(String &buffer, char *line, size_t line_length,
                      char *in_string, bool *ml_comment, bool truncated) {
   uchar inchar;
@@ -2452,6 +2586,7 @@ static bool add_line(String &buffer, char *line, size_t line_length,
 
   char *end_of_line = line + line_length;
 
+  char *last_end_of_mb_pos = nullptr;
   for (pos = out = line; pos < end_of_line; pos++) {
     inchar = (uchar)*pos;
     if (!preserve_comments) {
@@ -2469,6 +2604,7 @@ static bool add_line(String &buffer, char *line, size_t line_length,
         pos--;
       } else
         pos += length - 1;
+      last_end_of_mb_pos = pos;
       continue;
     }
     if (!*ml_comment && inchar == '\\' &&
@@ -2572,7 +2708,7 @@ static bool add_line(String &buffer, char *line, size_t line_length,
 
       // comment to end of line
       if (preserve_comments) {
-        bool started_with_nothing = !buffer.length();
+        const bool started_with_nothing = !buffer.length();
 
         buffer.append(pos);
 
@@ -2625,11 +2761,34 @@ static bool add_line(String &buffer, char *line, size_t line_length,
       } else if (!*in_string && ss_comment && inchar == '*' &&
                  *(pos + 1) == '/')
         ss_comment = SSC_NONE;
-      if (inchar == *in_string)
-        *in_string = 0;
-      else if (!*ml_comment && !*in_string && ss_comment != SSC_HINT &&
-               (inchar == '\'' || inchar == '"' || inchar == '`'))
-        *in_string = (char)inchar;
+      if (inchar == *in_string) {
+        if (inchar != '$') {
+          *in_string = 0;
+        } else {
+          // Check if this is the end of the dollar quoted string
+          size_t len = dollar_quote.length();
+          if (strncmp(pos, dollar_quote.c_ptr(), len) == 0) {
+            *in_string = 0;
+            // Last character will be copied at end of loop
+            for (size_t i = 0; i < len - 1; ++i) {
+              *out++ = *pos++;
+            }
+          }
+        }
+      } else if (!*ml_comment && !*in_string && ss_comment != SSC_HINT) {
+        if (inchar == '\'' || inchar == '"' || inchar == '`')
+          *in_string = (char)inchar;
+        else if (inchar == '$') {
+          size_t len =
+              check_for_dollar_quote(pos, last_end_of_mb_pos, end_of_line);
+          if (len > 0) {
+            *in_string = '$';
+            for (size_t i = 0; i < len - 1; ++i) {
+              *out++ = *pos++;
+            }
+          }
+        }
+      }
       if (!*ml_comment || preserve_comments) {
         if (need_space && !my_isspace(charset_info, (char)inchar)) *out++ = ' ';
         need_space = false;
@@ -3026,7 +3185,7 @@ static int reconnect(void) {
   if (opt_reconnect) {
     put_info("No connection. Trying to reconnect...", INFO_INFO);
     (void)com_connect((String *)nullptr, nullptr);
-    if (opt_rehash) com_rehash(nullptr, nullptr);
+    if (opt_rehash && connected) com_rehash(nullptr, nullptr);
   }
   if (!connected) return put_info("Can't connect to the server\n", INFO_ERROR);
   /* purecov: end */
@@ -3073,6 +3232,10 @@ static int mysql_real_query_for_lazy(const char *buf, size_t length,
   for (uint retry = 0;; retry++) {
     error = 0;
 
+    if (telemetry_client_attrs != nullptr) {
+      telemetry_client_attrs->set_params(&mysql);
+    }
+
     if (set_params && global_attrs->set_params(&mysql)) break;
     if (!mysql_real_query(&mysql, buf, (ulong)length)) break;
     error = put_error(&mysql);
@@ -3083,6 +3246,11 @@ static int mysql_real_query_for_lazy(const char *buf, size_t length,
       break;
     if (reconnect()) break;
   }
+
+  if (telemetry_client_attrs != nullptr) {
+    telemetry_client_attrs->clear(connected ? &mysql : nullptr);
+  }
+
   if (set_params) global_attrs->clear(connected ? &mysql : nullptr);
   return error;
 }
@@ -3096,7 +3264,7 @@ static int mysql_store_result_for_lazy(MYSQL_RES **result) {
 
 static void print_help_item(MYSQL_ROW *cur, int num_name, int num_cat,
                             char *last_char) {
-  char ccat = (*cur)[num_cat][0];
+  const char ccat = (*cur)[num_cat][0];
   if (*last_char != ccat) {
     put_info(ccat == 'Y' ? "categories:" : "topics:", INFO_INFO);
     *last_char = ccat;
@@ -3137,8 +3305,8 @@ static int com_server_help(String *buffer [[maybe_unused]],
     return error;
 
   if (result) {
-    unsigned int num_fields = mysql_num_fields(result);
-    uint64_t num_rows = mysql_num_rows(result);
+    const unsigned int num_fields = mysql_num_fields(result);
+    const uint64_t num_rows = mysql_num_rows(result);
     mysql_fetch_fields(result);
     if (num_fields == 3 && num_rows == 1) {
       if (!(cur = mysql_fetch_row(result))) {
@@ -3277,7 +3445,7 @@ static int com_charset(String *buffer [[maybe_unused]], char *line) {
           1  if fatal error
 */
 
-static int com_go(String *buffer, char *line [[maybe_unused]]) {
+static int com_go_impl(String *buffer, char *line [[maybe_unused]]) {
   char buff[200];             /* about 110 chars used so far */
   char time_buff[52 + 3 + 1]; /* time max + space&parens + NUL */
   MYSQL_RES *result;
@@ -3328,7 +3496,7 @@ static int com_go(String *buffer, char *line [[maybe_unused]]) {
 
   do {
     char *pos;
-    bool batchmode = (status.batch && verbose <= 1);
+    const bool batchmode = (status.batch && verbose <= 1);
     buff[0] = 0;
 
     if (quick) {
@@ -3419,6 +3587,36 @@ end:
   return error; /* New command follows */
 }
 
+static void telemetry_carrier_set(void *carrier_data, const char *key,
+                                  const char *value) {
+  client_query_attributes *qa =
+      reinterpret_cast<client_query_attributes *>(carrier_data);
+  assert(qa != nullptr);
+  qa->push_param(key, value);
+}
+
+static int com_go(String *buffer, char *line) {
+  int rc;
+  telemetry_span_t *span = nullptr;
+
+  if (client_telemetry_plugin) {
+    span = client_telemetry_plugin->start_span("client");
+
+    if (span != nullptr) {
+      client_telemetry_plugin->injector(span, telemetry_client_attrs,
+                                        telemetry_carrier_set);
+    }
+  }
+
+  rc = com_go_impl(buffer, line);
+
+  if (client_telemetry_plugin) {
+    client_telemetry_plugin->end_span(span);
+  }
+
+  return rc;
+}
+
 static void init_pager() {
 #ifdef USE_POPEN
   if (!opt_nopager) {
@@ -3460,7 +3658,7 @@ static void end_tee() {
 
 static int com_ego(String *buffer, char *line) {
   int result;
-  bool oldvertical = vertical;
+  const bool oldvertical = vertical;
   vertical = true;
   result = com_go(buffer, line);
   vertical = oldvertical;
@@ -3598,10 +3796,10 @@ static void print_table_data(MYSQL_RES *result) {
     mysql_field_seek(result, 0);
     (void)tee_fputs("|", PAGER);
     for (uint off = 0; (field = mysql_fetch_field(result)); off++) {
-      size_t name_length = strlen(field->name);
-      size_t numcells = charset_info->cset->numcells(charset_info, field->name,
-                                                     field->name + name_length);
-      size_t display_length = field->max_length + name_length - numcells;
+      const size_t name_length = strlen(field->name);
+      const size_t numcells = charset_info->cset->numcells(
+          charset_info, field->name, field->name + name_length);
+      const size_t display_length = field->max_length + name_length - numcells;
       tee_fprintf(PAGER, " %-*s |",
                   min<int>((int)display_length, MAX_COLUMN_LENGTH),
                   field->name);
@@ -3828,7 +4026,7 @@ static void print_table_data_vertically(MYSQL_RES *result) {
   MYSQL_FIELD *field;
 
   while ((field = mysql_fetch_field(result))) {
-    uint length = field->name_length;
+    const uint length = field->name_length;
     if (length > max_length) max_length = length;
     field->max_length = length;
   }
@@ -3870,7 +4068,7 @@ static void print_warnings() {
   uint64_t num_rows;
 
   /* Save current error before calling "show warnings" */
-  uint error = mysql_errno(&mysql);
+  const uint error = mysql_errno(&mysql);
 
   /* Get the warnings */
   query = "show warnings";
@@ -3919,7 +4117,7 @@ static void safe_put_field(const char *pos, ulong length) {
   if (!pos)
     tee_fputs("NULL", PAGER);
   else {
-    int flags =
+    const int flags =
         MY_PRINT_MB | (opt_raw_data ? 0 : (MY_PRINT_ESC_0 | MY_PRINT_CTRL));
     /* Can't use tee_fputs(), it stops with NUL characters. */
     tee_write(PAGER, pos, length, flags);
@@ -4137,7 +4335,7 @@ static int com_print(String *buffer, char *line [[maybe_unused]]) {
 /* ARGSUSED */
 static int com_connect(String *buffer, char *line) {
   char *tmp, buff[256];
-  bool save_rehash = opt_rehash;
+  const bool save_rehash = opt_rehash;
   int error;
 
   memset(buff, 0, sizeof(buff));
@@ -4350,7 +4548,7 @@ static int com_use(String *buffer [[maybe_unused]], char *line) {
 static int normalize_dbname(const char *line, char *buff, uint buff_size) {
   MYSQL_RES *res = nullptr;
 
-  /* Send the "USE db" commmand to the server. */
+  /* Send the "USE db" command to the server. */
   if (mysql_query(&mysql, line)) return 1;
 
   /*
@@ -4361,7 +4559,7 @@ static int normalize_dbname(const char *line, char *buff, uint buff_size) {
       (res = mysql_use_result(&mysql))) {
     MYSQL_ROW row = mysql_fetch_row(res);
     if (row && row[0]) {
-      size_t len = strlen(row[0]);
+      const size_t len = strlen(row[0]);
       /* Make sure there is enough room to store the dbname. */
       if ((len > buff_size) || !memcpy(buff, row[0], len)) {
         mysql_free_result(res);
@@ -4419,34 +4617,42 @@ static int com_ssl_session_data_print(String *buffer [[maybe_unused]],
   char msgbuf[256];
   char *param = get_arg(line, false);
   const char *err_text = nullptr;
-  FILE *fo = nullptr;
-  void *data = nullptr;
+  File fo = -1;
+  char *data = nullptr;
+  const bool use_outfile = (param != nullptr);
 
-  if (param) {
-    if (nullptr == (fo = fopen(param, "w"))) {
+  if (use_outfile) {
+    // result file is access protected (0600)
+    const MY_MODE file_creation_mode = get_file_perm(USER_READ | USER_WRITE);
+    const int access_flags = O_WRONLY | O_TRUNC | O_CREAT;
+
+    fo = my_create(param, file_creation_mode, access_flags, MYF(0));
+    if (fo == -1) {
       err_text = "Failed to open the output file";
       goto end;
     }
-  } else
-    fo = stdout;
+  } else {
+    fo = my_fileno(stdout);
+  }
 
-  data = mysql_get_ssl_session_data(&mysql, 0, nullptr);
+  data =
+      reinterpret_cast<char *>(mysql_get_ssl_session_data(&mysql, 0, nullptr));
   if (!data) {
     err_text = nullptr;
     put_error(&mysql);
     goto end;
   }
-  if (0 > fputs(reinterpret_cast<char *>(data), fo)) {
+  if (my_write(fo, (uchar *)data, strlen(data), MYF(0)) == MY_FILE_ERROR) {
     snprintf(msgbuf, sizeof(msgbuf), "Write of session data failed: %d (%s)",
              errno, strerror(errno));
     err_text = &msgbuf[0];
     goto end;
   }
-  if (fo == stdout) fputs("\n", fo);
+  if (!use_outfile && fo != -1) my_write(fo, (const uchar *)"\n", 1, MYF(0));
 
 end:
   if (data) mysql_free_ssl_session_data(&mysql, data);
-  if (fo && fo != stdout) fclose(fo);
+  if (use_outfile && fo != -1) (void)my_close(fo, MYF(0));
   if (err_text) return put_info(err_text, INFO_ERROR);
   return 0;
 }
@@ -4638,7 +4844,7 @@ static int sql_real_connect(char *host, char *database, char *user, char *,
     /*
       Don't convert trailing '\n' character - it was appended during
       last batch_readline_command() call.
-      Oherwise we'll get an extra line, which makes some tests fail.
+      Otherwise we'll get an extra line, which makes some tests fail.
     */
     if (status.line_buff->buffer[len - 1] == '\n') len--;
     if (tmp.copy(status.line_buff->buffer, len, &my_charset_utf8mb4_bin,
@@ -4649,8 +4855,7 @@ static int sql_real_connect(char *host, char *database, char *user, char *,
     batch_readline_end(status.line_buff);
 
     /* Re-initialize line buffer from the converted string */
-    if (!(status.line_buff =
-              batch_readline_command(NULL, (char *)tmp.c_ptr_safe())))
+    if (!(status.line_buff = batch_readline_command(nullptr, tmp.c_ptr_safe())))
       return 1;
   }
   execute_buffer_conversion_done = true;
@@ -4716,7 +4921,7 @@ static bool init_connection_options(MYSQL *mysql) {
     mysql_options(mysql, MYSQL_INIT_COMMAND, init_command);
   }
 
-  mysql_set_character_set(mysql, default_charset);
+  if (mysql_set_character_set(mysql, default_charset)) return true;
 
   if (opt_plugin_dir && *opt_plugin_dir)
     mysql_options(mysql, MYSQL_PLUGIN_DIR, opt_plugin_dir);
@@ -4750,22 +4955,48 @@ static bool init_connection_options(MYSQL *mysql) {
 
   set_password_options(mysql);
 
-  if (opt_oci_config_file != nullptr) {
-    /* set OCI config file option if required */
-    struct st_mysql_client_plugin *oci_iam_plugin = mysql_client_find_plugin(
-        mysql, "authentication_oci_client", MYSQL_CLIENT_AUTHENTICATION_PLUGIN);
+  struct st_mysql_client_plugin *oci_iam_plugin = mysql_client_find_plugin(
+      mysql, "authentication_oci_client", MYSQL_CLIENT_AUTHENTICATION_PLUGIN);
+
+  /* set authentication_oci_client config profile option if required */
+  if (opt_authentication_oci_client_config_profile != nullptr) {
     if (!oci_iam_plugin) {
       put_info("Cannot load the authentication_oci_client plugin.", INFO_ERROR);
-      return 1;
+      return true;
+    }
+    if (mysql_plugin_options(oci_iam_plugin,
+                             "authentication-oci-client-config-profile",
+                             opt_authentication_oci_client_config_profile)) {
+      put_info(
+          "Failed to set config profile for authentication_oci_client "
+          "plugin.",
+          INFO_ERROR);
+      return true;
+    }
+  }
+  /* set OCI config file option if required */
+  if (opt_oci_config_file != nullptr) {
+    if (!oci_iam_plugin) {
+      put_info("Cannot load the authentication_oci_client plugin.", INFO_ERROR);
+      return true;
     }
     if (mysql_plugin_options(oci_iam_plugin, "oci-config-file",
                              opt_oci_config_file)) {
       put_info(
           "Failed to set config file for authentication_oci_client plugin.",
           INFO_ERROR);
-      return 1;
+      return true;
     }
   }
+
+#if defined(_WIN32)
+  char error[256]{0};
+  if (set_authentication_kerberos_client_mode(mysql, error, 255)) {
+    put_info(error, INFO_ERROR);
+    return 1;
+  }
+#endif
+
   return false;
 }
 
@@ -4813,7 +5044,7 @@ static int com_status(String *buffer [[maybe_unused]],
   tee_fprintf(stdout, "\nConnection id:\t\t%lu\n", mysql_thread_id(&mysql));
   /*
     Don't remove "limit 1",
-    it is protection againts SQL_SELECT_LIMIT=0
+    it is protection against SQL_SELECT_LIMIT=0
   */
   if (!mysql_store_result_for_lazy(&result)) {
     MYSQL_ROW cur = mysql_fetch_row(result);
@@ -4868,7 +5099,10 @@ static int com_status(String *buffer [[maybe_unused]],
     tee_fprintf(stdout, "TCP port:\t\t%d\n", mysql.port);
   else
     tee_fprintf(stdout, "UNIX socket:\t\t%s\n", mysql.unix_socket);
-  if (mysql.net.compress) tee_fprintf(stdout, "Protocol:\t\tCompressed\n");
+  if (mysql.net.compress)
+    tee_fprintf(stdout,
+                "Protocol:\t\tCompressed, algorithms: %s, zstd level: %d\n",
+                opt_compress_algorithm, opt_zstd_compress_level);
   if (opt_binhex) tee_fprintf(stdout, "Binary data as:\t\tHexadecimal\n");
   if (mysql_get_ssl_session_reused(&mysql))
     tee_fprintf(stdout, "SSL session reused:\ttrue\n");
@@ -4911,7 +5145,8 @@ static const char *server_version_string(MYSQL *con) {
       MYSQL_ROW cur = mysql_fetch_row(result);
       if (cur && cur[0]) {
         /* version, space, comment, \0 */
-        size_t len = strlen(mysql_get_server_info(con)) + strlen(cur[0]) + 2;
+        const size_t len =
+            strlen(mysql_get_server_info(con)) + strlen(cur[0]) + 2;
 
         if ((server_version =
                  (char *)my_malloc(PSI_NOT_INSTRUMENTED, len, MYF(MY_WME)))) {
@@ -5023,7 +5258,7 @@ static void remove_cntrl(String *buffer) {
 */
 void tee_write(FILE *file, const char *s, size_t slen, int flags) {
 #ifdef _WIN32
-  bool is_console = my_win_is_console_cached(file);
+  const bool is_console = my_win_is_console_cached(file);
 #endif
   const char *se;
   for (se = s + slen; s < se; s++) {
@@ -5188,8 +5423,8 @@ static void mysql_end_timer(ulong start_time, char *buff) {
 }
 
 static const char *construct_prompt() {
-  processed_prompt.mem_free();    // Erase the old prompt
-  time_t lclock = time(nullptr);  // Get the date struct
+  processed_prompt.mem_free();          // Erase the old prompt
+  const time_t lclock = time(nullptr);  // Get the date struct
   struct tm *t = localtime(&lclock);
 
   /* parse thru the settings for the prompt */

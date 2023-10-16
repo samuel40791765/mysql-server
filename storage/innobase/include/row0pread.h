@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2018, 2021, Oracle and/or its affiliates.
+Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -63,7 +63,7 @@ If the user has set the maximum number of threads to use at say 4 threads
 and there are 5 sub-trees at the selected level then we will split the 5th
 sub-tree dynamically when it is ready for scan.
 
-We want to allow multiple parallel range scans on diffrent indexes at the
+We want to allow multiple parallel range scans on different indexes at the
 same time. To achieve this split out the scan  context (Scan_ctx) from the
 execution context (Ctx). The Scan_ctx has the index  and transaction
 information and the Ctx keeps track of the cursor for a specific thread

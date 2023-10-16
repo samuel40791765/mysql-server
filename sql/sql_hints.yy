@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -33,6 +33,7 @@
 #include "lex_string.h"
 #include "m_string.h"
 
+#include "my_double2ulonglong.h"
 #include "my_inttypes.h"  // TODO: replace with cstdint
 #include "mysqld_error.h"
 #include "sql/derror.h"
@@ -59,9 +60,13 @@ static bool parse_int(longlong *to, const char *from, size_t from_length)
   return error != 0 || end != from + from_length;
 }
 
+// ODR violation here as well, so rename yysymbol_kind_t
+#define yysymbol_kind_t my_hint_parser_symbol_kind_t
+
 %}
 
-%pure-parser
+%define api.pure
+%define api.prefix {my_hint_parser_}
 
 %parse-param { class THD *thd }
 %parse-param { class Hint_scanner *scanner }
@@ -132,10 +137,12 @@ static bool parse_int(longlong *to, const char *from, size_t from_length)
 %token HINT_ARG_FLOATING_POINT_NUMBER 1049
 
 /*
-  YYUNDEF in internal to Bison. Please don't change its number, or change
+  YYUNDEF is internal to Bison. Please don't change its number, or change
   it in sync with YYUNDEF in sql_yacc.yy.
+  We would like to have this:
+    %token YYUNDEF 1150
+  here, but that creates conflicts in gen_lex_token.cc. See comments there.
 */
-%token YYUNDEF 1150
 
 /*
   Please add new tokens right above this line.
@@ -256,7 +263,7 @@ max_execution_time_hint:
 
 
 opt_hint_param_table_list:
-          /* empty */ { $$.init(thd->mem_root); }
+          %empty { $$.init(thd->mem_root); }
         | hint_param_table_list
         ;
 
@@ -276,7 +283,7 @@ hint_param_table_list:
         ;
 
 opt_hint_param_table_list_empty_qb:
-          /* empty */ { $$.init(thd->mem_root); }
+          %empty { $$.init(thd->mem_root); }
         | hint_param_table_list_empty_qb
         ;
 
@@ -296,7 +303,7 @@ hint_param_table_list_empty_qb:
         ;
 
 opt_hint_param_index_list:
-          /* empty */ { $$.init(thd->mem_root); }
+          %empty { $$.init(thd->mem_root); }
         | hint_param_index_list
         ;
 
@@ -345,7 +352,7 @@ hint_param_table_ext:
         ;
 
 opt_qb_name:
-          /* empty */ { $$= NULL_CSTR; }
+          %empty { $$= NULL_CSTR; }
         | HINT_ARG_QB_NAME
         ;
 
@@ -422,7 +429,7 @@ qb_level_hint:
           ;
 
 semijoin_strategies:
-          /* empty */ { $$= 0; }
+          %empty { $$= 0; }
 	| semijoin_strategy
           {
             $$= $1;
@@ -683,7 +690,7 @@ set_var_num_item:
                 assert(0); // should not happen
                 YYABORT;        // for sure
               }
-              if (1.0L * n * multiplier > LLONG_MAX)
+              if (1.0L * n * multiplier > LLONG_MAX_DOUBLE)
               {
                 scanner->syntax_warning(ER_THD(thd, ER_WRONG_SIZE_NUMBER));
                 $$= NULL;

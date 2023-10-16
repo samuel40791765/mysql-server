@@ -396,7 +396,6 @@ select * from t1;
 # After this, only data based on old t1 records should have been added.
 INSERT INTO t1 (x) select (SELECT SUM(x)+2 FROM t1) FROM t2;
 select * from t1;
--- error ER_BAD_FIELD_ERROR
 INSERT INTO t1 (x) VALUES ((SELECT SUM(x) FROM t2));
 INSERT INTO t1 (x) SELECT (SELECT SUM(a)+b FROM t2) from t3;
 select * from t1;
@@ -2031,6 +2030,7 @@ SELECT a FROM t1 ORDER BY (SELECT c FROM t2 WHERE b > 2 );
 --error ER_SUBQUERY_NO_1_ROW
 SELECT a FROM t1 ORDER BY (SELECT c FROM t2 WHERE b > 1);
 SELECT a FROM t1 ORDER BY (SELECT c FROM t2 WHERE b > 2), a;
+--skip_if_hypergraph   # Optimizes away the subquery, leaving no error.
 --error ER_SUBQUERY_NO_1_ROW
 SELECT a FROM t1 ORDER BY (SELECT c FROM t2 WHERE b > 1), a;
 
@@ -2505,7 +2505,6 @@ insert into t1 (a) select FLOOR(rand() * 100) from t1;
 insert into t1 (a) select FLOOR(rand() * 100) from t1;
 insert into t1 (a) select FLOOR(rand() * 100) from t1;
 ANALYZE TABLE t1;
---skip_if_hypergraph  # Takes a long time due to bug#33583337.
 --replace_column 1 #
 SELECT a,
        (SELECT REPEAT(' ',250) FROM t1 i1
@@ -2887,9 +2886,9 @@ SELECT
   SUM( (SELECT AVG( (SELECT COUNT(*) FROM t1 t HAVING t1.a < 12) ) FROM t2) )
 FROM t1;
 
---error ER_BAD_FIELD_ERROR
-SELECT t1.a as XXA,
-   SUM( (SELECT AVG( (SELECT COUNT(*) FROM t1 t HAVING XXA < 12) ) FROM t2) )
+--error ER_INVALID_GROUP_FUNC_USE
+SELECT t1.a as xxa,
+   SUM( (SELECT AVG( (SELECT COUNT(*) FROM t1 t HAVING xxa < 12) ) FROM t2) )
 FROM t1;
 
 DROP TABLE t1,t2;
@@ -3190,7 +3189,6 @@ CREATE TABLE t3 (
 INSERT INTO t3 VALUES (1,null), (2,null);
 --source include/turn_off_only_full_group_by.inc
 
---error ER_BAD_FIELD_ERROR
 SELECT
   IF(t1.f1 = 'R', a1.f2, t2.f2) AS a4,
   IF(t1.f1 = 'R', a1.f3, t2.f3) AS f3,
@@ -4706,13 +4704,9 @@ SELECT ( SELECT a FROM t1 WHERE a = 1 UNION SELECT 1 ), a FROM t1;
 # Make sure we have feature F561 (see .yy file)
 SELECT * FROM t2 WHERE (a, b) IN (SELECT a, b FROM t2);
 
-# Make sure the parser does not allow nested UNIONs anywhere
-
---error ER_NOT_SUPPORTED_YET
 SELECT 1 UNION ( SELECT 1 UNION SELECT 1 );
 ( SELECT 1 UNION SELECT 1 ) UNION SELECT 1;
 
---error ER_NOT_SUPPORTED_YET
 SELECT ( SELECT 1 UNION ( SELECT 1 UNION SELECT 1 ) );
 --error ER_PARSE_ERROR
 SELECT ( ( SELECT 1 UNION SELECT 1 ) UNION SELECT 1;
@@ -4726,13 +4720,9 @@ SELECT * FROM ( ( SELECT 1 UNION SELECT 1 ) UNION SELECT 1 );
 SELECT * FROM ( ( SELECT 1 UNION SELECT 1 ) UNION SELECT 1 ) a;
 SELECT * FROM ( SELECT 1 UNION SELECT 1 UNION SELECT 1 ) a;
 
---error ER_NOT_SUPPORTED_YET
 SELECT * FROM t1 WHERE a =     ( SELECT 1 UNION ( SELECT 1 UNION SELECT 1 ) );
---error ER_NOT_SUPPORTED_YET
 SELECT * FROM t1 WHERE a = ALL ( SELECT 1 UNION ( SELECT 1 UNION SELECT 1 ) );
---error ER_NOT_SUPPORTED_YET
 SELECT * FROM t1 WHERE a = ANY ( SELECT 1 UNION ( SELECT 1 UNION SELECT 1 ) );
---error ER_NOT_SUPPORTED_YET
 SELECT * FROM t1 WHERE a IN    ( SELECT 1 UNION ( SELECT 1 UNION SELECT 1 ) );
 
 SELECT * FROM t1 WHERE a =     ( ( SELECT 1 UNION SELECT 1 )  UNION SELECT 1 );

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,7 @@
 #include <pc.hpp>
 #include <signaldata/TupCommit.hpp>
 #include <EventLogger.hpp>
+#include "../backup/Backup.hpp"
 #include "../dblqh/Dblqh.hpp"
 
 #define JAM_FILE_ID 416
@@ -661,7 +662,7 @@ static void dump_buf_hex(unsigned char *p, Uint32 bytes)
  * The varpart entry header contains the actual length of the varpart
  * allocated from the page. This size might be equal or bigger than
  * the size of the varpart to be committed. We will always at COMMIT time
- * ensure that we shrink it to the minimum size. It migth even be
+ * ensure that we shrink it to the minimum size. It might even be
  * shrunk to 0 in which case we free the varpart entirely.
  *
  * Handling ABORT
@@ -2010,7 +2011,7 @@ Dbtup::execute_real_commit(Signal *signal,
   Uint32 nextOp = leaderOperPtr.p->nextActiveOp;
   Uint32 prevOp = leaderOperPtr.p->prevActiveOp;
   /**
-   * The trigger code (which is shared between detached/imediate)
+   * The trigger code (which is shared between detached/immediate)
    *   check op-list to check were to read before values from
    *   detached triggers should always read from original tuple value
    *   from before transaction start, not from any intermediate update

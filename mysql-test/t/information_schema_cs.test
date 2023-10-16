@@ -12,6 +12,8 @@ if (!$require_case_insensitive_file_system)
 # Save the initial number of concurrent sessions
 --source include/count_sessions.inc
 
+--source include/elide_costs.inc
+
 set @orig_sql_mode= @@sql_mode;
 
 # Test for information_schema.schemata &
@@ -89,7 +91,7 @@ analyze table t2, t3, t5;
 show table status;
 show full columns from t3 like "a%";
 show full columns from mysql.db like "Insert%";
---replace_result utf8_tolower_ci utf8_bin
+--replace_result utf8mb3_tolower_ci utf8_bin
 show full columns from v1;
 select * from information_schema.COLUMNS where table_name="t1"
 and column_name= "a" order by table_name;
@@ -164,9 +166,9 @@ delimiter ;|
 select parameter_style, sql_data_access, dtd_identifier
 from information_schema.routines where routine_schema='test';
 
---replace_column 5 # 6 #
+--replace_column 6 # 7 #
 show procedure status where db='test';
---replace_column 5 # 6 #
+--replace_column 6 # 7 #
 show function status where db='test';
 select a.ROUTINE_NAME from information_schema.ROUTINES a,
 information_schema.SCHEMATA b where
@@ -202,7 +204,7 @@ WHERE ROUTINE_SCHEMA='test' ORDER BY ROUTINE_NAME;
 show create procedure sel2;
 show create function sub1;
 show create function sub2;
---replace_column 5 # 6 #
+--replace_column 6 # 7 #
 show function status like "sub2";
 connection default;
 disconnect user1;
@@ -1171,7 +1173,7 @@ select * from information_schema.engines WHERE ENGINE="MyISAM";
 
 # Tests printing of MaterializeInformationSchemaTableIterator with nontrivial
 # table iterators.
---replace_regex / *\(cost=(\d+\.\d+\.\.)?\d+\.\d+\ rows=\d+\)//
+--replace_regex $elide_metrics
 explain format=tree select * from information_schema.engines WHERE ENGINE="MyISAM";
 
 #
@@ -2641,3 +2643,18 @@ WHERE CHARACTER_SET_NAME LIKE 'utf8%'
 ORDER BY character_set_name;
 
 SHOW CHARACTER SET LIKE 'utf8%';
+
+--echo
+--echo Bug #33787300 Rename utf8_xxx collations to utf8mb3_xxx
+--echo
+
+SELECT * FROM information_schema.COLLATIONS
+WHERE COLLATION_NAME LIKE "utf8\_%"
+ORDER BY collation_name;
+
+SELECT * FROM information_schema.COLLATIONS
+WHERE COLLATION_NAME LIKE "utf8mb3\_%"
+ORDER BY collation_name;
+
+SHOW COLLATION LIKE 'utf8\_%';
+SHOW COLLATION LIKE 'utf8mb3\_%';

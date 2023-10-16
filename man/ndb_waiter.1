@@ -2,12 +2,12 @@
 .\"     Title: ndb_waiter
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/05/2022
+.\"      Date: 06/21/2023
 .\"    Manual: MySQL Database System
-.\"    Source: MySQL 8.0
+.\"    Source: MySQL 8.1
 .\"  Language: English
 .\"
-.TH "NDB_WAITER" "1" "03/05/2022" "MySQL 8\&.0" "MySQL Database System"
+.TH "NDB_WAITER" "1" "06/21/2023" "MySQL 8\&.1" "MySQL Database System"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -171,20 +171,7 @@ lB l l
 lB l l
 lB l l
 lB l l
-lB l l
-lB l l
-lB l l
-lB l l
 lB l l.
-T{
-.PP
-\fB \fR\fB--character-sets-dir=path\fR\fB \fR
-T}:T{
-Directory containing character sets
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
 T{
 .PP
 \fB \fR\fB--connect-retries=#\fR\fB \fR
@@ -192,7 +179,7 @@ T}:T{
 Number of times to retry connection before giving up
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -201,7 +188,7 @@ T}:T{
 Number of seconds to wait between attempts to contact management server
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -212,16 +199,7 @@ T}:T{
 Same as --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--core-file\fR\fB \fR
-T}:T{
-Write core file on error; used in debugging
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -230,7 +208,7 @@ T}:T{
 Read given file after global files are read
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -239,7 +217,7 @@ T}:T{
 Read default options from given file only
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -248,7 +226,7 @@ T}:T{
 Also read groups with concat(group, suffix)
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -259,7 +237,7 @@ T}:T{
 Display help text and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -268,7 +246,7 @@ T}:T{
 Read given path from login file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -281,7 +259,7 @@ Set connect string for connecting to ndb_mgmd. Syntax:
               NDB_CONNECTSTRING and my.cnf
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -292,27 +270,7 @@ T}:T{
 Same as --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--ndb-nodeid=#\fR\fB \fR
-T}:T{
-Set node ID for this node, overriding any ID set by --ndb-connectstring
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--ndb-optimized-node-selection\fR\fB \fR
-T}:T{
-Enable optimizations for selection of nodes for transactions. Enabled by
-              default; use --skip-ndb-optimized-node-selection to
-              disable
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -323,7 +281,7 @@ T}:T{
 Wait for cluster to reach NO CONTACT state
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -332,7 +290,7 @@ T}:T{
 Do not read default options from any option file other than login file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -341,7 +299,7 @@ T}:T{
 Wait for cluster to reach NOT STARTED state
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -350,7 +308,7 @@ T}:T{
 List of nodes not to be waited for
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -359,7 +317,7 @@ T}:T{
 Print program argument list and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -368,7 +326,7 @@ T}:T{
 Wait for cluster to enter single user mode
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -380,7 +338,7 @@ Wait this many seconds, then exit whether or not cluster has reached
               desired state
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -391,7 +349,7 @@ T}:T{
 Display help text and exit; same as --help
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -402,7 +360,7 @@ T}:T{
 Display version information and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -413,7 +371,7 @@ T}:T{
 List of nodes to be waited for
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 .TE
 .sp 1
@@ -428,7 +386,6 @@ ndb_waiter [\-c \fIconnection_string\fR]
 .if n \{\
 .RE
 .\}
-.sp
 Additional Options
 .sp
 .RS 4
@@ -1181,7 +1138,6 @@ Waiting for cluster enter state STARTED
 .if n \{\
 .RE
 .\}
-.sp
 .if n \{\
 .sp
 .\}
@@ -1202,16 +1158,10 @@ localhost, and reports
 Connecting to mgmsrv at (null)\&.
 .sp .5v
 .RE
-.PP
-Prior to NDB 8\&.0\&.20, this program printed
-NDBT_ProgramExit \- \fIstatus\fR
-upon completion of its run, due to an unnecessary dependency on the
-NDBT
-testing library\&. This dependency has been removed, eliminating the extraneous output\&.
 .SH "COPYRIGHT"
 .br
 .PP
-Copyright \(co 1997, 2022, Oracle and/or its affiliates.
+Copyright \(co 1997, 2023, Oracle and/or its affiliates.
 .PP
 This documentation is free software; you can redistribute it and/or modify it only under the terms of the GNU General Public License as published by the Free Software Foundation; version 2 of the License.
 .PP

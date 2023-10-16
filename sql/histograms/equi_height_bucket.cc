@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -36,14 +36,14 @@
 #include <memory>  // std::unique_ptr
 
 #include "field_types.h"  // enum_field_types
-#include "m_ctype.h"
-#include "my_base.h"  // ha_rows
+#include "my_base.h"      // ha_rows
 
 #include "my_inttypes.h"
 #include "my_time.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_time.h"
+#include "sql-common/json_dom.h"       // Json_*
 #include "sql/histograms/value_map.h"  // Histogram_comparator
-#include "sql/json_dom.h"              // Json_*
 #include "sql/my_decimal.h"            // my_decimal_cmp
 #include "sql/sql_time.h"              // calc_time_diff
 #include "template_utils.h"

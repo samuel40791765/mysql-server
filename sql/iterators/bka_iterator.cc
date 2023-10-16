@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -77,12 +77,13 @@ BKAIterator::BKAIterator(THD *thd,
                          MultiRangeRowIterator *mrr_iterator,
                          JoinType join_type)
     : RowIterator(thd),
-      m_outer_input(move(outer_input)),
-      m_inner_input(move(inner_input)),
+      m_outer_input(std::move(outer_input)),
+      m_inner_input(std::move(inner_input)),
       m_mem_root(key_memory_hash_join, 16384 /* 16 kB */),
       m_rows(&m_mem_root),
       m_outer_input_tables(outer_input_tables, store_rowids,
-                           tables_to_get_rowid_for),
+                           tables_to_get_rowid_for,
+                           /*tables_to_store_contents_of_null_rows_for=*/0),
       m_max_memory_available(max_memory_available),
       m_mrr_bytes_needed_for_single_inner_row(
           mrr_bytes_needed_for_single_inner_row),
@@ -318,15 +319,16 @@ int BKAIterator::Read() {
 }
 
 MultiRangeRowIterator::MultiRangeRowIterator(
-    THD *thd, TABLE *table, TABLE_REF *ref, int mrr_flags, JoinType join_type,
-    const Prealloced_array<TABLE *, 4> &outer_input_tables, bool store_rowids,
-    table_map tables_to_get_rowid_for)
+    THD *thd, TABLE *table, Index_lookup *ref, int mrr_flags,
+    JoinType join_type, const Prealloced_array<TABLE *, 4> &outer_input_tables,
+    bool store_rowids, table_map tables_to_get_rowid_for)
     : TableRowIterator(thd, table),
       m_file(table->file),
       m_ref(ref),
       m_mrr_flags(mrr_flags),
       m_outer_input_tables(outer_input_tables, store_rowids,
-                           tables_to_get_rowid_for),
+                           tables_to_get_rowid_for,
+                           /*tables_to_store_contents_of_null_rows_for=*/0),
       m_join_type(join_type) {}
 
 bool MultiRangeRowIterator::Init() {
@@ -394,7 +396,7 @@ uint MultiRangeRowIterator::MrrNextCallback(KEY_MULTI_RANGE *range) {
 
     LoadBufferRowIntoTableBuffers(m_outer_input_tables, *m_current_pos);
 
-    construct_lookup_ref(thd(), table(), m_ref);
+    construct_lookup(thd(), table(), m_ref);
     if (!m_ref->impossible_null_ref()) {
       break;
     }

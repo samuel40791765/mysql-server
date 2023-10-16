@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,6 +28,8 @@
 #include <NdbMutex.h>
 #include <ndb_socket.h>
 
+class ndb_sockaddr;
+
 const char * ndb_basename(const char *path);
 
 extern const char * my_progname;
@@ -46,11 +48,10 @@ void setOwnProcessInfoAngelPid(Uint32 pid)
   theApiMutex.unlock();
 }
 
-void setOwnProcessInfoServerAddress(struct sockaddr * addr)
+void setOwnProcessInfoServerAddress(ndb_sockaddr * addr)
 {
   theApiMutex.lock();
-  sockaddr_in6 *addr_in6 = (sockaddr_in6 *)addr;
-  singletonInfo.setHostAddress(&addr_in6->sin6_addr);
+  singletonInfo.setHostAddress(addr);
   theApiMutex.unlock();
 }
 
@@ -73,8 +74,12 @@ void getNameFromEnvironment()
 {
   HANDLE handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
                               false, singletonInfo.getPid());
+  if (!handle)
+    return;
+
   GetModuleFileNameEx(handle, 0, singletonInfo.process_name,
                       singletonInfo.ProcessNameLength);
+  CloseHandle(handle);
 }
 #else
 void getNameFromEnvironment()

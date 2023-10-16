@@ -1,4 +1,4 @@
-/* Copyright (c) 2006, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -59,7 +59,7 @@ struct NESTED_JOIN;
 
 class Condition_pushdown {
  public:
-  Condition_pushdown(Item *cond, TABLE_LIST *derived, THD *thd_arg,
+  Condition_pushdown(Item *cond, Table_ref *derived, THD *thd_arg,
                      Opt_trace_context *trace_arg)
       : m_cond_to_check(cond),
         m_derived_table(derived),
@@ -77,13 +77,13 @@ class Condition_pushdown {
   /// Used to pass information during condition pushdown.
   class Derived_table_info {
    public:
-    TABLE_LIST *m_derived_table;
+    Table_ref *m_derived_table;
     Query_block *m_derived_query_block;
     bool is_set_operation() const {
-      return m_derived_table->derived_query_expression()->is_union();
+      return m_derived_table->derived_query_expression()->is_set_operation();
     }
 
-    Derived_table_info(TABLE_LIST *derived_table, Query_block *query_block)
+    Derived_table_info(Table_ref *derived_table, Query_block *query_block)
         : m_derived_table(derived_table), m_derived_query_block(query_block) {}
   };
 
@@ -94,7 +94,7 @@ class Condition_pushdown {
   bool push_past_group_by();
   bool attach_cond_to_derived(Item *derived_cond, Item *cond_to_attach,
                               bool having);
-  void update_between_count(Item *cond);
+  void update_cond_count(Item *cond);
   void check_and_remove_sj_exprs(Item *cond);
   void remove_sj_exprs(Item *cond, NESTED_JOIN *sj_nest);
 
@@ -102,7 +102,7 @@ class Condition_pushdown {
   Item *m_cond_to_check;
 
   /// Derived table to push the condition to.
-  TABLE_LIST *m_derived_table;
+  Table_ref *m_derived_table;
 
   /**
    Condition that is extracted from outer WHERE condition to be pushed to

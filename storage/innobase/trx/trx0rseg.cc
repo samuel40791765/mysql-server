@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -38,6 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "clone0clone.h"
 #include "fsp0sysspace.h"
 #include "fut0lst.h"
+#include "log0chkp.h"
 #include "srv0mon.h"
 #include "srv0srv.h"
 #include "srv0start.h"
@@ -516,7 +517,7 @@ void trx_rsegs_init_start(purge_pq_t *purge_queue) {
 
       mtr.start();
 
-      /* Cretae the trx_rseg_t object.
+      /* Create the trx_rseg_t object.
       Note that all tablespaces with rollback segments
       use univ_page_size. */
       rseg = trx_rseg_mem_initialize(slot, undo_space->id(), page_no,
@@ -745,7 +746,7 @@ void Rsegs::init() {
   m_latch = static_cast<rw_lock_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*m_latch)));
 
-  rw_lock_create(rsegs_lock_key, m_latch, SYNC_RSEGS);
+  rw_lock_create(rsegs_lock_key, m_latch, LATCH_ID_RSEGS);
 }
 
 /** De-initialize */
@@ -812,7 +813,6 @@ bool trx_rseg_add_rollback_segments(space_id_t space_id, ulong target_rsegs,
   mtr_t mtr;
   page_no_t page_no;
   trx_rseg_t *rseg;
-  ulint n_existing = 0;
   ulint n_created = 0;
   ulint n_tracked = 0;
 
@@ -838,7 +838,6 @@ bool trx_rseg_add_rollback_segments(space_id_t space_id, ulong target_rsegs,
     rseg = rsegs->find(rseg_id);
     if (rseg != nullptr) {
       ut_ad(rseg->id == rseg_id);
-      n_existing++;
       continue;
     }
 
@@ -873,8 +872,6 @@ bool trx_rseg_add_rollback_segments(space_id_t space_id, ulong target_rsegs,
         any more. */
         break;
       }
-    } else {
-      n_existing++;
     }
 
     /* Create the trx_rseg_t object. */

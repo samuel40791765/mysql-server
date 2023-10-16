@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -275,8 +275,9 @@ Suma::execREAD_CONFIG_REQ(Signal* signal)
   c_masterNodeId = getOwnNodeId();
 
   c_nodeGroup = c_noNodesInGroup = 0;
-  for (int i = 0; i < MAX_REPLICAS; i++) {
-    c_nodesInGroup[i]   = 0;
+  for (Uint32 i = 0; i < MAX_REPLICAS; i++)
+  {
+    c_nodesInGroup[i] = 0;
   }
 
   m_first_free_page= RNIL;
@@ -698,6 +699,14 @@ bool
 valid_seq(Uint32 n, Uint32 r, Uint16 dst[])
 {
   Uint16 tmp[MAX_REPLICAS];
+ /**
+  * Set to 0 the unused entries in m_nodes 
+  */
+  for (Uint32 i = r; i < MAX_REPLICAS; i++)
+  {
+    dst[i] = 0;
+  }
+  
   for (Uint32 i = 0; i<r; i++)
   {
     tmp[i] = n % r;
@@ -2454,7 +2463,7 @@ Suma::execSUB_CREATE_REQ(Signal* signal)
     jam();
 
     /**
-     * We havent started syncing yet
+     * We haven't started syncing yet
      */
     sendSubCreateRef(signal, senderRef, senderData,
                      SubCreateRef::NotStarted);
@@ -2739,11 +2748,13 @@ Suma::execSUB_SYNC_REQ(Signal* signal)
     if (req->requestInfo & SubSyncReq::RangeScan)
     {
       jam();
-      ndbrequire(handle.m_cnt > 1)
-      SegmentedSectionPtr ptr;
-      ndbrequire(handle.getSection(ptr, SubSyncReq::TUX_BOUND_INFO));
-      LocalSyncRecordBuffer boundBuf(c_dataBufferPool, syncPtr.p->m_boundInfo);
-      append(boundBuf, ptr, getSectionSegmentPool());
+      if (handle.m_cnt > 1)
+      {
+        SegmentedSectionPtr ptr;
+        ndbrequire(handle.getSection(ptr, SubSyncReq::TUX_BOUND_INFO));
+        LocalSyncRecordBuffer boundBuf(c_dataBufferPool, syncPtr.p->m_boundInfo);
+        append(boundBuf, ptr, getSectionSegmentPool());
+      }
     }
     releaseSections(handle);
   }
@@ -3327,9 +3338,12 @@ Suma::SyncRecord::nextScan(Signal* signal)
     {
       attrInfo[pos++] = *it.data;
     }
-    ptr[1].p = &attrInfo[oldpos];
-    ptr[1].sz = pos - oldpos;
-    noOfSections = 2;
+    if (pos > oldpos)
+    {
+      ptr[1].p = &attrInfo[oldpos];
+      ptr[1].sz = pos - oldpos;
+      noOfSections = 2;
+    }
   }
   suma.sendSignal(lqhRef, GSN_SCAN_FRAGREQ, signal, 
 		  ScanFragReq::SignalLength, JBB, ptr, noOfSections);
@@ -3543,7 +3557,7 @@ Suma::execSUB_START_REQ(Signal* signal){
     jam();
 
     /**
-     * We havent started syncing yet
+     * We haven't started syncing yet
      */
     sendSubStartRef(signal,
                     senderRef, senderData, SubStartRef::NotStarted);
@@ -4183,7 +4197,7 @@ Suma::execSUB_STOP_REQ(Signal* signal){
     jam();
 
     /**
-     * We havent started syncing yet
+     * We haven't started syncing yet
      */
     sendSubStopRef(signal,
                    senderRef, senderData, SubStopRef::NotStarted);
@@ -4821,7 +4835,7 @@ Suma::get_responsible_node(Uint32 bucket) const
   Uint32 node;
   ndbrequire(bucket < NO_OF_BUCKETS);
   const Bucket* ptr = c_buckets + bucket;
-  for(Uint32 i = 0; i<MAX_REPLICAS; i++)
+  for(Uint32 i = 0; i < c_noNodesInGroup; i++)
   {
     node= ptr->m_nodes[i];
     if(c_alive_nodes.get(node))
@@ -4845,7 +4859,7 @@ Suma::get_responsible_node(Uint32 bucket, const NdbNodeBitmask& mask) const
   Uint32 node;
   ndbrequire(bucket < NO_OF_BUCKETS);
   const Bucket* ptr = c_buckets + bucket;
-  for(Uint32 i = 0; i<MAX_REPLICAS; i++)
+  for(Uint32 i = 0; i < c_noNodesInGroup; i++)
   {
     node= ptr->m_nodes[i];
     if(mask.get(node))
@@ -4893,7 +4907,7 @@ Suma::reformat(Signal* signal,
   {
     jam();
     const Uint32 secnum = (i == 0 ? 0 : 2);
-    Uint32* p = lsptr[secnum].p;
+    const Uint32* p = lsptr[secnum].p;
     Uint32 sz = lsptr[secnum].sz;
     while (sz > 0)
     {
@@ -5719,7 +5733,7 @@ Suma::sendSUB_GCP_COMPLETE_REP(Signal* signal)
    * If count match the number of buckets that should be reported
    * complete, send subscription data streams identifiers.
    * If this is not the case fallback on old signal without
-   * the streams identifiers, but that should not happend!
+   * the streams identifiers, but that should not happen!
    */
   if (stream_count == m_gcp_complete_rep_count)
   {
@@ -6205,7 +6219,7 @@ Suma::execSUB_REMOVE_REQ(Signal* signal)
     jam();
 
     /**
-     * We havent started syncing yet
+     * We haven't started syncing yet
      */
     sendSubRemoveRef(signal,  req, SubRemoveRef::NotStarted);
     return;
@@ -7090,25 +7104,23 @@ Suma::out_of_buffer_release(Signal* signal, Uint32 buck)
   ndbrequire(buck < NO_OF_BUCKETS);
   Bucket* bucket = c_buckets + buck;
   Uint32 tail= bucket->m_buffer_tail;
-  
+
   if(tail != RNIL)
   {
     Buffer_page* page= c_page_pool.getPtr(tail);
     bucket->m_buffer_tail = page->m_next_page;
     free_page(tail, page);
-    signal->theData[0] = SumaContinueB::OUT_OF_BUFFER_RELEASE;
-    signal->theData[1] = buck;
-    sendSignal(SUMA_REF, GSN_CONTINUEB, signal, 2, JBB);
-    return;
   }
 
-  /**
-   * Clear head
-   */
-  bucket->m_buffer_head.m_page_id = RNIL;
-  bucket->m_buffer_head.m_page_pos = Buffer_page::DATA_WORDS + 1;
-  
-  buck++;
+  // If the page freed above is the last page, update the head
+  // and continue releasing the next bucket.
+  if (tail == RNIL) {
+    bucket->m_buffer_head.m_page_id = RNIL;
+    bucket->m_buffer_head.m_page_pos = Buffer_page::DATA_WORDS + 1;
+
+    buck++;
+  }
+
   if(buck != c_no_of_buckets)
   {
     signal->theData[0] = SumaContinueB::OUT_OF_BUFFER_RELEASE;

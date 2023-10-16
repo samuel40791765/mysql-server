@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2020, 2023, Oracle and/or its affiliates.
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
    as published by the Free Software Foundation.
@@ -27,6 +27,7 @@
 
 #include <cstdint>
 
+#include "m_string.h"
 #include "mysql/components/my_service.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/plugin.h"
@@ -37,6 +38,8 @@
 #include "my_dbug.h"       // NOLINT(build/include_subdir)
 #include "my_inttypes.h"   // NOLINT(build/include_subdir)
 #include "mysqld_error.h"  // NOLINT(build/include_subdir)
+
+struct CHARSET_INFO;
 
 static Test_context *test_context = nullptr;
 
@@ -263,9 +266,9 @@ static void run_cmd(MYSQL_SESSION session, const std::string &query,
   com.com_query.query = query.c_str();
   com.com_query.length = query.length();
 
-  int fail = command_service_run_command(session, COM_QUERY, &com,
-                                         &my_charset_utf8_general_ci, &sql_cbs,
-                                         CS_TEXT_REPRESENTATION, ctxt);
+  const int fail = command_service_run_command(
+      session, COM_QUERY, &com, &my_charset_utf8mb3_general_ci, &sql_cbs,
+      CS_TEXT_REPRESENTATION, ctxt);
   if (fail) {
     test_context->log_error("run_statement code: ", fail);
 

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -37,6 +37,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 /* Do not include univ.i because univ.i includes this. */
 
+#include <cstdio>
 #include <functional>
 
 /** Set a callback function to be called before exiting.
@@ -93,6 +94,7 @@ void ut_set_assert_callback(std::function<void()> &callback);
     snprintf(buf, sizeof buf, prefix "_%u", count);                    \
     DBUG_EXECUTE_IF(buf, log_buffer_flush_to_disk(); DBUG_SUICIDE();); \
   } while (0)
+
 #else
 #define DBUG_INJECT_CRASH(prefix, count)
 #define DBUG_INJECT_CRASH_WITH_LOG_FLUSH(prefix, count)

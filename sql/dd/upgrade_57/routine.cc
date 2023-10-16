@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -26,16 +26,15 @@
 #include <sys/types.h>
 
 #include "lex_string.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "my_base.h"
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_sys.h"
 #include "my_user.h"  // parse_user
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
@@ -60,6 +59,7 @@
 #include "sql/thd_raii.h"
 #include "sql/thr_malloc.h"
 #include "sql_string.h"
+#include "string_with_len.h"
 #include "thr_lock.h"
 
 namespace dd {
@@ -297,7 +297,7 @@ static bool migrate_routine_to_dd(THD *thd, TABLE *proc_table) {
   LEX_USER user_info;
   bool dummy_is_sp_created = false;
 
-  // Fetch SP/SF name, datbase name, definer and type.
+  // Fetch SP/SF name, database name, definer and type.
   if ((sp_db = get_field(thd->mem_root,
                          proc_table->field[MYSQL_PROC_FIELD_DB])) == nullptr)
     return true;
@@ -433,6 +433,14 @@ static bool migrate_routine_to_dd(THD *thd, TABLE *proc_table) {
     sp->m_body.length = strlen(body);
   }
 
+  // Earlier versions of dictionary does not contain information on
+  // language, since SQL was the only option.  Normally,
+  // sp_create_routine will be called after parsing where language has
+  // been initialized to SQL (default). Make sure to set here, too.
+  if (sp->m_chistics->language.length == 0) {
+    sp->m_chistics->language = {"SQL", 3};
+  }
+
   // Create entry for SP/SF in DD table.
   if (sp_create_routine(thd, sp, &user_info, false, dummy_is_sp_created))
     goto err;
@@ -462,7 +470,7 @@ bool migrate_routines_to_dd(THD *thd) {
   MEM_ROOT records_mem_root;
   Thd_mem_root_guard root_guard(thd, &records_mem_root);
 
-  TABLE_LIST tables("mysql", "proc", TL_READ);
+  Table_ref tables("mysql", "proc", TL_READ);
   auto table_list = &tables;
 
   if (open_and_lock_tables(thd, table_list, flags, &prelocking_strategy)) {

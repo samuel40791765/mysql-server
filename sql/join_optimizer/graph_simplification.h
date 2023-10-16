@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -99,7 +99,8 @@ class GraphSimplifier {
     APPLIED_SIMPLIFICATION,
 
     // We applied a simplification, but it was one that was forced upon us;
-    // we inteded to apply the opposite, but discovered it would leave the graph
+    // we intended to apply the opposite, but discovered it would leave the
+    // graph
     // in an impossible state. Thus, the graph has been changed, but the actual
     // available join orderings are exactly as they were.
     APPLIED_NOOP,
@@ -129,7 +130,16 @@ class GraphSimplifier {
   void UndoSimplificationStep();
 
   // How many steps we've (successfully) done and not undone.
-  int num_steps_done() const { return m_done_steps.size(); }
+  int num_steps_done() const {
+    assert(m_done_steps.size() < size_t{std::numeric_limits<int>::max()});
+    return static_cast<int>(m_done_steps.size());
+  }
+
+  // How many steps we've undone.
+  int num_steps_undone() const {
+    assert(m_undone_steps.size() < size_t{std::numeric_limits<int>::max()});
+    return static_cast<int>(m_undone_steps.size());
+  }
 
  private:
   // Update the given join's cache in the priority queue (or take it in
@@ -289,8 +299,12 @@ class GraphSimplifier {
       m_pq;
 };
 
+void SetNumberOfSimplifications(int num_simplifications,
+                                GraphSimplifier *simplifier);
+
 // See comment in .cc file.
 void SimplifyQueryGraph(THD *thd, int subgraph_pair_limit,
-                        JoinHypergraph *graph, std::string *trace);
+                        JoinHypergraph *graph, GraphSimplifier *simplifier,
+                        std::string *trace);
 
 #endif  // SQL_JOIN_OPTIMIZER_GRAPH_SIMPLIFICATION_H_

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -92,7 +92,7 @@ class Xcom_network_provider : public Network_provider {
     return successful;
   }
 
-  bool cleanup_secure_connections_context() override;
+  void cleanup_secure_connections_context() override;
 
   bool finalize_secure_connections_context() override;
 

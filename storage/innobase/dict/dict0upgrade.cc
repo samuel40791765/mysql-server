@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -40,6 +40,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "dict0load.h"
 #include "ha_innodb.h"
 #include "ha_innopart.h"
+#include "log0buf.h"
+#include "log0chkp.h"
 #include "row0sel.h"
 #include "srv0start.h"
 
@@ -338,7 +340,7 @@ static bool dd_upgrade_match_single_col(const Field *field,
   return (failure);
 }
 
-/* Match defintion of all columns in InnoDB table and DD table
+/* Match definition of all columns in InnoDB table and DD table
 @param[in]      srv_table       Server table object
 @param[in]      dd_table        New DD table object
 @param[in]      ib_table        InnoDB table object
@@ -590,7 +592,7 @@ static bool dd_upgrade_match_index(TABLE *srv_table, dict_index_t *index) {
 @param[in,out]  auto_inc_index_name     Index name on which auto inc exists
 @param[in,out]  auto_inc_col_name       Column name of the auto inc field
 @retval         true                    if auto inc field exists
-@retval         false                   if auot inc field doesn't exist */
+@retval         false                   if auto inc field doesn't exist */
 static bool dd_upgrade_check_for_autoinc(TABLE *srv_table,
                                          const char *&auto_inc_index_name,
                                          const char *&auto_inc_col_name) {

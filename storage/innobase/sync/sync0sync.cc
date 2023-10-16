@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -86,6 +86,7 @@ mysql_pfs_key_t log_flusher_mutex_key;
 mysql_pfs_key_t log_write_notifier_mutex_key;
 mysql_pfs_key_t log_flush_notifier_mutex_key;
 mysql_pfs_key_t log_limits_mutex_key;
+mysql_pfs_key_t log_files_mutex_key;
 mysql_pfs_key_t log_cmdq_mutex_key;
 mysql_pfs_key_t log_sn_lock_key;
 mysql_pfs_key_t log_sn_mutex_key;
@@ -145,6 +146,7 @@ mysql_pfs_key_t clone_task_mutex_key;
 mysql_pfs_key_t clone_snapshot_mutex_key;
 mysql_pfs_key_t parallel_read_mutex_key;
 mysql_pfs_key_t dblwr_mutex_key;
+mysql_pfs_key_t ahi_enabled_mutex_key;
 
 #endif /* UNIV_PFS_MUTEX */
 
@@ -226,7 +228,7 @@ const char *sync_basename(const char *filename) {
 /** String representation of the filename and line number where the
 latch was created
 @param[in]      id              Latch ID
-@param[in]      created         Filename and line number where it was crated
+@param[in]      created         Filename and line number where it was created
 @return the string representation */
 std::string sync_mutex_to_string(latch_id_t id, const std::string &created) {
   std::ostringstream msg;

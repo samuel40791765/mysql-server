@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -335,7 +335,7 @@ enum enum_isolation_level {
 #define COUNT_TRANS_LEVEL (LAST_TRANS_LEVEL - FIRST_TRANS_LEVEL + 1)
 
 /**
-  Enum values for transaction acces mode columns.
+  Enum values for transaction access mode columns.
 */
 enum enum_transaction_mode {
   TRANS_MODE_READ_ONLY = 1,
@@ -355,6 +355,13 @@ enum enum_transaction_mode {
 #define INSTR_PROPERTIES_SET_USER (1 << 2)
 #define INSTR_PROPERTIES_SET_GLOBAL_STAT (1 << 3)
 #define INSTR_PROPERTIES_SET_MUTABLE (1 << 4)
+#define INSTR_PROPERTIES_SET_QUOTA_BY_DEFAULT (1 << 5)
+
+/* Flags exposed in setup_instruments.enforced */
+#define INSTR_FLAGS_SET_CONTROLLED (1 << 0)
+
+/* All valid flags, only INSTR_FLAGS_SET_CONTROLLED so far. */
+#define INSTR_FLAGS_MASK (1)
 
 /* Flags exposed in setup_threads.properties */
 #define THREAD_PROPERTIES_SET_SINGLETON (1 << 0)

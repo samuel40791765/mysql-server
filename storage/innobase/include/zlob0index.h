@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -190,7 +190,7 @@ struct z_index_entry_t {
   @param[in]    trxid           the transaction that is being rolled
                                   back.
   @param[in]    undo_no         the savepoint undo number of trx,
-                                  upto which rollback happens.
+                                  up to which rollback happens.
   @return true if this entry can be rolled back, false otherwise. */
   bool can_rollback(trx_id_t trxid, undo_no_t undo_no) {
     /* For rollback, make use of creator trx id. */

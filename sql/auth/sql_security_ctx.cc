@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
    as published by the Free Software Foundation.
@@ -29,7 +29,6 @@
 #include <utility>
 #include <vector>
 
-#include "m_ctype.h"
 #include "mf_wcomp.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
@@ -37,6 +36,7 @@
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/mysql_lex_string.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysqld_error.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"
@@ -47,6 +47,8 @@
 #include "sql/mysqld.h"
 #include "sql/sql_class.h"
 #include "sql/table.h"
+#include "string_with_len.h"
+#include "strmake.h"
 
 extern bool initialized;
 
@@ -182,11 +184,12 @@ void Security_context::skip_grants(const char *user /*= "skip-grants user"*/,
   m_is_skip_grants_user = true;
 
   /*
-    If the security context is tied upto to the THD object and it is
-    current security context in THD then set the flag to true.
+    If the security context is tied up to to the THD object and it is
+    current security context in THD, then set the flags to true.
   */
   if (m_thd && m_thd->security_context() == this) {
     m_thd->set_system_user(true);
+    m_thd->set_connection_admin(true);
   }
 }
 
@@ -264,12 +267,12 @@ void Security_context::copy_security_ctx(const Security_context &src_sctx) {
   For the main security context, the memory for user/host/ip is
   allocated on system heap, and the THD class frees this memory in
   its destructor. The only case when contents of the main security
-  context may change during its life time is when someone issued
+  context may change during its life time is when someone issued a
   CHANGE USER command.
   Memory management of a "temporary" security context is
   responsibility of the module that creates it.
 
-  @retval true  there is no user with the given credentials. The erro
+  @retval true  There is no user with the given credentials. The error
                 is reported in the thread.
   @retval false success
 */
@@ -349,9 +352,9 @@ int Security_context::activate_role(LEX_CSTRING role, LEX_CSTRING role_host,
                        create_authid_from(role, role_host));
   /* silently ignore requests of activating an already active role */
   if (res != m_active_roles.end()) return 0;
-  LEX_CSTRING dup_role = {
+  const LEX_CSTRING dup_role = {
       my_strdup(PSI_NOT_INSTRUMENTED, role.str, MYF(MY_WME)), role.length};
-  LEX_CSTRING dup_role_host = {
+  const LEX_CSTRING dup_role_host = {
       my_strdup(PSI_NOT_INSTRUMENTED, role_host.str, MYF(MY_WME)),
       role_host.length};
   if (validate_access && !check_if_granted_role(priv_user(), priv_host(),
@@ -497,15 +500,15 @@ ulong Security_context::db_acl(LEX_CSTRING db, bool use_pattern_scan) const {
   DBUG_TRACE;
   if (m_acl_map == nullptr || db.length == 0) return 0;
 
-  std::string key(db.str, db.length);
+  const std::string key(db.str, db.length);
   Db_access_map::iterator found_acl_it = m_acl_map->db_acls()->find(key);
   if (found_acl_it == m_acl_map->db_acls()->end()) {
     Db_access_map::iterator it = m_acl_map->db_wild_acls()->begin();
     ulong access = 0;
     for (; it != m_acl_map->db_wild_acls()->end(); ++it) {
       /*
-        Do the usual string comparision if partial_revokes is ON,
-        otherwise do the wildcard grant comparision
+        Do the usual string comparison if partial_revokes is ON,
+        otherwise do the wildcard grant comparison
       */
       if (mysqld_partial_revokes()
               ? (my_strcasecmp(system_charset_info, db.str,
@@ -577,7 +580,7 @@ Grant_table_aggregate Security_context::table_and_column_acls(
 
 ulong Security_context::table_acl(LEX_CSTRING db, LEX_CSTRING table) {
   if (m_acl_map == nullptr) return 0;
-  Grant_table_aggregate aggr = table_and_column_acls(db, table);
+  const Grant_table_aggregate aggr = table_and_column_acls(db, table);
   return filter_access(aggr.table_access, db.str ? db.str : "");
 }
 
@@ -645,7 +648,7 @@ std::pair<bool, bool> Security_context::has_global_grant(const char *priv,
   /* server started with --skip-grant-tables */
   if (!initialized || m_is_skip_grants_user) return std::make_pair(true, true);
 
-  std::string privilege(priv, priv_len);
+  const std::string privilege(priv, priv_len);
 
   if (m_acl_map == nullptr) {
     THD *thd = m_thd ? m_thd : current_thd;
@@ -656,8 +659,8 @@ std::pair<bool, bool> Security_context::has_global_grant(const char *priv,
     }
     Acl_cache_lock_guard acl_cache_lock(thd, Acl_cache_lock_mode::READ_MODE);
     if (!acl_cache_lock.lock(false)) return std::make_pair(false, false);
-    Role_id key(&m_priv_user[0], m_priv_user_length, &m_priv_host[0],
-                m_priv_host_length);
+    const Role_id key(&m_priv_user[0], m_priv_user_length, &m_priv_host[0],
+                      m_priv_host_length);
     User_to_dynamic_privileges_map::iterator it, it_end;
     std::tie(it, it_end) = get_dynamic_privileges_map()->equal_range(key);
     it = std::find(it, it_end, privilege);
@@ -1107,7 +1110,7 @@ void Security_context::init_restrictions(const Restrictions &restrictions) {
 
 bool Security_context::is_access_restricted_on_db(
     ulong want_access, const std::string &db_name) const {
-  ulong filtered_access = filter_access(want_access, db_name);
+  const ulong filtered_access = filter_access(want_access, db_name);
   return (filtered_access != want_access);
 }
 
@@ -1180,10 +1183,10 @@ std::pair<bool, bool> Security_context::fetch_global_grant(
   @param [in,out] tables Table list object
 
   @returns access information
-  @retval true Sucess
+  @retval true Success
   @retval false Failure
  */
-bool Security_context::has_table_access(ulong priv, TABLE_LIST *tables) {
+bool Security_context::has_table_access(ulong priv, Table_ref *tables) {
   DBUG_TRACE;
   assert(tables != nullptr);
   TABLE const *table = tables->table;
@@ -1201,7 +1204,7 @@ bool Security_context::has_table_access(ulong priv, TABLE_LIST *tables) {
     acls = db_acl(db);
     if (priv & acls) return true;
 
-    Grant_table_aggregate aggr = table_and_column_acls(db, table_name);
+    const Grant_table_aggregate aggr = table_and_column_acls(db, table_name);
     acls = aggr.table_access | aggr.cols;
     if (priv & acls) return true;
   } else {
@@ -1238,7 +1241,7 @@ bool Security_context::is_table_blocked(ulong priv, TABLE const *table) {
   table_name.length = strlen(table->alias);
 
   /* Table privs */
-  TABLE_LIST tables;
+  Table_ref tables;
   tables.table = const_cast<TABLE *>(table);
   tables.db = db.str;
   tables.db_length = db.length;
@@ -1257,7 +1260,7 @@ bool Security_context::is_table_blocked(ulong priv, TABLE const *table) {
   @param [in] columns List of column names to check
 
   @returns access information
-  @retval true Sucess
+  @retval true Success
   @retval false Failure
  */
 bool Security_context::has_column_access(ulong priv, TABLE const *table,
@@ -1272,7 +1275,7 @@ bool Security_context::has_column_access(ulong priv, TABLE const *table,
   table_name.length = strlen(table->alias);
 
   /* Table privs */
-  TABLE_LIST tables;
+  Table_ref tables;
   tables.table = const_cast<TABLE *>(table);
   tables.db = db.str;
   tables.db_length = db.length;

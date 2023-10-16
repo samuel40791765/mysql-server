@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -33,11 +33,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef buf0buf_h
 #define buf0buf_h
 
-#include "buf0dblwr.h"
 #include "buf0types.h"
 #include "fil0fil.h"
 #include "hash0hash.h"
-#include "log0log.h"
 #include "mtr0types.h"
 #include "os0proc.h"
 #include "page0types.h"
@@ -678,10 +676,20 @@ void buf_refresh_io_stats_all();
 /** Assert that all file pages in the buffer are in a replaceable state. */
 void buf_must_be_all_freed(void);
 
-/** Checks that there currently are no pending i/o-operations for the buffer
-pool.
-@return number of pending i/o */
-ulint buf_pool_check_no_pending_io(void);
+/** Computes number of pending I/O read operations for the buffer pool.
+@return number of pending i/o reads */
+size_t buf_pool_pending_io_reads_count();
+
+/** Computes number of pending I/O write operations for the buffer pool.
+@return number of pending i/o writes */
+size_t buf_pool_pending_io_writes_count();
+
+/** Waits until there are no pending I/O operations for the buffer pool.
+Keep waiting in loop with sleeps, emitting information every minute.
+This is used to avoid risk of some pending async IO (e.g. enqueued by
+the linear read-ahead), which would involve ibuf merge and create new
+redo records. */
+void buf_pool_wait_for_no_pending_io();
 
 /** Invalidates the file pages in the buffer pool when an archive recovery is
  completed. All the file pages buffered must be in a replaceable state when
@@ -851,7 +859,7 @@ the memory pointed by it. Thus calling this function requires holding at least
 one of the latches which prevent freeing memory from buffer pool for the
 duration of the call and until you pin the block in some other way, as otherwise
 the result of this function might be obsolete by the time you dereference the
-block (an s-latch on buf_page_hash_lock_get for any bucket is enough).
+block (an s-latch on buf_page_hash_lock_get for any hash cell is enough).
 @param  buf_pool    The buffer pool instance to search in.
 @param  ptr         A pointer which you want to check. This function will not
                     dereference it.
@@ -870,14 +878,12 @@ then this function does nothing.
 Sets the io_fix flag to BUF_IO_READ and sets a non-recursive exclusive lock
 on the buffer frame. The io-handler must take care that the flag is cleared
 and the lock released later.
-@param[out]     err                     DB_SUCCESS or DB_TABLESPACE_DELETED
 @param[in]      mode                    BUF_READ_IBUF_PAGES_ONLY, ...
 @param[in]      page_id                 page id
 @param[in]      page_size               page size
 @param[in]      unzip                   true=request uncompressed page
 @return pointer to the block or NULL */
-buf_page_t *buf_page_init_for_read(dberr_t *err, ulint mode,
-                                   const page_id_t &page_id,
+buf_page_t *buf_page_init_for_read(ulint mode, const page_id_t &page_id,
                                    const page_size_t &page_size, bool unzip);
 
 /** Completes an asynchronous read or write request of a file page to or from
@@ -1253,6 +1259,7 @@ class buf_page_t {
     m_version = 0;
     if (id.space() != UINT32_UNDEFINED) {
       m_space = fil_space_get(id.space());
+      /* There could be non-existent tablespace while importing it */
       if (m_space) {
         m_space->inc_ref();
         /* We don't have a way to check the MDL locks, which are guarding the
@@ -1651,8 +1658,34 @@ class buf_page_t {
 #endif /* !UNIV_HOTBACKUP */
 };
 
-/** The buffer control block structure */
+/** Structure used by AHI to contain information on record prefixes to be
+considered in hash index subsystem. It is meant for using as a single 64bit
+atomic value, thus it needs to be aligned properly. */
+struct alignas(alignof(uint64_t)) btr_search_prefix_info_t {
+  /** recommended prefix: number of bytes in an incomplete field
+  @see BTR_PAGE_MAX_REC_SIZE */
+  uint32_t n_bytes;
+  /** recommended prefix length for hash search: number of full fields */
+  uint16_t n_fields;
+  /** true or false, depending on whether the leftmost record of several records
+  with the same prefix should be indexed in the hash index */
+  bool left_side;
 
+  bool equals_without_left_side(const btr_search_prefix_info_t &other) const {
+    return n_bytes == other.n_bytes && n_fields == other.n_fields;
+  }
+
+  bool operator==(const btr_search_prefix_info_t &other) const {
+    return n_bytes == other.n_bytes && n_fields == other.n_fields &&
+           left_side == other.left_side;
+  }
+
+  bool operator!=(const btr_search_prefix_info_t &other) const {
+    return !(*this == other);
+  }
+};
+
+/** The buffer control block structure */
 struct buf_block_t {
   /** @name General fields */
   /** @{ */
@@ -1685,94 +1718,102 @@ struct buf_block_t {
 
   /** @} */
 
-  /** @name Hash search fields (unprotected)
-  NOTE that these fields are NOT protected by any semaphore! */
-  /** @{ */
+  /** Structure that holds most AHI-related fields. */
+  struct ahi_t {
+   public:
+    /** Recommended prefix info for hash search. It is atomically copied
+    from the index's current recommendation for the prefix info and should
+    eventually get to the block's actual prefix info used. It is used to decide
+    when the n_hash_helps should be reset. It is modified only while having S-
+    or X- latch on block's lock. */
+    std::atomic<btr_search_prefix_info_t> recommended_prefix_info;
+    /** Prefix info that was used for building hash index. It cannot be modified
+    while there are any record entries added in the AHI. It's invariant that all
+    records added to AHI from this block were folded using this prefix info. It
+    may only be modified when we are holding the appropriate X-latch in
+    btr_search_sys->parts[]->latch. Also, it happens that it is modified
+    to not-empty value only when the block is held in private or the block's
+    lock is S- or X-latched. This implies that the field's non-empty value may
+    be read and use reliably when the appropriate
+    btr_search_sys->parts[]->latch S-latch or X-latch is being held, or
+    the block's lock is X-latched. */
+    std::atomic<btr_search_prefix_info_t> prefix_info;
+    static_assert(decltype(prefix_info)::is_always_lock_free);
 
-  /** Counter which controls building of a new hash index for the page */
-  uint32_t n_hash_helps;
-
-  /** Recommended prefix length for hash search: number of bytes in an
-  incomplete last field */
-  volatile uint32_t n_bytes;
-
-  /** Recommended prefix length for hash search: number of full fields */
-  volatile uint32_t n_fields;
-
-  /** true or false, depending on whether the leftmost record of several
-  records with the same prefix should be indexed in the hash index */
-  volatile bool left_side;
-  /** @} */
-
-  /** @name Hash search fields
-  These 5 fields may only be modified when:
-  we are holding the appropriate x-latch in btr_search_latches[], and
-  one of the following holds:
-  (1) the block state is BUF_BLOCK_FILE_PAGE, and
-  we are holding an s-latch or x-latch on buf_block_t::lock, or
-  (2) buf_block_t::buf_fix_count == 0, or
-  (3) the block state is BUF_BLOCK_REMOVE_HASH.
-
-  An exception to this is when we init or create a page
-  in the buffer pool in buf0buf.cc.
-
-  Another exception for buf_pool_clear_hash_index() is that
-  assigning block->index = NULL (and block->n_pointers = 0)
-  is allowed whenever btr_search_own_all(RW_LOCK_X).
-
-  Another exception is that ha_insert_for_fold_func() may
-  decrement n_pointers without holding the appropriate latch
-  in btr_search_latches[]. Thus, n_pointers must be
-  protected by atomic memory access.
-
-  This implies that the fields may be read without race
-  condition whenever any of the following hold:
-  - the btr_search_latches[] s-latch or x-latch is being held, or
-  - the block state is not BUF_BLOCK_FILE_PAGE or BUF_BLOCK_REMOVE_HASH,
-  and holding some latch prevents the state from changing to that.
-
-  Some use of assert_block_ahi_empty() or assert_block_ahi_valid()
-  is prone to race conditions while buf_pool_clear_hash_index() is
-  executing (the adaptive hash index is being disabled). Such use
-  is explicitly commented. */
-
-  /** @{ */
+    /** Index for which the adaptive hash index has been created, or nullptr if
+    the page does not exist in the index. Note that it does not guarantee that
+    the AHI index is complete, though: there may have been hash collisions etc.
+    It may be modified:
+    - to nullptr if btr_search_enabled is false and block's mutex is held and
+    block's state is BUF_BLOCK_FILE_PAGE and btr_search_enabled_mutex is
+    owned, protecting the btr_search_enabled from being changed,
+    - to nullptr if btr_search_enabled is false and block is held in private in
+    BUF_BLOCK_REMOVE_HASH state in buf_LRU_free_page().
+    - to any value under appropriate X-latch in btr_search_sys->parts[]->latch
+    if btr_search_enabled is true (and setting btr_search_enabled to false in
+    turn is protected by having all btr_search_sys->parts[]->latch X-latched).
+    */
+    std::atomic<dict_index_t *> index;
 
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
-  /** used in debugging: the number of pointers in the adaptive hash index
-  pointing to this frame; protected by atomic memory access or
-  btr_search_own_all(). */
-  std::atomic<ulint> n_pointers;
+    /** Used in debugging. The number of pointers in the adaptive hash index
+    pointing to this frame; Modified under appropriate X-latch in
+    btr_search_sys->parts[]->latch. */
+    std::atomic<uint16_t> n_pointers;
 
-#define assert_block_ahi_valid(block) \
-  ut_a((block)->index || (block)->n_pointers.load() == 0)
-#else                                         /* UNIV_AHI_DEBUG || UNIV_DEBUG */
-#define assert_block_ahi_empty(block)         /* nothing */
-#define assert_block_ahi_empty_on_init(block) /* nothing */
-#define assert_block_ahi_valid(block)         /* nothing */
-#endif                                        /* UNIV_AHI_DEBUG || UNIV_DEBUG */
+    inline void validate() const {
+      /* These fields are read without holding any AHI latches. Adding or
+      removing a block from AHI requires having only an appropriate AHI part
+      X-latched. If we have at least S-latched the correct AHI part (for which
+      we would need at least S-latch on block for the block's index to not be
+      changed in meantime) this check is certain. If we don't have necessary AHI
+      latches, then:
+      - it can't happen that the check fails while the block is removed from
+      AHI. Both btr_search_drop_page_hash_index() and
+      buf_pool_clear_hash_index() will first make the n_pointers be 0 and then
+      set index to nullptr. As the index is an atomic variable, so if we
+      synchronize with a reset to nullptr which is sequenced after the reset of
+      n_pointers, we should see the n_pointers set to 0 here.
+      - it can happen that the check fails while the block is added to the AHI
+      right after we read the index is nullptr. In such case, if the n_pointers
+      is not 0, we double check the index member. It can still be nullptr, if
+      the block is removed after reading the n_pointers, but that should be near
+      impossible. */
+      ut_a(this->index.load() != nullptr || this->n_pointers.load() == 0 ||
+           this->index.load() != nullptr);
+    }
 
-  /** prefix length for hash indexing: number of full fields */
-  uint16_t curr_n_fields;
+    inline void assert_empty() const { ut_a(this->n_pointers.load() == 0); }
 
-  /** number of bytes in hash indexing */
-  uint16_t curr_n_bytes;
+    inline void assert_empty_on_init() const {
+      UNIV_MEM_VALID(&this->n_pointers, sizeof(this->n_pointers));
+      assert_empty();
+    }
+#else
+    inline void validate() const {}
 
-  /** true or false in hash indexing */
-  bool curr_left_side;
+    inline void assert_empty() const {}
 
+    inline void assert_empty_on_init() const {}
+#endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
+  } ahi;
+
+  /** Counter which controls how many times the current prefix recommendation
+  would help in searches. If it is helpful enough, it will be used as the
+  actual prefix to build hash for this block. It is modified similarly as
+  recommended_prefix_info, that is only while having S- or X- latch on block's
+  lock. Because it is modified concurrently, it may not have fully reliable
+  count, but it is enough for this use case.
+  Mind the n_hash_helps is AHI-related, and should be in the ahi_t struct above,
+  but having it outside causes the made_dirty_with_no_latch to occupy the common
+  8byte aligned 8byte long space, so basically it saves us 8bytes of the object
+  that is used in high volumes. */
+  std::atomic<uint32_t> n_hash_helps;
   /** true if block has been made dirty without acquiring X/SX latch as the
   block belongs to temporary tablespace and block is always accessed by a
   single thread. */
   bool made_dirty_with_no_latch;
 
-  /** Index for which the adaptive hash index has been created, or NULL if
-  the page does not exist in the index. Note that it does not guarantee that
-  the index is complete, though: there may have been hash collisions, record
-  deletions, etc. */
-  dict_index_t *index;
-
-  /** @} */
 #ifndef UNIV_HOTBACKUP
 #ifdef UNIV_DEBUG
   /** @name Debug fields */
@@ -1869,13 +1910,14 @@ inline bool buf_block_state_valid(buf_block_t *block) {
          buf_block_get_state(block) <= BUF_BLOCK_REMOVE_HASH;
 }
 
-/** Compute the hash fold value for blocks in buf_pool->zip_hash. */
+/** Compute the hash value for blocks in buf_pool->zip_hash. */
 /** @{ */
-inline ulint BUF_POOL_ZIP_FOLD_PTR(void *ptr) {
-  return (ulint)(ptr) / UNIV_PAGE_SIZE;
+static inline uint64_t buf_pool_hash_zip_frame(void *ptr) {
+  return ut::hash_uint64(reinterpret_cast<uintptr_t>(ptr) >>
+                         UNIV_PAGE_SIZE_SHIFT);
 }
-inline ulint BUF_POOL_ZIP_FOLD(buf_block_t *b) {
-  return BUF_POOL_ZIP_FOLD_PTR(b->frame);
+static inline uint64_t buf_pool_hash_zip(buf_block_t *b) {
+  return buf_pool_hash_zip_frame(b->frame);
 }
 /** @} */
 
@@ -1939,17 +1981,6 @@ class HazardPointer {
   /** hazard pointer. */
   buf_page_t *m_hp;
 };
-
-#if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
-inline void assert_block_ahi_empty(buf_block_t *block) {
-  ut_a((block)->n_pointers.load() == 0);
-}
-
-inline void assert_block_ahi_empty_on_init(buf_block_t *block) {
-  UNIV_MEM_VALID(&block->n_pointers, sizeof(block)->n_pointers);
-  assert_block_ahi_empty(block);
-}
-#endif
 
 /** Class implementing buf_pool->flush_list hazard pointer */
 class FlushHp : public HazardPointer {
@@ -2234,7 +2265,7 @@ struct buf_pool_t {
   /** Old statistics */
   buf_pool_stat_t old_stat;
 
-  /* @} */
+  /** @} */
 
   /** @name Page flushing algorithm fields */
 
@@ -2294,7 +2325,7 @@ struct buf_pool_t {
   /** Maximum LSN for which write io has already started. */
   lsn_t max_lsn_io;
 
-  /* @} */
+  /** @} */
 
   /** @name LRU replacement algorithm fields */
   /** @{ */
@@ -2434,20 +2465,20 @@ Use these instead of accessing buffer pool mutexes directly. */
 /** Get appropriate page_hash_lock. */
 inline rw_lock_t *buf_page_hash_lock_get(const buf_pool_t *buf_pool,
                                          const page_id_t page_id) {
-  return hash_get_lock(buf_pool->page_hash, page_id.fold());
+  return hash_get_lock(buf_pool->page_hash, page_id.hash());
 }
 
 /** If not appropriate page_hash_lock, relock until appropriate. */
 inline rw_lock_t *buf_page_hash_lock_s_confirm(rw_lock_t *hash_lock,
                                                const buf_pool_t *buf_pool,
                                                const page_id_t page_id) {
-  return hash_lock_s_confirm(hash_lock, buf_pool->page_hash, page_id.fold());
+  return hash_lock_s_confirm(hash_lock, buf_pool->page_hash, page_id.hash());
 }
 
 inline rw_lock_t *buf_page_hash_lock_x_confirm(rw_lock_t *hash_lock,
                                                buf_pool_t *buf_pool,
                                                const page_id_t &page_id) {
-  return hash_lock_x_confirm(hash_lock, buf_pool->page_hash, page_id.fold());
+  return hash_lock_x_confirm(hash_lock, buf_pool->page_hash, page_id.hash());
 }
 #endif /* !UNIV_HOTBACKUP */
 
@@ -2599,6 +2630,24 @@ page if applicable. Const version.
 inline const page_zip_des_t *buf_block_get_page_zip(
     const buf_block_t *block) noexcept {
   return block->get_page_zip();
+}
+
+/** Verify the page contained by the block. If there is page type
+mismatch then reset it to expected page type. Data files created
+before MySQL 5.7 GA may contain garbage in the FIL_PAGE_TYPE field.
+@param[in,out]  block       block that may possibly have invalid
+                            FIL_PAGE_TYPE
+@param[in]      type        Expected page type
+@param[in,out]  mtr         Mini-transaction */
+inline void buf_block_reset_page_type_on_mismatch(buf_block_t &block,
+                                                  page_type_t type,
+                                                  mtr_t &mtr) {
+  byte *page = block.frame;
+  page_type_t page_type = fil_page_get_type(page);
+  if (page_type != type) {
+    const page_id_t &page_id = block.page.id;
+    fil_page_reset_type(page_id, page, type, &mtr);
+  }
 }
 #include "buf0buf.ic"
 

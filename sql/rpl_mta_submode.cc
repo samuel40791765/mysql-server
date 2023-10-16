@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,20 +27,20 @@
 #include <time.h>
 #include <memory>
 
+#include "binlog/decompressing_event_object_istream.h"
 #include "lex_string.h"
-#include "libbinlogevents/include/compression/iterator.h"
-#include "m_string.h"
 #include "my_byteorder.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_systime.h"
 #include "my_thread.h"
 #include "mysql/components/services/bits/psi_stage_bits.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_cond.h"
 #include "mysql/psi/mysql_mutex.h"
+#include "mysql/strings/int2str.h"
 #include "mysqld_error.h"
 #include "sql/binlog_reader.h"
 #include "sql/debug_sync.h"
@@ -57,6 +57,7 @@
 #include "sql/sql_class.h"                         // THD
 #include "sql/system_variables.h"
 #include "sql/table.h"
+#include "string_with_len.h"
 
 /**
  Does necessary arrangement before scheduling next event.
@@ -183,83 +184,35 @@ int Mts_submode_database::wait_for_workers_to_finish(Relay_log_info *rli,
   return !cant_sync ? ret : -1;
 }
 
-bool Mts_submode_database::unfold_transaction_payload_event(
-    Format_description_event &fde, Transaction_payload_log_event &tple,
-    std::vector<Log_event *> &events) {
-  bool error = false;
-  /*
-    disable checksums - there are no checksums for events inside the tple
-    otherwise, the last 4 bytes would be truncated.
-
-    We do this by copying the fdle from the rli. Then we disable the checksum
-    in the copy. Then we use it to decode the events in the payload instead
-    of the original fdle.
-
-    We allocate the fdle copy in the stack.
-
-    TODO: simplify this by breaking the binlog_event_deserialize API
-    and make it take a single boolean instead that states whether the
-    event has a checksum in it or not.
-  */
-  Format_description_log_event fdle(fde.reader().buffer(), &fde);
-  fdle.footer()->checksum_alg = binary_log::BINLOG_CHECKSUM_ALG_OFF;
-  fdle.register_temp_buf(const_cast<char *>(fde.reader().buffer()), false);
-
-  // unpack the event
-  binary_log::transaction::compression::Iterable_buffer it(
-      tple.get_payload(), tple.get_payload_size(), tple.get_uncompressed_size(),
-      tple.get_compression_type());
-
-  for (auto ptr : it) {
-    Log_event *next = nullptr;
-    size_t event_len = uint4korr(ptr + EVENT_LEN_OFFSET);
-    if (binlog_event_deserialize(reinterpret_cast<const unsigned char *>(ptr),
-                                 event_len, &fdle, true, &next)) {
-      error = true; /* purecov: inspected */
-      break;        /* purecov: inspected */
-    } else {
-      assert(next != nullptr);
-      events.push_back(next);
-    }
-  }
-
-  return error;
-}
-
 bool Mts_submode_database::set_multi_threaded_applier_context(
     const Relay_log_info &rli, Log_event &ev) {
-  bool error = false;
-
   // if this is a transaction payload event, we need to set the proper
   // databases that its internal events update
   if (ev.get_type_code() == binary_log::TRANSACTION_PAYLOAD_EVENT) {
     Mts_db_names toset;
     bool max_mts_dbs_in_event = false;
     std::set<std::string> dbs;
-    auto &tple = static_cast<Transaction_payload_log_event &>(ev);
-    std::vector<Log_event *> events;
-    unfold_transaction_payload_event(*rli.get_rli_description_event(), tple,
-                                     events);
+    auto &tple = *dynamic_cast<Transaction_payload_log_event *>(&ev);
+    binlog::Decompressing_event_object_istream istream(
+        tple, *rli.get_rli_description_event());
 
-    for (auto inner : events) {
+    std::shared_ptr<Log_event> inner;
+    while (istream >> inner) {
       Mts_db_names mts_dbs;
 
       // This transaction payload event is already marked to run in
       // isolation or the event being handled does not contain partition
       // information
-      if (max_mts_dbs_in_event || !inner->contains_partition_info(true)) {
-        delete inner;
+      if (max_mts_dbs_in_event || !inner->contains_partition_info(true))
         continue;
-      }
 
       // The following queries should run in isolation, thence setting
       // OVER_MAX_DBS_IN_EVENT_MTS
       if ((inner->get_type_code() == binary_log::QUERY_EVENT)) {
-        auto qev = static_cast<Query_log_event *>(inner);
+        auto *qev = dynamic_cast<Query_log_event *>(inner.get());
         if (qev->is_query_prefix_match(STRING_WITH_LEN("XA COMMIT")) ||
             qev->is_query_prefix_match(STRING_WITH_LEN("XA ROLLBACK"))) {
           max_mts_dbs_in_event = true;
-          delete inner;
           continue;
         }
       }
@@ -271,7 +224,6 @@ bool Mts_submode_database::set_multi_threaded_applier_context(
       // inner event has mark to run in isolation
       if (mts_dbs.num == OVER_MAX_DBS_IN_EVENT_MTS) {
         max_mts_dbs_in_event = true;
-        delete inner;
         continue;
       }
 
@@ -283,9 +235,11 @@ bool Mts_submode_database::set_multi_threaded_applier_context(
           break;
         }
       }
-
-      // inner event not needed anymore. Delete.
-      delete inner;
+    }
+    if (istream.has_error()) {
+      LogErr(ERROR_LEVEL, ER_RPL_REPLICA_ERROR_READING_RELAY_LOG_EVENTS,
+             rli.get_for_channel_str(), istream.get_error_str().c_str());
+      return true;
     }
 
     // now set the database information in the event
@@ -305,7 +259,7 @@ bool Mts_submode_database::set_multi_threaded_applier_context(
     tple.set_mts_dbs(toset);
   }
 
-  return error;
+  return false;
 }
 
 /**
@@ -453,7 +407,7 @@ Mts_submode_logical_clock::Mts_submode_logical_clock() {
    Formally, the undefined cached value of last_lwm_timestamp is also stale.
 
    @verbatim
-              the last time index containg lwm
+              the last time index containing lwm
                   +------+
                   | LWM  |
                   |  |   |
@@ -573,7 +527,7 @@ bool Mts_submode_logical_clock::wait_for_last_committed_trx(
   min_waited_timestamp.store(last_committed_arg);
   /*
     This transaction is a candidate for insertion into the waiting list.
-    That fact is descibed by incrementing waited_timestamp_cnt.
+    That fact is described by incrementing waited_timestamp_cnt.
     When the candidate won't make it the counter is decremented at once
     while the mutex is hold.
   */
@@ -614,7 +568,7 @@ bool Mts_submode_logical_clock::wait_for_last_committed_trx(
  The current being assigned group descriptor gets associated with
  the group's logical timestamp aka sequence_number.
 
- @return ER_MTS_CANT_PARALLEL, ER_MTS_INCONSISTENT_DATA
+ @return ER_MTA_CANT_PARALLEL, ER_MTA_INCONSISTENT_DATA
           0 if no error or slave has been killed gracefully
  */
 int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
@@ -662,19 +616,19 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
       /* inconsistent (buggy) timestamps */
       LogErr(ERROR_LEVEL, ER_RPL_INCONSISTENT_TIMESTAMPS_IN_TRX,
              sequence_number, last_committed);
-      return ER_MTS_CANT_PARALLEL;
+      return ER_MTA_CANT_PARALLEL;
     }
     if (unlikely(clock_leq(sequence_number, last_sequence_number) &&
                  sequence_number != SEQ_UNINIT)) {
       /* inconsistent (buggy) timestamps */
       LogErr(ERROR_LEVEL, ER_RPL_INCONSISTENT_SEQUENCE_NO_IN_TRX,
              sequence_number, last_sequence_number);
-      return ER_MTS_CANT_PARALLEL;
+      return ER_MTA_CANT_PARALLEL;
     }
     /*
-      Being scheduled transaction sequence may have gaps, even in
+      Transaction sequence as scheduled may have gaps, even in
       relay log. In such case a transaction that succeeds a gap will
-      wait for all ealier that were scheduled to finish. It's marked
+      wait for all earlier that were scheduled to finish. It's marked
       as gap successor now.
     */
     static_assert(SEQ_UNINIT == 0, "");
@@ -692,7 +646,7 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
 
   /*
     The new group flag is practically the same as the force flag
-    when up to indicate syncronization with Workers.
+    when up to indicate synchronization with Workers.
   */
   is_new_group =
       (/* First event after a submode switch; */
@@ -779,7 +733,7 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
         The malformed group is handled exceptionally each event is executed
         as a solitary group yet by the same (zero id) worker.
     */
-    if (-1 == wait_for_workers_to_finish(rli)) return ER_MTS_INCONSISTENT_DATA;
+    if (-1 == wait_for_workers_to_finish(rli)) return ER_MTA_INCONSISTENT_DATA;
 
     rli->mts_group_status = Relay_log_info::MTS_IN_GROUP;  // wait set it to NOT
     assert(min_waited_timestamp == SEQ_UNINIT);
@@ -922,7 +876,7 @@ Slave_worker *Mts_submode_logical_clock::get_least_occupied_worker(
        number of available workers then schedule the events to the consecutive
        workers
       -If the i-th transaction is being scheduled in this group where "i" >
-       number of available workers then schedule this to the forst worker that
+       number of available workers then schedule this to the first worker that
        becomes free.
    */
   if (rli->last_assigned_worker) {

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2021, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -101,7 +101,7 @@ void dict_hdr_get_new_id(table_id_t *table_id, space_index_t *index_id,
   Case 3:
           space-id = x (on start)
           space-id = x+1 (temp-table allocation) - no redo logging
-          space-id = x+2 (non-temp-table allocation), this get's
+          space-id = x+2 (non-temp-table allocation), this gets
                      redo logged.
           If there is a crash there will be only 2 entries
           x (original) and x+2 (new) and disk hdr will be updated

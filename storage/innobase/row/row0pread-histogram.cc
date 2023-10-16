@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2019, 2021, Oracle and/or its affiliates.
+Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -34,6 +34,10 @@ Created 2019-04-20 by Darshan M N */
 #include "row0sel.h"
 #include "srv0srv.h"
 
+#ifdef UNIV_DEBUG
+#include <current_thd.h>
+#endif /* UNIV_DEBUG */
+
 std::uniform_real_distribution<double> Histogram_sampler::m_distribution(0,
                                                                          100);
 
@@ -55,9 +59,17 @@ Histogram_sampler::Histogram_sampler(size_t max_threads, int sampling_seed,
 
   m_n_sampled = 0;
 
+#ifdef UNIV_DEBUG
+  THD *thd = current_thd;
+#endif /* UNIV_DEBUG */
+
   m_parallel_reader.set_start_callback(
       [=](Parallel_reader::Thread_ctx *thread_ctx) {
         if (thread_ctx->get_state() == Parallel_reader::State::THREAD) {
+#ifdef UNIV_DEBUG
+          /* for debug sync calls */
+          current_thd = thd;
+#endif /* UNIV_DEBUG */
           return start_callback(thread_ctx);
         } else {
           return DB_SUCCESS;
@@ -320,7 +332,8 @@ dberr_t Histogram_sampler::process_non_leaf_rec(
     rec_offs_init(offsets_);
 
     const rec_t *rec = page_cur_get_rec(&cur);
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     if (ctx->is_rec_visible(rec, offsets, heap, &mtr)) {
       err = sample_rec(ctx, rec, offsets, index, prebuilt);

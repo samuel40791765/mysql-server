@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, 2021 Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -43,7 +43,9 @@ class mock_network_provider : public Network_provider {
               (override));
   MOCK_METHOD(int, close_connection, (const Network_connection &connection),
               (override));
-  MOCK_METHOD(bool, cleanup_secure_connections_context, (), (override));
+  MOCK_METHOD(void, cleanup_secure_connections_context, (), (override));
+  MOCK_METHOD(std::function<void()>, get_secure_connections_context_cleaner, (),
+              (override));
   MOCK_METHOD(bool, finalize_secure_connections_context, (), (override));
 };
 

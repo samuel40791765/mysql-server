@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -82,11 +82,12 @@
 #include "sql/sql_select.h"
 #include "sql/table.h"
 
-static bool find_key_for_maxmin(bool max_fl, TABLE_REF *ref,
+static bool find_key_for_maxmin(bool max_fl, Index_lookup *ref,
                                 Item_field *item_field, Item *cond,
                                 uint *range_fl, uint *key_prefix_length);
-static bool reckey_in_range(bool max_fl, TABLE_REF *ref, Item_field *item_field,
-                            Item *cond, uint range_fl, uint prefix_len);
+static bool reckey_in_range(bool max_fl, Index_lookup *ref,
+                            Item_field *item_field, Item *cond, uint range_fl,
+                            uint prefix_len);
 static bool maxmin_in_range(bool max_fl, Item_field *item_field, Item *cond);
 
 /**
@@ -98,11 +99,11 @@ static bool maxmin_in_range(bool max_fl, Item_field *item_field, Item *cond);
 
     @retval Product of number of rows in all tables. ULLONG_MAX for error.
 */
-static ulonglong get_exact_record_count(TABLE_LIST *tables) {
+static ulonglong get_exact_record_count(Table_ref *tables) {
   ulonglong count = 1;
-  for (TABLE_LIST *tl = tables; tl; tl = tl->next_leaf) {
+  for (Table_ref *tl = tables; tl; tl = tl->next_leaf) {
     ha_rows tmp = 0;
-    int error = tl->table->file->ha_records(&tmp);
+    const int error = tl->table->file->ha_records(&tmp);
     if (error != 0) return ULLONG_MAX;
     count *= tmp;
   }
@@ -123,7 +124,7 @@ static ulonglong get_exact_record_count(TABLE_LIST *tables) {
     HA_ERR_...      Otherwise
 */
 
-static int get_index_min_value(TABLE *table, TABLE_REF *ref,
+static int get_index_min_value(TABLE *table, Index_lookup *ref,
                                Item_field *item_field, uint range_fl,
                                uint prefix_len) {
   int error;
@@ -207,7 +208,7 @@ static int get_index_min_value(TABLE *table, TABLE_REF *ref,
     HA_ERR_...      Otherwise
 */
 
-static int get_index_max_value(TABLE *table, TABLE_REF *ref, uint range_fl) {
+static int get_index_max_value(TABLE *table, Index_lookup *ref, uint range_fl) {
   return (ref->key_length
               ? table->file->ha_index_read_map(
                     table->record[0], ref->key_buff,
@@ -295,7 +296,7 @@ bool optimize_aggregated_query(THD *thd, Query_block *select,
   // The set of tables in the join, excluding the inner tables of outer join
   table_map used_tables = 0;
 
-  TABLE_LIST *tables = select->leaf_tables;
+  Table_ref *tables = select->leaf_tables;
 
   int error;
 
@@ -321,7 +322,7 @@ bool optimize_aggregated_query(THD *thd, Query_block *select,
     Analyze outer join dependencies, and, if possible, compute the number
     of returned rows.
   */
-  for (TABLE_LIST *tl = tables; tl; tl = tl->next_leaf) {
+  for (Table_ref *tl = tables; tl; tl = tl->next_leaf) {
     // Don't replace expression on a table that is part of an outer join
     if (tl->is_inner_table_of_outer_join()) {
       inner_tables |= tl->map();
@@ -347,7 +348,7 @@ bool optimize_aggregated_query(THD *thd, Query_block *select,
       using stats.records.
     */
     tables_filled &= !(tl->schema_table || tl->uses_materialization());
-    ulonglong table_flags = tl->table->file->ha_table_flags();
+    const ulonglong table_flags = tl->table->file->ha_table_flags();
     if ((table_flags & HA_STATS_RECORDS_IS_EXACT) && tables_filled &&
         !tl->table->force_index) {
       error = tl->fetch_number_of_rows();
@@ -416,7 +417,7 @@ bool optimize_aggregated_query(THD *thd, Query_block *select,
           /*
             For result count of full-text search: If
             1. it is a single table query,
-            2. the WHERE condition is a single MATCH expresssion,
+            2. the WHERE condition is a single MATCH expression,
             3. the table engine can provide the row count from FTS result, and
             4. the expr in COUNT(expr) can not be NULL,
             we do the full-text search now, and replace with the actual count.
@@ -464,14 +465,22 @@ bool optimize_aggregated_query(THD *thd, Query_block *select,
           Item *expr = item_sum->get_arg(0)->real_item();
           if (expr->type() == Item::FIELD_ITEM) {
             uchar key_buff[MAX_KEY_LENGTH];
-            TABLE_REF ref;
+            Index_lookup ref;
             uint range_fl, prefix_len;
 
             ref.key_buff = key_buff;
             Item_field *item_field = down_cast<Item_field *>(expr);
-            TABLE_LIST *tr = item_field->table_ref;
+            Table_ref *tr = item_field->table_ref;
             TABLE *table = tr->table;
-
+            /*
+              If table already has been read, we may use the values already
+              in record buffer. However, the logic around this is a bit unclear,
+              thus we skip this possible optimization for now.
+            */
+            if (table->const_table) {
+              aggr_impossible = true;
+              break;
+            }
             /*
               We must not have accessed this table instance yet, because
               it must be private to this query block, as we already ensured
@@ -632,7 +641,7 @@ bool is_simple_predicate(Item_func *func_item, Item **args, bool *inv_order) {
         Item_equal *item_equal = down_cast<Item_equal *>(func_item);
         args[0] = item_equal->get_first();
         if (item_equal->members() > 1) return false;
-        if (!(args[1] = item_equal->get_const())) return false;
+        if (!(args[1] = item_equal->const_arg())) return false;
       }
       break;
     case 1:
@@ -698,7 +707,7 @@ bool is_simple_predicate(Item_func *func_item, Item **args, bool *inv_order) {
    SELECT MIN(a) FROM t1 WHERE a > 3 AND a > 5;
    @endcode
 
-   the algorithm will recurse over the conjuction, storing first a 3 in the
+   the algorithm will recurse over the conjunction, storing first a 3 in the
    field. In the next recursive invocation the expression a > 5 is evaluated
    as 3 > 5 (Due to the dual nature of Field objects as value carriers and
    field identifiers), which will obviously fail, leading to 5 being stored in
@@ -727,7 +736,7 @@ bool is_simple_predicate(Item_func *func_item, Item **args, bool *inv_order) {
     true     We can use the index to get MIN/MAX value
 */
 
-static bool matching_cond(bool max_fl, TABLE_REF *ref, KEY *keyinfo,
+static bool matching_cond(bool max_fl, Index_lookup *ref, KEY *keyinfo,
                           KEY_PART_INFO *field_part, Item *cond, table_map map,
                           key_part_map *key_part_used, uint *range_fl,
                           uint *prefix_len) {
@@ -822,12 +831,12 @@ static bool matching_cond(bool max_fl, TABLE_REF *ref, KEY *keyinfo,
       break;  // Found a part of the key for the field
   }
 
-  bool is_field_part = part == field_part;
+  const bool is_field_part = part == field_part;
   if (!(is_field_part || eq_type)) return false;
 
-  key_part_map org_key_part_used = *key_part_used;
+  const key_part_map org_key_part_used = *key_part_used;
   if (eq_type || between || max_fl == less_fl) {
-    size_t length = (key_ptr - ref->key_buff) + part->store_length;
+    const size_t length = (key_ptr - ref->key_buff) + part->store_length;
     if (ref->key_length < length) {
       /* Ultimately ref->key_length will contain the length of the search key */
       ref->key_length = length;
@@ -886,7 +895,7 @@ static bool matching_cond(bool max_fl, TABLE_REF *ref, KEY *keyinfo,
         check for TYPE_OK here. analyze_field_constant() does not yet handle
         string constants.
       */
-      type_conversion_status retval =
+      const type_conversion_status retval =
           value->save_in_field_no_warnings(part->field, true);
       if (!(retval == TYPE_OK ||
             (retval == TYPE_NOTE_TRUNCATED && part->field->is_text_key_type() &&
@@ -956,7 +965,7 @@ static bool matching_cond(bool max_fl, TABLE_REF *ref, KEY *keyinfo,
            If true, ref, range_fl and prefix_len are updated
 */
 
-static bool find_key_for_maxmin(bool max_fl, TABLE_REF *ref,
+static bool find_key_for_maxmin(bool max_fl, Index_lookup *ref,
                                 Item_field *item_field, Item *cond,
                                 uint *range_fl, uint *prefix_len) {
   Field *const field = item_field->field;
@@ -1054,8 +1063,9 @@ static bool find_key_for_maxmin(bool max_fl, TABLE_REF *ref,
   @returns true if the condition is not true for the found row, false otherwise.
 */
 
-static bool reckey_in_range(bool max_fl, TABLE_REF *ref, Item_field *item_field,
-                            Item *cond, uint range_fl, uint prefix_len) {
+static bool reckey_in_range(bool max_fl, Index_lookup *ref,
+                            Item_field *item_field, Item *cond, uint range_fl,
+                            uint prefix_len) {
   if (key_cmp_if_same(item_field->field->table, ref->key_buff, ref->key,
                       prefix_len))
     return true;

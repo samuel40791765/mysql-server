@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -35,12 +35,12 @@
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_psi_config.h"
 #include "mysql/components/services/bits/mysql_cond_bits.h"
 #include "mysql/components/services/bits/mysql_mutex_bits.h"
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/bits/psi_mutex_bits.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/service_mysql_alloc.h"
 #include "prealloced_array.h"  // Prealloced_array
 #include "sql/log_event.h"     // Format_description_log_event
@@ -912,13 +912,17 @@ class Slave_worker : public Relay_log_info {
       MY_ATTRIBUTE((format(printf, 4, 0)));
 
  private:
-  ulong gaq_index;  // GAQ index of the current assignment
-  ulonglong
-      master_log_pos;  // event's cached log_pos for possibile error report
+  ulong gaq_index;           // GAQ index of the current assignment
+  ulonglong master_log_pos;  // event's cached log_pos for possible error report
   void end_info();
   bool read_info(Rpl_info_handler *from) override;
   bool write_info(Rpl_info_handler *to) override;
   std::atomic<bool> m_commit_order_deadlock;
+
+  /// This flag indicates whether positions were already modified during the
+  /// event processing, if yes, positions are not updated in the
+  /// slave_worker_ends_group function
+  bool m_flag_positions_committed = false;
 
   Slave_worker &operator=(const Slave_worker &info);
   Slave_worker(const Slave_worker &info);
@@ -953,7 +957,7 @@ TABLE *mts_move_temp_tables_to_thd(THD *, TABLE *, enum_mts_parallel_type);
 bool append_item_to_jobs(slave_job_item *job_item, Slave_worker *w,
                          Relay_log_info *rli);
 
-inline Slave_worker *get_thd_worker(THD *thd) {
+inline Slave_worker *get_thd_worker(const THD *thd) {
   return static_cast<Slave_worker *>(thd->rli_slave);
 }
 

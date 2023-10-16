@@ -2,12 +2,12 @@
 .\"     Title: ndb_config
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/05/2022
+.\"      Date: 06/21/2023
 .\"    Manual: MySQL Database System
-.\"    Source: MySQL 8.0
+.\"    Source: MySQL 8.1
 .\"  Language: English
 .\"
-.TH "NDB_CONFIG" "1" "03/05/2022" "MySQL 8\&.0" "MySQL Database System"
+.TH "NDB_CONFIG" "1" "06/21/2023" "MySQL 8\&.1" "MySQL Database System"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -67,7 +67,7 @@ are shown in the following table\&. Additional descriptions follow the table\&.
 .nr an-no-space-flag 1
 .nr an-break-flag 1
 .br
-.B Table\ \&23.29.\ \&Command\-line options used with the program ndb_config
+.B Table\ \&23.28.\ \&Command\-line options used with the program ndb_config
 .TS
 allbox tab(:);
 lB lB lB.
@@ -110,19 +110,7 @@ lB l l
 lB l l
 lB l l
 lB l l
-lB l l
-lB l l
-lB l l
 lB l l.
-T{
-.PP
-\fB \fR\fB--character-sets-dir=path\fR\fB \fR
-T}:T{
-Directory containing character sets
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
 T{
 .PP
 \fB \fR\fB--cluster-config-suffix=name\fR\fB \fR
@@ -131,7 +119,16 @@ Override defaults group suffix when reading cluster_config sections in
               my.cnf file; used in testing
 T}:T{
 .PP
-ADDED: NDB 8.0.24
+(Supported in all NDB releases based on MySQL 8.1)
+T}
+T{
+.PP
+\fB \fR\fB--config-binary-file=path/to/file\fR\fB \fR
+T}:T{
+Read this binary configuration file
+T}:T{
+.PP
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -140,7 +137,7 @@ T}:T{
 Set the path to config.ini file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -150,7 +147,7 @@ Obtain configuration data from the node having this ID (must be a data
               node)
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -161,7 +158,7 @@ Dumps information about all NDB configuration parameters in text format
               to obtain XML output
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -173,7 +170,7 @@ Print information only about connections specified in [tcp], [tcp
               with --system or --nodes
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -182,7 +179,7 @@ T}:T{
 Number of times to retry connection before giving up
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -191,7 +188,7 @@ T}:T{
 Number of seconds to wait between attempts to contact management server
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -202,16 +199,7 @@ T}:T{
 Same as --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--core-file\fR\fB \fR
-T}:T{
-Write core file on error; used in debugging
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -220,7 +208,7 @@ T}:T{
 Read given file after global files are read
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -229,7 +217,7 @@ T}:T{
 Read default options from given file only
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -238,7 +226,7 @@ T}:T{
 Also read groups with concat(group, suffix)
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -247,7 +235,7 @@ T}:T{
 Print only configuration parameters that have non-default values
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -258,7 +246,7 @@ T}:T{
 Field separator
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -269,7 +257,7 @@ T}:T{
 Display help text and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -278,7 +266,7 @@ T}:T{
 Specify host
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -287,7 +275,7 @@ T}:T{
 Read given path from login file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -296,7 +284,7 @@ T}:T{
 Read configuration data from my.cnf file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -309,7 +297,7 @@ Set connect string for connecting to ndb_mgmd. Syntax:
               NDB_CONNECTSTRING and my.cnf
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -320,27 +308,7 @@ T}:T{
 Same as --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--ndb-nodeid=#\fR\fB \fR
-T}:T{
-Set node ID for this node, overriding any ID set by --ndb-connectstring
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--ndb-optimized-node-selection\fR\fB \fR
-T}:T{
-Enable optimizations for selection of nodes for transactions. Enabled by
-              default; use --skip-ndb-optimized-node-selection to
-              disable
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -349,7 +317,7 @@ T}:T{
 Do not read default options from any option file other than login file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -358,7 +326,7 @@ T}:T{
 Get configuration of node with this ID
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -369,7 +337,7 @@ Print node information ([ndbd] or [ndbd default] section of cluster
               --connections
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -380,7 +348,7 @@ T}:T{
 One or more query options (attributes)
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -391,7 +359,7 @@ T}:T{
 Dumps all parameters and values to a single comma-delimited string
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -400,7 +368,7 @@ T}:T{
 Print program argument list and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -411,7 +379,7 @@ T}:T{
 Row separator
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -421,7 +389,7 @@ Print SYSTEM section information only (see ndb_config --configinfo
               output). Cannot be used with --nodes or --connections
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -430,7 +398,7 @@ T}:T{
 Specify node type
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -441,7 +409,7 @@ T}:T{
 Display help text and exit; same as --help
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -452,7 +420,7 @@ T}:T{
 Display version information and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -463,7 +431,7 @@ Use --xml with --configinfo to obtain a dump of all NDB configuration
               minimum values
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 .TE
 .sp 1
@@ -481,17 +449,11 @@ T}
 allbox tab(:);
 lB l
 lB l
-lB l
 lB l.
 T{
 Command-Line Format
 T}:T{
 --cluster-config-suffix=name
-T}
-T{
-Introduced
-T}:T{
-8.0.24-ndb-8.0.24
 T}
 T{
 Type
@@ -626,6 +588,112 @@ option to obtain output in XML format\&.
 .sp -1
 .IP \(bu 2.3
 .\}
+\fB\-\-config\-binary\-file=\fR\fB\fIpath\-to\-file\fR\fR
+.TS
+allbox tab(:);
+lB l
+lB l
+lB l.
+T{
+Command-Line Format
+T}:T{
+--config-binary-file=path/to/file
+T}
+T{
+Type
+T}:T{
+File name
+T}
+T{
+Default Value
+T}:T{
+T}
+.TE
+.sp 1
+Gives the path to the management server\*(Aqs cached binary configuration file (ndb_\fInodeID\fR_config\&.bin\&.\fIseqno\fR)\&. This may be a relative or absolute path\&. If the management server and the
+\fBndb_config\fR
+binary used reside on different hosts, you must use an absolute path\&.
+.sp
+This example demonstrates combining
+\fB\-\-config\-binary\-file\fR
+with other
+\fBndb_config\fR
+options to obtain useful output:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+$> \fBndb_config \-\-config\-binary\-file=\&.\&./mysql\-cluster/ndb_50_config\&.bin\&.1 \-\-diff\-default \-\-type=ndbd\fR
+config of [DB] node id 5 that is different from default 
+CONFIG_PARAMETER,ACTUAL_VALUE,DEFAULT_VALUE 
+NodeId,5,(mandatory) 
+BackupDataDir,/local/data/8\&.1,(null) 
+DataDir,/local/data/8\&.1,\&. 
+DataMemory,2G,98M 
+FileSystemPath,/local/data/8\&.1,(null) 
+HostName,127\&.0\&.0\&.1,localhost 
+Nodegroup,0,(null) 
+ThreadConfig,,(null) 
+config of [DB] node id 6 that is different from default 
+CONFIG_PARAMETER,ACTUAL_VALUE,DEFAULT_VALUE 
+NodeId,6,(mandatory) 
+BackupDataDir,/local/data/8\&.1,(null) 
+DataDir,/local/data/8\&.1\&. 
+DataMemory,2G,98M 
+FileSystemPath,/local/data/8\&.1,(null) 
+HostName,127\&.0\&.0\&.1,localhost 
+Nodegroup,0,(null) 
+ThreadConfig,,(null)
+$> \fBndb_config \-\-config\-binary\-file=\&.\&./mysql\-cluster/ndb_50_config\&.bin\&.1 \-\-diff\-default \-\-system\fR
+config of [SYSTEM] system 
+CONFIG_PARAMETER,ACTUAL_VALUE,DEFAULT_VALUE 
+Name,MC_20220906060042,(mandatory) 
+ConfigGenerationNumber,1,0 
+PrimaryMGMNode,50,0
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+The relevant portions of the
+config\&.ini
+file are shown here:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+[ndbd default]
+DataMemory= 2G
+NoOfReplicas= 2
+[ndb_mgmd]
+NodeId= 50
+HostName= 127\&.0\&.0\&.1
+[ndbd]
+NodeId= 5
+HostName= 127\&.0\&.0\&.1
+DataDir= /local/data/8\&.1
+[ndbd]
+NodeId= 6
+HostName= 127\&.0\&.0\&.1
+DataDir= /local/data/8\&.1
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+By comparing the output with the configuration file, you can see that all of the settings in the file have been written by the management server to the binary cache, and thus, applied to the cluster\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
 \fB\-\-config\-file=\fR\fB\fIpath\-to\-file\fR\fR
 .TS
 allbox tab(:);
@@ -648,9 +716,9 @@ T}:T{
 T}
 .TE
 .sp 1
-Gives the path to the management server\*(Aqs configuration file (config\&.ini)\&. This may be a relative or absolute path\&. If the management node resides on a different host from the one on which
+Gives the path to the cluster configuration file (config\&.ini)\&. This may be a relative or absolute path\&. If the management server and the
 \fBndb_config\fR
-is invoked, then an absolute path must be used\&.
+binary used reside on different hosts, you must use an absolute path\&.
 .RE
 .sp
 .RS 4
@@ -1352,7 +1420,7 @@ to provide output as XML by adding this option\&. A portion of such output is sh
 .\}
 .nf
 $> \fBndb_config \-\-configinfo \-\-xml\fR
-<configvariables protocolversion="1" ndbversionstring="5\&.7\&.37\-ndb\-7\&.5\&.26"
+<configvariables protocolversion="1" ndbversionstring="5\&.7\&.42\-ndb\-7\&.5\&.31"
                     ndbversion="460032" ndbversionmajor="7" ndbversionminor="5"
                     ndbversionbuild="0">
   <section name="SYSTEM">
@@ -1493,7 +1561,7 @@ In much the same way that the
 initial
 or
 deprecated
-attribute is displayed only for a parameter that requires an intial restart or that is deprecated, the
+attribute is displayed only for a parameter that requires an initial restart or that is deprecated, the
 mandatory
 attribute is included only if the given parameter is actually required\&.
 .if n \{\
@@ -2138,7 +2206,7 @@ option\&.
 .SH "COPYRIGHT"
 .br
 .PP
-Copyright \(co 1997, 2022, Oracle and/or its affiliates.
+Copyright \(co 1997, 2023, Oracle and/or its affiliates.
 .PP
 This documentation is free software; you can redistribute it and/or modify it only under the terms of the GNU General Public License as published by the Free Software Foundation; version 2 of the License.
 .PP

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,7 @@
 #include "my_byteorder.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysqld_error.h"
 #include "sql/current_thd.h"  //current_thd
@@ -76,7 +77,7 @@ longlong Item_func_inet_aton::val_int() {
   end = p + s->length();
   while (p < end) {
     c = *p++;
-    int digit = (int)(c - '0');
+    const int digit = (int)(c - '0');
     if (digit >= 0 && digit <= 9) {
       byte_result = byte_result * 10 + digit;
       if (byte_result > 255) goto err;  // Wrong address
@@ -130,7 +131,7 @@ String *Item_func_inet_ntoa::val_str(String *str) {
   assert(fixed);
   assert(arg_count == 1);
   null_value = true;
-  ulonglong n = (ulonglong)args[0]->val_int();
+  const ulonglong n = (ulonglong)args[0]->val_int();
 
   /*
     We do not know if args[0] is NULL until we have called
@@ -173,8 +174,8 @@ String *Item_func_inet_ntoa::val_str(String *str) {
     num[0] = (char)n1 + '0';
     num[1] = (char)n2 + '0';
     num[2] = (char)c + '0';
-    uint length = (n1 ? 4 : n2 ? 3 : 2);  // Remove pre-zero
-    uint dot_length = (p <= buf) ? 1 : 0;
+    const uint length = (n1 ? 4 : n2 ? 3 : 2);  // Remove pre-zero
+    const uint dot_length = (p <= buf) ? 1 : 0;
 
     str->append(num + 4 - length, length - dot_length, &my_charset_latin1);
   }
@@ -267,7 +268,7 @@ err:
 
   @return Completion status.
   @retval false Given string does not represent an IPv4-address.
-  @retval true  The string has been converted sucessfully.
+  @retval true  The string has been converted successfully.
 
   @note The problem with inet_pton() is that it treats leading zeros in
   IPv4-part differently on different platforms.
@@ -379,7 +380,7 @@ static bool str_to_ipv4(const char *str, int str_length,
 
   @return Completion status.
   @retval false Given string does not represent an IPv6-address.
-  @retval true  The string has been converted sucessfully.
+  @retval true  The string has been converted successfully.
 
   @note The problem with inet_pton() is that it treats leading zeros in
   IPv4-part differently on different platforms.
@@ -423,7 +424,7 @@ static bool str_to_ipv6(const char *str, int str_length,
   int group_value = 0;
 
   while (((p - str) < str_length) && *p) {
-    char c = *p++;
+    const char c = *p++;
 
     if (c == ':') {
       group_start_ptr = p;
@@ -527,7 +528,7 @@ static bool str_to_ipv6(const char *str, int str_length,
       return false;
     }
 
-    size_t bytes_to_move = dst - gap_ptr;
+    const size_t bytes_to_move = dst - gap_ptr;
 
     for (size_t i = 1; i <= bytes_to_move; ++i) {
       ipv6_bytes_end[-(static_cast<ssize_t>(i))] = gap_ptr[bytes_to_move - i];
@@ -687,7 +688,7 @@ static void ipv6_to_str(const in6_addr *ipv6, char *str) {
 
   @return Completion status.
   @retval false Given string does not represent an IP-address.
-  @retval true  The string has been converted sucessfully.
+  @retval true  The string has been converted successfully.
 */
 
 bool Item_func_inet6_aton::calc_value(String *arg, String *buffer) {
@@ -724,7 +725,7 @@ bool Item_func_inet6_aton::calc_value(String *arg, String *buffer) {
 
   @return Completion status.
   @retval false The argument does not correspond to IP-address.
-  @retval true  The string has been converted sucessfully.
+  @retval true  The string has been converted successfully.
 */
 
 bool Item_func_inet6_ntoa::calc_value(String *arg, String *buffer) {

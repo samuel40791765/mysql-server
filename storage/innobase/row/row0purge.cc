@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -37,13 +37,14 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "current_thd.h"
 #include "debug_sync.h"
 #include "mysqld.h"
+#include "string_with_len.h"
 
 #include "dict0dd.h"
 #include "fsp0fsp.h"
 #include "ha_innodb.h"
 #include "handler.h"
 #include "lob0lob.h"
-#include "log0log.h"
+#include "log0chkp.h"
 #include "mach0data.h"
 #include "que0que.h"
 #include "row0log.h"
@@ -68,7 +69,7 @@ IMPORTANT NOTE: Any operation that generates redo MUST check that there
 is enough space in the redo log before for that operation. This is
 done by calling log_free_check(). The reason for checking the
 availability of the redo log space before the start of the operation is
-that we MUST not hold any synchonization objects when performing the
+that we MUST not hold any synchronization objects when performing the
 check.
 If you make a change in this module make sure that no codepath is
 introduced where a call to log_free_check() is bypassed. */
@@ -176,7 +177,8 @@ static bool row_purge_reposition_pcur(
 
   rec = node->pcur.get_rec();
 
-  offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (node->roll_ptr != row_get_rec_roll_ptr(rec, index, offsets)) {
     /* Someone else has modified the record later: do not remove */
@@ -1275,8 +1277,9 @@ bool purge_node_t::validate_pcur() {
 
   dict_index_t *clust_index = pcur.m_btr_cur.index;
 
-  ulint *offsets = rec_get_offsets(pcur.m_old_rec, clust_index, nullptr,
-                                   pcur.m_old_n_fields, &heap);
+  ulint *offsets =
+      rec_get_offsets(pcur.m_old_rec, clust_index, nullptr, pcur.m_old_n_fields,
+                      UT_LOCATION_HERE, &heap);
 
   /* Here we are comparing the purge ref record and the stored initial
   part in persistent cursor. Both cases we store n_uniq fields of the

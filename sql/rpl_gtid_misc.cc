@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2012, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -33,6 +33,7 @@
 #include "my_macros.h"
 #include "my_thread.h"
 #include "mysql/psi/mysql_mutex.h"
+#include "nulls.h"
 #include "sql/rpl_gtid.h"
 #include "typelib.h"
 
@@ -199,7 +200,7 @@ void check_return_status(enum_return_status status, const char *action,
         when initializing gtid state by fetching gtids during server startup,
         so we can check on it before diagnostic area is active and skip the
         assert in this case. We assert that diagnostic area logged the error
-        outside server startup since the assert is realy useful.
+        outside server startup since the assert is really useful.
      */
       assert(thd == nullptr ||
              thd->get_stmt_da()->status() == Diagnostics_area::DA_ERROR ||

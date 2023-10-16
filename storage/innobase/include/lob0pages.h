@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -39,7 +39,7 @@ struct data_page_t : public basic_page_t {
 
   data_page_t() = default;
 
-  /** Contructor. */
+  /** Constructor. */
   data_page_t(buf_block_t *block, mtr_t *mtr) : basic_page_t(block, mtr) {
     page_type_t type = get_page_type();
     ut_a(type == FIL_PAGE_TYPE_LOB_DATA);

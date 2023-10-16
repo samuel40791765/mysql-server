@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -46,7 +46,10 @@ void RouterComponentTest::SetUp() {
 }
 
 void RouterComponentTest::TearDown() {
-  shutdown_all();
+  shutdown_all();  // shutdown all that are still running.
+  wait_for_exit();
+
+  terminate_all_still_alive();  // terminate hanging processes.
   ensure_clean_exit();
 
   if (::testing::Test::HasFailure()) {
@@ -73,7 +76,7 @@ bool RouterComponentTest::wait_log_contains(const ProcessWrapper &router,
   using clock_type = std::chrono::steady_clock;
   const auto end = clock_type::now() + timeout;
   do {
-    const std::string log_content = router.get_full_logfile();
+    const std::string log_content = router.get_logfile_content();
     found = pattern_found(log_content, pattern);
     if (!found) {
       auto step = std::min(timeout, MSEC_STEP);
@@ -113,7 +116,7 @@ void RouterComponentBootstrapTest::bootstrap_failover(
     std::chrono::milliseconds wait_for_exit_timeout,
     const mysqlrouter::MetadataSchemaVersion &metadata_version,
     const std::vector<std::string> &extra_router_options) {
-  std::string cluster_name("my-cluster");
+  std::string cluster_name("mycluster");
 
   std::vector<std::pair<std::string, unsigned>> gr_members;
   for (const auto &mock_server_config : mock_server_configs) {
@@ -157,9 +160,9 @@ void RouterComponentBootstrapTest::bootstrap_failover(
   }
 
   if (getenv("WITH_VALGRIND")) {
-    // for the boostrap tests that are using this method the "--disable-rest" is
-    // not relevant so we use it for VALGRIND testing as it saves huge amount of
-    // time that generating the certificates takes
+    // for the bootstrap tests that are using this method the "--disable-rest"
+    // is not relevant so we use it for VALGRIND testing as it saves huge amount
+    // of time that generating the certificates takes
     router_cmdline.emplace_back("--disable-rest");
   }
 

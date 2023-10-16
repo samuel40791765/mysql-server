@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -36,7 +36,7 @@
 
 #include "client/client_priv.h"
 #include "compression.h"
-#include "m_ctype.h"
+#include "m_string.h"
 #include "my_alloc.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
@@ -46,12 +46,17 @@
 #include "my_macros.h"
 #include "my_thread.h" /* because of signal()	*/
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/int2str.h"
+#include "mysql/strings/m_ctype.h"
+#include "nulls.h"
 #include "print_version.h"
 #include "sql_common.h"
+#include "str2int.h"
+#include "strxmov.h"
 #include "typelib.h"
 #include "welcome_copyright_notice.h" /* ORACLE_WELCOME_COPYRIGHT_NOTICE */
 
-#define MAX_MYSQL_VAR 512
+#define MAX_MYSQL_VAR 8192
 #define SHUTDOWN_DEF_TIMEOUT 3600 /* Wait for shutdown */
 #define MAX_TRUNC_LENGTH 3
 
@@ -364,6 +369,9 @@ bool get_one_option(int optid, const struct my_option *opt [[maybe_unused]],
     case OPT_ENABLE_CLEARTEXT_PLUGIN:
       using_opt_enable_cleartext_plugin = true;
       break;
+    case 'C':
+      CLIENT_WARN_DEPRECATED("--compress", "--compression-algorithms");
+      break;
   }
   if (error) {
     usage();
@@ -469,7 +477,7 @@ int main(int argc, char *argv[]) {
       The following just determines the exit-code we'll give.
     */
 
-    unsigned int err = mysql_errno(&mysql);
+    const unsigned int err = mysql_errno(&mysql);
     if (err >= CR_MIN_ERROR && err <= CR_MAX_ERROR)
       error = 1;
     else {
@@ -484,11 +492,11 @@ int main(int argc, char *argv[]) {
     }
   } else {
     /*
-      --count=0 aborts right here. Otherwise iff --sleep=t ("interval")
+      --count=0 aborts right here. Otherwise if --sleep=t ("interval")
       is given a t!=0, we get an endless loop, or n iterations if --count=n
       was given an n!=0. If --sleep wasn't given, we get one iteration.
 
-      To wit, --wait loops the connection-attempts, while --sleep loops
+      To wait, --wait loops the connection-attempts, while --sleep loops
       the command execution (endlessly if no --count is given).
     */
 
@@ -532,7 +540,7 @@ int main(int argc, char *argv[]) {
             */
           } else {
             /*
-              connexion broke, and we have no order to re-establish it. fail.
+              connection broke, and we have no order to re-establish it. fail.
             */
             if (!option_force) error = 1;
             break;
@@ -873,8 +881,15 @@ static int execute_commands(MYSQL *mysql, int argc, char **argv) {
           return -1;
         }
 
-        assert(mysql_num_rows(res) < MAX_MYSQL_VAR);
-
+        if (mysql_num_rows(res) >= MAX_MYSQL_VAR) {
+          my_printf_error(0,
+                          "Too many rows returned: '%llu'. "
+                          "Expecting no more than '%d' rows",
+                          error_flags, (unsigned long long)mysql_num_rows(res),
+                          MAX_MYSQL_VAR);
+          mysql_free_result(res);
+          return -1;
+        }
         if (!opt_vertical)
           print_header(res);
         else {
@@ -1016,7 +1031,7 @@ static int execute_commands(MYSQL *mysql, int argc, char **argv) {
 
         if (typed_password[0]) {
 #ifdef _WIN32
-          size_t pw_len = strlen(typed_password);
+          const size_t pw_len = strlen(typed_password);
           if (pw_len > 1 && typed_password[0] == '\'' &&
               typed_password[pw_len - 1] == '\'')
             printf(

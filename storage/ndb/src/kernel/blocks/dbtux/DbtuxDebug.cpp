@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -321,7 +321,7 @@ Dbtux::printNode(TuxCtx & ctx,
   for (unsigned i = 0; i <= 1; i++) {
     if (node.getLink(i) != NullTupLoc &&
         node.getLink(1 - i) == NullTupLoc &&
-        // our semi-leaf seems to satify interior minOccup condition
+        // our semi-leaf seems to satisfy interior minOccup condition
         node.getOccup() < tree.m_minOccup) {
       par.m_ok = false;
       out << par.m_path << sep;

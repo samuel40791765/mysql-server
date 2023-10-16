@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,17 +27,16 @@
 #include <vector>
 
 struct AccessPath;
+class Query_expression;
 class JOIN;
+class THD;
 
-/**
-  Print out an access path and all of its children (if any) in a tree.
-  "level" is the current indenting level, as this is called recursively.
-  "join" should be set to the JOIN that "path" is part of (or nullptr
-  if it is not, e.g. if it's part of executing a UNION).
- */
-std::string PrintQueryPlan(
-    int level, AccessPath *path, JOIN *join, bool is_root_of_join,
-    std::vector<std::string> *tokens_for_force_subplan = nullptr);
+/// Print out an access path and all of its children (if any) in a tree.
+std::string PrintQueryPlan(THD *ethd, const THD *query_thd,
+                           Query_expression *unit);
+/// For debugging purposes.
+std::string PrintQueryPlan(int level, AccessPath *path, JOIN *join,
+                           bool is_root_of_join);
 
 /**
   Generate a digest based on the subplan that the given access path

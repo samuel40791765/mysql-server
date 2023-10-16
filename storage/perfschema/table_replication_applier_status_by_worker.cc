@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -227,7 +227,7 @@ table_replication_applier_status_by_worker::
 table_replication_applier_status_by_worker::
     ~table_replication_applier_status_by_worker() = default;
 
-void table_replication_applier_status_by_worker::reset_position(void) {
+void table_replication_applier_status_by_worker::reset_position() {
   m_pos.reset();
   m_next_pos.reset();
 }
@@ -239,12 +239,12 @@ ha_rows table_replication_applier_status_by_worker::get_row_count() {
   return channel_map.get_max_channels() * 32;
 }
 
-int table_replication_applier_status_by_worker::rnd_next(void) {
+int table_replication_applier_status_by_worker::rnd_next() {
   Slave_worker *worker;
   Master_info *mi;
   size_t wc;
 
-  Rdlock_guard<Multisource_info> channel_map_guard{channel_map};
+  const Rdlock_guard<Multisource_info> channel_map_guard{channel_map};
 
   for (m_pos.set_at(&m_next_pos);
        m_pos.has_more_channels(channel_map.get_max_channels());
@@ -296,7 +296,7 @@ int table_replication_applier_status_by_worker::rnd_pos(const void *pos) {
 
   set_position(pos);
 
-  Rdlock_guard<Multisource_info> channel_map_guard{channel_map};
+  const Rdlock_guard<Multisource_info> channel_map_guard{channel_map};
 
   mi = channel_map.get_mi_at_pos(m_pos.m_index_1);
 
@@ -345,12 +345,12 @@ int table_replication_applier_status_by_worker::index_init(uint idx, bool) {
   return 0;
 }
 
-int table_replication_applier_status_by_worker::index_next(void) {
+int table_replication_applier_status_by_worker::index_next() {
   Slave_worker *worker;
   Master_info *mi;
   size_t wc;
 
-  Rdlock_guard<Multisource_info> channel_map_guard{channel_map};
+  const Rdlock_guard<Multisource_info> channel_map_guard{channel_map};
 
   for (m_pos.set_at(&m_next_pos);
        m_pos.has_more_channels(channel_map.get_max_channels());
@@ -580,7 +580,8 @@ int table_replication_applier_status_by_worker::read_row_values(
     if (read_all || bitmap_is_set(table->read_set, f->field_index())) {
       switch (f->field_index()) {
         case 0: /** channel_name */
-          set_field_char_utf8(f, m_row.channel_name, m_row.channel_name_length);
+          set_field_char_utf8mb4(f, m_row.channel_name,
+                                 m_row.channel_name_length);
           break;
         case 1: /*worker_id*/
           set_field_ulonglong(f, m_row.worker_id);
@@ -599,15 +600,15 @@ int table_replication_applier_status_by_worker::read_row_values(
           set_field_ulong(f, m_row.last_error_number);
           break;
         case 5: /*last_error_message*/
-          set_field_varchar_utf8(f, m_row.last_error_message,
-                                 m_row.last_error_message_length);
+          set_field_varchar_utf8mb4(f, m_row.last_error_message,
+                                    m_row.last_error_message_length);
           break;
         case 6: /*last_error_timestamp*/
           set_field_timestamp(f, m_row.last_error_timestamp);
           break;
         case 7: /*last_applied_trx*/
-          set_field_char_utf8(f, m_row.last_applied_trx,
-                              m_row.last_applied_trx_length);
+          set_field_char_utf8mb4(f, m_row.last_applied_trx,
+                                 m_row.last_applied_trx_length);
           break;
         case 8: /*last_applied_trx_original_commit_timestamp*/
           set_field_timestamp(f,
@@ -624,7 +625,8 @@ int table_replication_applier_status_by_worker::read_row_values(
           set_field_timestamp(f, m_row.last_applied_trx_end_apply_timestamp);
           break;
         case 12: /*applying_trx*/
-          set_field_char_utf8(f, m_row.applying_trx, m_row.applying_trx_length);
+          set_field_char_utf8mb4(f, m_row.applying_trx,
+                                 m_row.applying_trx_length);
           break;
         case 13: /*applying_trx_original_commit_timestamp*/
           set_field_timestamp(f, m_row.applying_trx_original_commit_timestamp);
@@ -642,7 +644,7 @@ int table_replication_applier_status_by_worker::read_row_values(
           set_field_ulong(f, m_row.last_applied_trx_last_retry_err_number);
           break;
         case 18: /*last_applied_trx_last_retry_err_msg*/
-          set_field_varchar_utf8(
+          set_field_varchar_utf8mb4(
               f, m_row.last_applied_trx_last_retry_err_msg,
               m_row.last_applied_trx_last_retry_err_msg_length);
           break;
@@ -656,8 +658,9 @@ int table_replication_applier_status_by_worker::read_row_values(
           set_field_ulong(f, m_row.applying_trx_last_retry_err_number);
           break;
         case 22: /*applying_trx_last_retry_err_msg*/
-          set_field_varchar_utf8(f, m_row.applying_trx_last_retry_err_msg,
-                                 m_row.applying_trx_last_retry_err_msg_length);
+          set_field_varchar_utf8mb4(
+              f, m_row.applying_trx_last_retry_err_msg,
+              m_row.applying_trx_last_retry_err_msg_length);
           break;
         case 23: /*applying_trx_last_retry_timestamp*/
           set_field_timestamp(f, m_row.applying_trx_last_retry_timestamp);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,26 +34,27 @@
 #include "decimal.h"
 #include "field_types.h"
 #include "lex_string.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "my_alloc.h"
 #include "my_inttypes.h"
 #include "my_macros.h"
 #include "my_table_map.h"
+#include "mysql/strings/dtoa.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_time.h"
 #include "mysys_err.h"
+#include "sql-common/json_dom.h"
 #include "sql/item.h"
 #include "sql/item_cmpfunc.h"
 #include "sql/item_create.h"
 #include "sql/item_strfunc.h"
 #include "sql/item_sum.h"
 #include "sql/item_timefunc.h"
-#include "sql/json_dom.h"
 #include "sql/my_decimal.h"
 #include "sql/sql_class.h"
 #include "sql/sql_lex.h"
 #include "sql/tztime.h"
 #include "sql_string.h"
+#include "string_with_len.h"
 #include "unittest/gunit/fake_table.h"
 #include "unittest/gunit/mock_field_long.h"
 #include "unittest/gunit/mock_field_timestamp.h"
@@ -277,7 +278,7 @@ TEST_F(ItemTest, ItemString) {
   EXPECT_EQ(MYSQL_TYPE_STRING, field_string.type());
 
   // CHAR field for testing strings with illegal values
-  Mock_field_string field_string_utf8(20, &my_charset_utf8_general_ci);
+  Mock_field_string field_string_utf8(20, &my_charset_utf8mb3_general_ci);
   EXPECT_EQ(MYSQL_TYPE_STRING, field_string_utf8.type());
 
   /*
@@ -324,7 +325,7 @@ TEST_F(ItemTest, ItemString) {
 
   // VARCHAR field for testing strings with illegal values
   Mock_field_varstring field_varstring_utf8(20, &table_share,
-                                            &my_charset_utf8_general_ci);
+                                            &my_charset_utf8mb3_general_ci);
   EXPECT_EQ(MYSQL_TYPE_VARCHAR, field_varstring_utf8.type());
 
   /*
@@ -380,6 +381,39 @@ TEST_F(ItemTest, ItemEqual) {
 
   EXPECT_FALSE(item_equal->fix_fields(thd(), nullptr));
   EXPECT_EQ(1, item_equal->val_int());
+}
+
+TEST_F(ItemTest, ItemViewRef) {
+  Mock_field_long f_field1(true);
+  Mock_field_long f_field2(true);
+  Item_field *field1 = new Item_field(&f_field1);
+  Item_field *field2 = new Item_field(&f_field2);
+  Item *field3 = new Item_int(123);
+
+  // Create a view reference over a constant expression from an inner
+  // table of an outer join.
+  Table_ref table;
+  table.outer_join = true;
+  table.set_tableno(2);
+  Item_view_ref *view_ref =
+      new Item_view_ref(&thd()->lex->current_query_block()->context, &field3,
+                        nullptr, nullptr, "t1", "f1", &table);
+
+  Item_func_eq *eq1 = new Item_func_eq(field1, field2);
+  Item_func_eq *eq2 = new Item_func_eq(field1, field3);
+  Item_func_eq *eq3 = new Item_func_eq(field1, view_ref);
+
+  // True because both arguments are fields.
+  EXPECT_TRUE(eq1->contains_only_equi_join_condition());
+  // False because the right side argument is a constant and
+  // therefore concluded as a filter.
+  EXPECT_FALSE(eq2->contains_only_equi_join_condition());
+  // Even though the used table information for the right side
+  // argument says it is not a constant expression, it examines
+  // the underlying expression in the view reference and concludes
+  // it as constant expression there by making it a filter and
+  // not a equi-join condition.
+  EXPECT_FALSE(eq3->contains_only_equi_join_condition());
 }
 
 TEST_F(ItemTest, ItemRollupSwitcher) {

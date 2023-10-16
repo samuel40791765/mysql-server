@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -241,10 +241,11 @@ enum latch_level_t {
   SYNC_RECV,
 
   SYNC_LOG_LIMITS,
+  SYNC_LOG_FLUSHER,
+  SYNC_LOG_FILES,
   SYNC_LOG_WRITER,
   SYNC_LOG_WRITE_NOTIFIER,
   SYNC_LOG_FLUSH_NOTIFIER,
-  SYNC_LOG_FLUSHER,
   SYNC_LOG_CLOSER,
   SYNC_LOG_CHECKPOINTER,
   SYNC_LOG_SN,
@@ -313,6 +314,8 @@ enum latch_level_t {
 
   SYNC_DICT_OPERATION,
 
+  SYNC_AHI_ENABLED,
+
   SYNC_TRX_I_S_LAST_READ,
 
   SYNC_TRX_I_S_RWLOCK,
@@ -337,6 +340,7 @@ up its meta-data. See sync0debug.c. The order does not matter here, but
 alphabetical ordering seems useful */
 enum latch_id_t {
   LATCH_ID_NONE = 0,
+  LATCH_ID_AHI_ENABLED,
   LATCH_ID_AUTOINC,
   LATCH_ID_BUF_BLOCK_MUTEX,
   LATCH_ID_BUF_POOL_CHUNKS,
@@ -378,6 +382,7 @@ enum latch_id_t {
   LATCH_ID_LOG_WRITE_NOTIFIER,
   LATCH_ID_LOG_FLUSH_NOTIFIER,
   LATCH_ID_LOG_LIMITS,
+  LATCH_ID_LOG_FILES,
   LATCH_ID_PARSER,
   LATCH_ID_LOG_ARCH,
   LATCH_ID_PAGE_ARCH,
@@ -422,7 +427,6 @@ enum latch_id_t {
   LATCH_ID_ZIP_PAD_MUTEX,
   LATCH_ID_OS_AIO_READ_MUTEX,
   LATCH_ID_OS_AIO_WRITE_MUTEX,
-  LATCH_ID_OS_AIO_LOG_MUTEX,
   LATCH_ID_OS_AIO_IBUF_MUTEX,
   LATCH_ID_ROW_DROP_LIST,
   LATCH_ID_INDEX_ONLINE_LOG,
@@ -529,6 +533,9 @@ struct OSMutex {
     ut_a(ret == 0);
 #endif /* _WIN32 */
   }
+
+  void lock() { enter(); }
+  void unlock() { exit(); }
 
   /** @return true if locking succeeded */
   bool try_lock() UNIV_NOTHROW {
@@ -919,14 +926,9 @@ inline mysql_pfs_key_t sync_latch_get_pfs_key(latch_id_t id) {
 /** String representation of the filename and line number where the
 latch was created
 @param[in]      id              Latch ID
-@param[in]      created         Filename and line number where it was crated
+@param[in]      created         Filename and line number where it was created
 @return the string representation */
 std::string sync_mutex_to_string(latch_id_t id, const std::string &created);
-
-/** Get the latch name from a sync level
-@param[in]      level           Latch level to lookup
-@return nullptr if not found. */
-const char *sync_latch_get_name(latch_level_t level);
 
 /** Print the filename "basename"
 @return the basename */
@@ -1067,7 +1069,7 @@ struct btrsea_sync_check : public sync_check_functor_t {
     Plugin in this case is I_S which is sharing the latch vector
     of InnoDB and so there could be lock conflicts. Ideally
     the Plugin should use a difference namespace latch vector
-    as it doesn't have any depedency with SE latching protocol.
+    as it doesn't have any dependency with SE latching protocol.
 
     Added check that will allow thread to hold I_S latches */
 
@@ -1199,11 +1201,6 @@ struct sync_allowed_latches : public sync_check_functor_t {
   /** List of latch levels that are allowed to be held */
   latches_t m_latches;
 };
-
-/** Get the latch id from a latch name.
-@param[in]      name    Latch name
-@return latch id if found else LATCH_ID_NONE. */
-latch_id_t sync_latch_get_id(const char *name);
 
 typedef ulint rw_lock_flags_t;
 

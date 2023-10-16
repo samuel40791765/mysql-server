@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -258,6 +258,41 @@ bool is_store_version(const dict_index_t *index, size_t n_tuple_fields) {
   return true;
 }
 
+/* Calculate nullable fields which will be there on COMPACT/DYNAMIC format.
+@param[in]  index       record descriptor
+@param[in]  n_fields    number of fields in tuple
+@param[in]  rec_version version in which record to be stored.
+@return number of nullable fileds in the physical record. */
+static size_t get_nullable_fields_for_rec(const dict_index_t *index,
+                                          const size_t n_fields,
+                                          uint8_t &rec_version) {
+  const bool is_valid_version = is_valid_row_version(rec_version);
+  size_t nullable_fields = 0;
+
+  if (!is_valid_version) {
+    /* Invalid version. Temp record for redundnat format. Record being logged
+    doesn't have version. It will be stored in version=0 */
+    rec_version = 0;
+    nullable_fields = index->get_nullable_in_version(rec_version);
+    return nullable_fields;
+  }
+
+  if (index->has_row_versions()) {
+    /* Table has version. New records will be stored in latest format. */
+    ut_ad(is_valid_version);
+    nullable_fields = index->get_nullable_in_version(rec_version);
+  } else if (index->has_instant_cols()) {
+    /* Table has no version. New records will be written as of old way. */
+    nullable_fields =
+        index->get_n_nullable_before(static_cast<uint32_t>(n_fields));
+  } else {
+    /* Table has no version no instant. All the fields will be there. */
+    nullable_fields = index->n_nullable;
+  }
+
+  return nullable_fields;
+}
+
 /** Determines the size of a data tuple prefix in ROW_FORMAT=COMPACT.
 @param[in]      index           record descriptor, dict_table_is_comp() is
                                 assumed to hold, even if it does not
@@ -282,17 +317,15 @@ bool is_store_version(const dict_index_t *index, size_t n_tuple_fields) {
   ut_ad(!v_entry || (index->is_clustered() && temp));
   ulint n_v_fields = v_entry ? dtuple_get_n_v_fields(v_entry) : 0;
 
-  ut_ad(rec_version != UINT8_UNDEFINED && rec_version <= MAX_ROW_VERSION);
+#ifdef UNIV_DEBUG
+  /* INVALID vesion. Possible for temp record for redundant format. */
+  ut_ad(is_valid_row_version(rec_version) ||
+        (temp && !dict_table_is_comp(index->table)));
+#endif
 
   ulint n_null = 0;
   if (n_fields > 0) {
-    if (index->has_row_versions()) {
-      n_null = index->get_nullable_in_version(rec_version);
-    } else if (index->has_instant_cols()) {
-      n_null = index->get_n_nullable_before(static_cast<uint32_t>(n_fields));
-    } else {
-      n_null = index->n_nullable;
-    }
+    n_null = get_nullable_fields_for_rec(index, n_fields, rec_version);
   }
 
   ulint extra_size = 0;
@@ -314,11 +347,7 @@ bool is_store_version(const dict_index_t *index, size_t n_tuple_fields) {
         break;
       case REC_STATUS_NODE_PTR:
         ut_ad(!temp && n_fields > 0);
-        if (index->has_row_versions()) {
-          n_null = index->get_nullable_in_version(0);
-        } else if (index->has_instant_cols()) {
-          n_null = index->get_instant_nullable();
-        }
+        n_null = index->get_nullable_before_instant_add_drop();
         break;
       case REC_STATUS_INFIMUM:
       case REC_STATUS_SUPREMUM:
@@ -675,8 +704,33 @@ static rec_t *rec_convert_dtuple_to_rec_old(byte *buf,
   return (rec);
 }
 
+/* A temp record, generated for a REDUNDANT row record, will have info bits
+iff table has INSTANT ADD columns. And if record has row version, then it will
+also be stored on temp record header. Following function finds the number of
+more bytes needed in record header to store this info.
+@param[in]  index record descriptor
+@param[in]  valid_version true if record has version
+@return number of bytes NULL pointer should be adjusted. */
+size_t get_extra_bytes_for_temp_redundant(const dict_index_t *index,
+                                          bool valid_version) {
+  if (!index->has_instant_cols_or_row_versions()) {
+    return 0;
+  }
+
+  size_t bytes_needed = 0;
+
+  /* temp record must have info bits */
+  bytes_needed++;
+
+  if (valid_version) {
+    bytes_needed++;
+  }
+
+  return bytes_needed;
+}
+
 /** Builds a ROW_FORMAT=COMPACT record out of a data tuple.
-@param[in]      rec             origin of record
+@param[in, out] rec             origin of record
 @param[in]      index           record descriptor
 @param[in]      fields          array of data fields
 @param[in]      n_fields        number of data fields
@@ -685,31 +739,26 @@ static rec_t *rec_convert_dtuple_to_rec_old(byte *buf,
 @param[in]      temp            whether to use the format for temporary
                                 files in index creation
 @param[in]      rec_version     rec version (could be 0 also)
-@return true    if this record is an instant record on leaf page
-@retval false   if not an instant record */
-static inline bool rec_convert_dtuple_to_rec_comp(
+@return record instant information for record on leaf page */
+static inline Rec_instant_state rec_convert_dtuple_to_rec_comp(
     rec_t *rec, const dict_index_t *index, const dfield_t *fields,
     ulint n_fields, const dtuple_t *v_entry, ulint status, bool temp,
     uint8_t rec_version) {
   ut_ad(temp || dict_table_is_comp(index->table));
 
-  ut_ad(rec_version != UINT8_UNDEFINED && rec_version <= MAX_ROW_VERSION);
-
   ulint num_v = v_entry ? dtuple_get_n_v_fields(v_entry) : 0;
+
+  const bool is_valid_version = is_valid_row_version(rec_version);
+  /* INVALID vesion. Possible for temp record for redundant format. */
+  ut_ad(is_valid_version || (temp && !dict_table_is_comp(index->table)));
 
   ulint n_null = 0;
   if (n_fields != 0) {
-    if (index->has_row_versions()) {
-      n_null = index->get_nullable_in_version(rec_version);
-    } else if (index->has_instant_cols()) {
-      n_null = index->get_n_nullable_before(static_cast<uint32_t>(n_fields));
-    } else {
-      n_null = index->n_nullable;
-    }
+    n_null = get_nullable_fields_for_rec(index, n_fields, rec_version);
   }
 
   byte *nulls = nullptr;
-  bool instant = false;
+  auto rec_instant_info = Rec_instant_state::REC_IS_SIMPLE;
   ulint n_node_ptr_field;
   if (temp) {
     ut_ad(status == REC_STATUS_ORDINARY);
@@ -717,14 +766,18 @@ static inline bool rec_convert_dtuple_to_rec_comp(
     n_node_ptr_field = ULINT_UNDEFINED;
     nulls = rec - 1;
 
-    if (index->has_instant_cols_or_row_versions() &&
-        !dict_table_is_comp(index->table)) {
-      /* Shift nulls 1 byte back for info bits */
-      nulls -= 1;
-      if (rec_version > 0) {
-        /* Shift nulls 1 byte for version */
-        nulls -= 1;
+    /* NOTE : For COMPACT/DYNAMIC record, rec pointer for temp rec is already
+    pointing to just before <row_verison><info-bits>, if needed. So no
+    adjustment is needed there. */
+
+    if (!dict_table_is_comp(index->table)) {
+      size_t bytes_needed =
+          get_extra_bytes_for_temp_redundant(index, is_valid_version);
+      if (bytes_needed > 0) {
+        rec_new_temp_set_versioned(rec, is_valid_version);
       }
+      /* Move nulls accordingly */
+      nulls = nulls - bytes_needed;
     }
 
     if (dict_table_is_comp(index->table)) {
@@ -753,14 +806,16 @@ static inline bool rec_convert_dtuple_to_rec_comp(
 
             /* Shift pointer to null byte before the version */
             nulls -= 1;
-            instant = true;
+            rec_instant_info = Rec_instant_state::REC_IS_VERSIONED;
           } else {
             ut_ad(index->has_instant_cols());
             if (index->is_tuple_instant_format(n_fields)) {
               /* Not materializing instant default. So need to store in V1 */
               uint32_t n_fields_len = rec_set_n_fields(rec, n_fields);
+
+              /* Shift pointer to null byte before the number of fileds */
               nulls -= n_fields_len;
-              instant = true;
+              rec_instant_info = Rec_instant_state::REC_IS_INSTANT;
             }
           }
         }
@@ -770,11 +825,7 @@ static inline bool rec_convert_dtuple_to_rec_comp(
               static_cast<ulint>(
                   dict_index_get_n_unique_in_tree_nonleaf(index) + 1));
         n_node_ptr_field = n_fields - 1;
-        if (index->has_row_versions()) {
-          n_null = index->get_nullable_in_version(0);
-        } else if (index->has_instant_cols()) {
-          n_null = index->get_instant_nullable();
-        }
+        n_null = index->get_nullable_before_instant_add_drop();
         break;
       case REC_STATUS_INFIMUM:
       case REC_STATUS_SUPREMUM:
@@ -942,7 +993,7 @@ static inline bool rec_convert_dtuple_to_rec_comp(
   }
 
   if (!num_v) {
-    return (instant);
+    return rec_instant_info;
   }
 
   /* reserve 2 bytes for writing length */
@@ -994,7 +1045,7 @@ static inline bool rec_convert_dtuple_to_rec_comp(
 
   mach_write_to_2(end, ptr - end);
 
-  return (instant);
+  return rec_instant_info;
 }
 
 /** Builds a new-style physical record out of a data tuple and stores it
@@ -1015,29 +1066,32 @@ static rec_t *rec_convert_dtuple_to_rec_new(byte *buf,
                               &extra_size);
   rec = buf + extra_size;
 
-  bool instant = rec_convert_dtuple_to_rec_comp(
+  auto rec_state = rec_convert_dtuple_to_rec_comp(
       rec, index, dtuple->fields, dtuple->n_fields, nullptr, status, false,
       index->table->current_row_version);
 
-  /* Set the info bits of the record */
+  /* Set the info bits of the record from dtuple */
   rec_set_info_and_status_bits(rec, dtuple_get_info_bits(dtuple));
 
-  if (instant) {
-    ut_ad(index->has_instant_cols_or_row_versions());
-    if (dtuple->n_fields < index->n_fields) {
-      /* Only in case of UPDATE where we are not materializing instant
-      default values, dtuple->n_fields will be less than index->n_fields. In
-      that case, we need to write in V1. */
-      rec_set_instant_flag_new(rec, true);
-    } else {
-      /* For any new record insert for upgraded table, always write it in V2. */
-      rec_new_set_versioned(rec, true);
-    }
-  } else {
-    rec_new_set_versioned(rec, false);
-    rec_set_instant_flag_new(rec, false);
+  switch (rec_state) {
+    case Rec_instant_state::REC_IS_SIMPLE:
+      rec_new_reset_instant_version(rec);
+      break;
+    case Rec_instant_state::REC_IS_VERSIONED:
+      ut_a(index->has_instant_cols_or_row_versions());
+      rec_new_set_versioned(rec);
+      break;
+    case Rec_instant_state::REC_IS_INSTANT:
+      ut_a(index->has_instant_cols_or_row_versions());
+      ut_a(index->table->has_instant_cols());
+      rec_new_set_instant(rec);
+      break;
+    default:
+      ut_error;
   }
 
+  /* Only one of the bit (INSTANT or VERSION) could be set */
+  ut_a(!(rec_get_instant_flag_new(rec) && rec_new_is_versioned(rec)));
   return (rec);
 }
 
@@ -1075,7 +1129,8 @@ rec_t *rec_convert_dtuple_to_rec(
     ulint i;
     rec_offs_init(offsets_);
 
-    offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
     ut_ad(rec_validate(rec, offsets));
     ut_ad(dtuple_get_n_fields(dtuple) == rec_offs_n_fields(offsets));
 
@@ -1098,8 +1153,8 @@ rec_t *rec_convert_dtuple_to_rec(
 ulint rec_get_serialize_size(const dict_index_t *index, const dfield_t *fields,
                              ulint n_fields, const dtuple_t *v_entry,
                              ulint *extra, uint8_t rec_version) {
-  return (rec_get_converted_size_comp_prefix_low(
-      index, fields, n_fields, v_entry, extra, nullptr, true, rec_version));
+  return rec_get_converted_size_comp_prefix_low(
+      index, fields, n_fields, v_entry, extra, nullptr, true, rec_version);
 }
 
 /** Determine the offset to each field in temporary file.
@@ -1143,7 +1198,8 @@ void rec_copy_prefix_to_dtuple(
   ulint *offsets = offsets_;
   rec_offs_init(offsets_);
 
-  offsets = rec_get_offsets(rec, index, offsets, n_fields, &heap);
+  offsets =
+      rec_get_offsets(rec, index, offsets, n_fields, UT_LOCATION_HERE, &heap);
 
   ut_ad(rec_validate(rec, offsets));
   ut_ad(dtuple_check_typed(tuple));
@@ -1213,7 +1269,7 @@ rec_t *rec_copy_prefix_to_buf(const rec_t *rec, const dict_index_t *index,
                               ulint n_fields, byte **buf, size_t *buf_size) {
   const byte *nulls;
   const byte *lens;
-  uint16_t n_null;
+  uint16_t n_null = 0;
   ulint i;
   ulint prefix_len;
   ulint null_mask;
@@ -1253,10 +1309,18 @@ rec_t *rec_copy_prefix_to_buf(const rec_t *rec, const dict_index_t *index,
       ut_error;
   }
 
-  ut_d(uint16_t row_version =)
-      rec_init_null_and_len_comp(rec, index, &nulls, &lens, &n_null);
-  ut_ad(!rec_new_is_versioned(rec) || row_version > 0 ||
-        row_version <= index->table->current_row_version);
+  {
+    uint16_t ndf = 0;
+    uint8_t row_version = UINT8_UNDEFINED;
+    ut_d(enum REC_INSERT_STATE rec_ins_state =) rec_init_null_and_len_comp(
+        rec, index, &nulls, &lens, &n_null, ndf, row_version);
+    ut_ad(rec_ins_state != NONE);
+    ut_ad(rec_ins_state == INSERTED_INTO_TABLE_WITH_NO_INSTANT_NO_VERSION ||
+          index->has_instant_cols_or_row_versions());
+    ut_ad(!rec_new_is_versioned(rec) ||
+          (is_valid_row_version(row_version) &&
+           row_version <= index->table->current_row_version));
+  }
 
   UNIV_PREFETCH_R(lens);
   prefix_len = 0;
@@ -1720,9 +1784,9 @@ void rec_print(FILE *file, const rec_t *rec, const dict_index_t *index) {
     ulint offsets_[REC_OFFS_NORMAL_SIZE];
     rec_offs_init(offsets_);
 
-    rec_print_new(
-        file, rec,
-        rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &heap));
+    rec_print_new(file, rec,
+                  rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                                  UT_LOCATION_HERE, &heap));
     if (UNIV_LIKELY_NULL(heap)) {
       mem_heap_free(heap);
     }
@@ -1789,8 +1853,8 @@ void rec_print(std::ostream &o, const rec_t *rec, ulint info,
 @return the output stream */
 std::ostream &operator<<(std::ostream &o, const rec_index_print &r) {
   mem_heap_t *heap = nullptr;
-  ulint *offsets =
-      rec_get_offsets(r.m_rec, r.m_index, nullptr, ULINT_UNDEFINED, &heap);
+  ulint *offsets = rec_get_offsets(r.m_rec, r.m_index, nullptr, ULINT_UNDEFINED,
+                                   UT_LOCATION_HERE, &heap);
   rec_print(o, r.m_rec, rec_get_info_bits(r.m_rec, rec_offs_comp(offsets)),
             offsets);
   mem_heap_free(heap);
@@ -1831,7 +1895,8 @@ trx_id_t rec_get_trx_id(const rec_t *rec,          /*!< in: record */
   }
 #endif /* UNIV_DEBUG */
 
-  offsets = rec_get_offsets(rec, index, offsets, trx_id_col + 1, &heap);
+  offsets = rec_get_offsets(rec, index, offsets, trx_id_col + 1,
+                            UT_LOCATION_HERE, &heap);
 
   trx_id = rec_get_nth_field(index, rec, offsets, trx_id_col, &len);
 

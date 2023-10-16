@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2004, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,7 @@
 #include <mysql/plugin.h>
 
 #include "lex_string.h"
+#include "m_string.h"
 #include "my_byteorder.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
@@ -39,6 +40,7 @@
 #include "mysql/plugin.h"
 #include "mysql/psi/mysql_file.h"
 #include "mysql/psi/mysql_memory.h"
+#include "nulls.h"
 #include "sql/derror.h"
 #include "sql/field.h"
 #include "sql/sql_class.h"
@@ -79,7 +81,7 @@
 
   At some point a recovery method for such a drastic case needs to be divised.
 
-  Locks are row level, and you will get a consistant read.
+  Locks are row level, and you will get a consistent read.
 
   For performance as far as table scans go it is quite fast. I don't have
   good numbers but locally it has out performed both Innodb and MyISAM. For
@@ -468,7 +470,7 @@ int Archive_share::init_archive_writer() {
   /*
     It is expensive to open and close the data files and since you can't have
     a gzip file that can be both read and written we keep a writer open
-    that is shared amoung all open tables.
+    that is shared among all open tables.
   */
   if (!(azopen(&archive_write, data_file_name, O_RDWR))) {
     DBUG_PRINT("ha_archive", ("Could not open archive write file"));
@@ -498,7 +500,7 @@ int ha_archive::init_archive_reader() {
   /*
     It is expensive to open and close the data files and since you can't have
     a gzip file that can be both read and written we keep a writer open
-    that is shared amoung all open tables, but have one reader open for
+    that is shared among all open tables, but have one reader open for
     each handler instance.
   */
   if (!archive_reader_open) {
@@ -1230,7 +1232,7 @@ int ha_archive::optimize(THD *, HA_CHECK_OPT *check_opt) {
 
   table->copy_blobs = true;
 
-  /* read rows upto the remembered rows */
+  /* read rows up to the remembered rows */
   for (ha_rows cur_count = count; cur_count; cur_count--) {
     if ((rc = get_row(&archive, table->record[0]))) break;
     real_write_row(table->record[0], &writer);

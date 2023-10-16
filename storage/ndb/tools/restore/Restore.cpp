@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -551,7 +551,7 @@ RestoreMetaData::readMetaTableDesc() {
     if (!m_hostByteOrder)
     {
       /**
-       * Bloddy byte-array, need to twiddle
+       * Bloody byte-array, need to twiddle
        */
       Vector<Uint32> values;
       Uint32 len = dst->getMapLen();
@@ -1690,7 +1690,7 @@ BackupFile::openFile(){
                    reinterpret_cast<const byte*>(
                        g_backup_password_state.get_password()),
                    g_backup_password_state.get_password_length());
-  bool fail = (r == -1);
+  bool fail = (r != 0);
   if (g_backup_password_state.get_password() != nullptr)
   {
     if (!m_xfile.is_encrypted())
@@ -1699,7 +1699,7 @@ BackupFile::openFile(){
                               "encrypted.");
       fail = true;
     }
-    else if (r == -1)
+    else if (r != 0)
     {
       restoreLogger.log_error("Can not read decrypted file. Might be wrong password.");
     }
@@ -1712,7 +1712,7 @@ BackupFile::openFile(){
                               "requested.");
       fail = true;
     }
-    else if (r == -1)
+    else if (r != 0)
     {
       restoreLogger.log_error("Can not read file. Might be corrupt.");
     }
@@ -1758,7 +1758,7 @@ int BackupFile::buffer_get_ptr_ahead(void **p_buf_ptr, Uint32 size, Uint32 nmemb
        * For undo log file we should read log entris backwards from log file.
        *   That mean the first entries should start at sizeof(m_fileHeader).
        *   The end of the last entries should be the end of log file(EOF-1).
-       * If ther are entries left in log file to read.
+       * If there are entries left in log file to read.
        *   m_file_pos should bigger than sizeof(m_fileHeader).
        * If the length of left log entries less than the residual length of buffer,
        *   we just need to read all the left entries from log file into the buffer.
@@ -1779,7 +1779,7 @@ int BackupFile::buffer_get_ptr_ahead(void **p_buf_ptr, Uint32 size, Uint32 nmemb
          *                          top        end
          *   Bytes in file        abcdefgh0123456789
          *   Byte in buffer       0123456789             --after first read
-         *   Consume datas...     (6789) (2345)
+         *   Consume data...      (6789) (2345)
          *   Bytes in buffer      01++++++++             --after several consumes
          *   Move data to end     ++++++++01
          *   Bytes in buffer      abcdefgh01             --after second read
@@ -1797,7 +1797,7 @@ int BackupFile::buffer_get_ptr_ahead(void **p_buf_ptr, Uint32 size, Uint32 nmemb
         }
         else
         {
-	  // Fill remaing space at start of buffer with data from file.
+	  // Fill remaining space at start of buffer with data from file.
           ndbxfrm_output_reverse_iterator out((unsigned char*)m_buffer + buffer_free_space, (unsigned char*)m_buffer, false);
           byte* out_beg = out.begin();
           r = m_xfile.read_backward(&out);
@@ -2770,7 +2770,7 @@ LogEntry::printSqlLog() const {
   ndbout << ";";
 }
 
-RestoreLogger::RestoreLogger()
+RestoreLogger::RestoreLogger():print_timestamp(true)
 {
   m_mutex = NdbMutex_Create();
 }
@@ -2789,6 +2789,11 @@ void RestoreLogger::log_error(const char* fmt, ...)
   va_end(ap);
 
   NdbMutex_Lock(m_mutex);
+  if (print_timestamp) {
+    Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
+    err << timestamp << " ";
+  }
+
   err << getThreadPrefix() << buf << endl;
   NdbMutex_Unlock(m_mutex);
 }
@@ -2802,6 +2807,11 @@ void RestoreLogger::log_info(const char* fmt, ...)
   va_end(ap);
 
   NdbMutex_Lock(m_mutex);
+  if (print_timestamp) {
+    Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
+    info << timestamp << " ";
+  }
+
   info << getThreadPrefix() << buf << endl;
   NdbMutex_Unlock(m_mutex);
 }
@@ -2815,6 +2825,11 @@ void RestoreLogger::log_debug(const char* fmt, ...)
   va_end(ap);
 
   NdbMutex_Lock(m_mutex);
+  if (print_timestamp) {
+    Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
+    debug << timestamp << " ";
+  }
+
   debug << getThreadPrefix() << buf << endl;
   NdbMutex_Unlock(m_mutex);
 }
@@ -2835,6 +2850,16 @@ RestoreLogger::getThreadPrefix() const
       prefix =  "";
     }
    return prefix;
+}
+
+void
+RestoreLogger::set_print_timestamp(bool print_TS) {
+  print_timestamp = print_TS;
+}
+
+bool
+RestoreLogger::get_print_timestamp() {
+  return print_timestamp;
 }
 
 NdbOut &

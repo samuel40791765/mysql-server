@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -95,7 +95,7 @@ table_processlist::table_processlist() : cursor_by_thread(&m_share) {
   m_row_priv.m_auth = PROCESSLIST_DENIED;
 }
 
-int table_processlist::set_access(void) {
+int table_processlist::set_access() {
   THD *thd = current_thd;
   if (thd == nullptr) {
     /* Robustness, no user session. */
@@ -109,7 +109,7 @@ int table_processlist::set_access(void) {
     return 0;
   }
 
-  LEX_CSTRING client_priv_user = thd->security_context()->priv_user();
+  const LEX_CSTRING client_priv_user = thd->security_context()->priv_user();
   if (client_priv_user.length == 0) {
     /* Anonymous user. */
     m_row_priv.m_auth = PROCESSLIST_DENIED;
@@ -299,8 +299,8 @@ int table_processlist::make_row(PFS_thread *pfs) {
 
   if (m_row.m_hostname_length > 0 && pfs->m_peer_port != 0) {
     /* Create HOST:PORT. */
-    std::string host(m_row.m_hostname, m_row.m_hostname_length);
-    std::string host_ip = host + ":" + std::to_string(pfs->m_peer_port);
+    const std::string host(m_row.m_hostname, m_row.m_hostname_length);
+    const std::string host_ip = host + ":" + std::to_string(pfs->m_peer_port);
     m_row.m_hostname_length =
         std::min((int)HOST_AND_PORT_LENGTH, (int)host_ip.length());
     memcpy(m_row.m_hostname, host_ip.c_str(), m_row.m_hostname_length);
@@ -335,24 +335,24 @@ int table_processlist::read_row_values(TABLE *table, unsigned char *buf,
           break;
         case 1: /* USER */
           if (m_row.m_user_name.length() > 0) {
-            set_field_varchar_utf8(f, m_row.m_user_name.ptr(),
-                                   m_row.m_user_name.length());
+            set_field_varchar_utf8mb4(f, m_row.m_user_name.ptr(),
+                                      m_row.m_user_name.length());
           } else {
             f->set_null();
           }
           break;
         case 2: /* HOST (and PORT) */
           if (m_row.m_hostname_length > 0) {
-            set_field_varchar_utf8(f, m_row.m_hostname,
-                                   m_row.m_hostname_length);
+            set_field_varchar_utf8mb4(f, m_row.m_hostname,
+                                      m_row.m_hostname_length);
           } else {
             f->set_null();
           }
           break;
         case 3: /* DB */
           if (m_row.m_db_name.length() > 0) {
-            set_field_varchar_utf8(f, m_row.m_db_name.ptr(),
-                                   m_row.m_db_name.length());
+            set_field_varchar_utf8mb4(f, m_row.m_db_name.ptr(),
+                                      m_row.m_db_name.length());
           } else {
             f->set_null();
           }
@@ -360,15 +360,15 @@ int table_processlist::read_row_values(TABLE *table, unsigned char *buf,
         case 4: /* COMMAND */
           if (m_row.m_processlist_id != 0) {
             const std::string &cn = Command_names::str_session(m_row.m_command);
-            set_field_varchar_utf8(f, cn.c_str(), cn.length());
+            set_field_varchar_utf8mb4(f, cn.c_str(), cn.length());
           } else {
             f->set_null();
           }
           break;
         case 5: /* TIME */
           if (m_row.m_start_time) {
-            time_t now = time(nullptr);
-            ulonglong elapsed =
+            const time_t now = time(nullptr);
+            const ulonglong elapsed =
                 (now > m_row.m_start_time ? now - m_row.m_start_time : 0);
             set_field_ulonglong(f, elapsed);
           } else {
@@ -377,8 +377,8 @@ int table_processlist::read_row_values(TABLE *table, unsigned char *buf,
           break;
         case 6: /* STATE */
           /* For compatibility, leave blank if state is NULL. */
-          set_field_varchar_utf8(f, m_row.m_processlist_state_ptr,
-                                 m_row.m_processlist_state_length);
+          set_field_varchar_utf8mb4(f, m_row.m_processlist_state_ptr,
+                                    m_row.m_processlist_state_length);
           break;
         case 7: /* INFO */
           if (m_row.m_processlist_info_length > 0)

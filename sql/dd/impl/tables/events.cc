@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -24,8 +24,8 @@
 
 #include <new>
 
-#include "m_ctype.h"
 #include "m_string.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"
 #include "sql/dd/impl/raw/object_keys.h"       // dd::Global_name_key
 #include "sql/dd/impl/raw/raw_record.h"        // dd::Raw_record
@@ -44,7 +44,7 @@ const Events &Events::instance() {
 ///////////////////////////////////////////////////////////////////////////
 
 const CHARSET_INFO *Events::name_collation() {
-  return &my_charset_utf8_general_ci;
+  return &my_charset_utf8mb3_general_ci;
 }
 
 ///////////////////////////////////////////////////////////////////////////

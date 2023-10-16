@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -125,7 +125,8 @@ Gcs_xcom_control::Gcs_xcom_control(
     Gcs_xcom_view_change_control_interface *view_control, bool boot,
     My_xp_socket_util *socket_util,
     std::unique_ptr<Network_provider_operations_interface>
-        comms_operation_interface)
+        comms_operation_interface,
+    Gcs_xcom_statistics_manager_interface *stats_mgr)
     : m_gid(nullptr),
       m_gid_hash(0),
       m_xcom_proxy(xcom_proxy),
@@ -142,6 +143,7 @@ Gcs_xcom_control::Gcs_xcom_control(
       m_suspicions_processing_thread(),
       m_sock_probe_interface(nullptr),
       m_comms_operation_interface(std::move(comms_operation_interface)),
+      m_stats_mgr(stats_mgr),
       m_xcom_running(false),
       m_leave_view_requested(false),
       m_leave_view_delivered(false),
@@ -541,6 +543,7 @@ bool Gcs_xcom_control::send_add_node_request(
   // Go through the seed list S_CONNECTION_ATTEMPTS times.
   for (int attempt_nr = 0;
        !add_node_accepted && attempt_nr < CONNECTION_ATTEMPTS; attempt_nr++) {
+    if (m_view_control->is_finalized()) break;
     add_node_accepted = try_send_add_node_request_to_seeds(my_addresses);
   }
 
@@ -553,7 +556,9 @@ bool Gcs_xcom_control::try_send_add_node_request_to_seeds(
 
   // Until the add_node is successfully sent, for each peer...
   for (auto it = m_initial_peers.begin();
-       !add_node_accepted && it != m_initial_peers.end(); it++) {
+       !m_view_control->is_finalized() && !add_node_accepted &&
+       it != m_initial_peers.end();
+       it++) {
     // ...try to connect to it and send it the add_node request.
     Gcs_xcom_node_address &peer = **it;
 
@@ -561,7 +566,8 @@ bool Gcs_xcom_control::try_send_add_node_request_to_seeds(
     connection_descriptor *con = nullptr;
     std::tie(connected, con) = connect_to_peer(peer, my_addresses);
 
-    if (connected) {
+    if (bool finalized = m_view_control->is_finalized();
+        !finalized && connected) {
       MYSQL_GCS_LOG_INFO("Sucessfully connected to peer "
                          << peer.get_member_ip().c_str() << ":"
                          << peer.get_member_port()
@@ -593,7 +599,7 @@ bool Gcs_xcom_control::try_send_add_node_request_to_seeds(
       if (xcom_will_process) add_node_accepted = true;
     }
 
-    if (con != nullptr) free(con);
+    free_connection(con);
   }
 
   return add_node_accepted;
@@ -1181,7 +1187,7 @@ bool Gcs_xcom_control::xcom_receive_local_view(synode_no const config_id,
       Identify which nodes are alive and which are considered faulty.
 
       Note that there may be new nodes that are marked as faulty because the
-      connections among their peers are still beeing established.
+      connections among their peers are still being established.
     */
     build_total_members(xcom_nodes, alive_members, failed_members);
 
@@ -1260,6 +1266,11 @@ bool Gcs_xcom_control::xcom_receive_local_view(synode_no const config_id,
             MYSQL_GCS_LOG_TRACE("My node_id is (%d) Non-member node considered "
                                 "suspicious in the cluster: %s",
                                 node_no, (*it)->get_member_id().c_str());)
+
+    // Register suspicious per node, for statistical purposes
+    for (auto &&suspect_member_id : unreachable) {
+      m_stats_mgr->add_suspicious_for_a_node(suspect_member_id.get_member_id());
+    }
 
     // always notify local views
     for (callback_it = event_listeners.begin();
@@ -1398,7 +1409,7 @@ bool Gcs_xcom_control::xcom_receive_global_view(synode_no const config_id,
     Identify which nodes are alive and which are considered faulty.
 
     Note that there may be new nodes that are marked as faulty because the
-    connections among their peers are still beeing established.
+    connections among their peers are still being established.
   */
   build_total_members(xcom_nodes, alive_members, failed_members);
 

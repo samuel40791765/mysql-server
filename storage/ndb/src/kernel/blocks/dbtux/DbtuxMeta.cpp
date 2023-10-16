@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -52,8 +52,8 @@ void
 Dbtux::execCREATE_TAB_REQ(Signal* signal)
 {
   jamEntry();
-  CreateTabReq copy = *(CreateTabReq*)signal->getDataPtr();
-  CreateTabReq* req = &copy;
+  const CreateTabReq copy = *(CreateTabReq*)signal->getDataPtr();
+  const CreateTabReq* req = &copy;
 
   IndexPtr indexPtr;
   indexPtr.i = RNIL;
@@ -195,7 +195,7 @@ Dbtux::execTUX_ADD_ATTRREQ(Signal* signal)
     if (csNumber != 0) {
       unsigned err;
       ndbrequire(csNumber <= NDB_ARRAY_SIZE(all_charsets));
-      CHARSET_INFO *cs = all_charsets[csNumber];
+      const CHARSET_INFO *cs = all_charsets[csNumber];
       ndbrequire(cs != 0);
       if ((err = NdbSqlUtil::check_column_for_ordered_index(typeId, cs))) {
         jam();

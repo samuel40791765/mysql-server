@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "my_dbug.h"
 #include "sql/current_thd.h"
 #include "sql/field.h"
+#include "sql/mysqld.h"  // mysqld_server_started
 #include "sql/mysqld_thd_manager.h"
 #include "sql/sql_base.h"
 #include "sql/sql_class.h"
@@ -519,7 +520,7 @@ class Table_access_impl {
 
  private:
   /** Array of size m_max_count. */
-  TABLE_LIST *m_table_array;
+  Table_ref *m_table_array;
   /** Array of size m_max_count. */
   Table_state *m_table_state_array;
   size_t m_current_count;
@@ -555,7 +556,7 @@ class TA_key_impl {
   TA_key_impl();
   ~TA_key_impl() {}
 
-  void key_copy(uchar *record);
+  void key_copy(uchar *record, uint key_length);
 
  public:
   /* Metadata */
@@ -564,7 +565,7 @@ class TA_key_impl {
 
   /* Data */
   uchar m_key[MAX_KEY_LENGTH];
-  size_t m_key_length;
+  uint m_key_length;
 };
 
 TA_key_impl::TA_key_impl() {
@@ -574,7 +575,10 @@ TA_key_impl::TA_key_impl() {
   m_key_length = 0;
 }
 
-void TA_key_impl::key_copy(uchar *record) {
+void TA_key_impl::key_copy(uchar *record, uint key_length) {
+  /* Actual key may be a prefix */
+  assert(key_length <= m_key_info->key_length);
+  m_key_length = key_length;
   ::key_copy(m_key, record, m_key_info, m_key_length);
 }
 
@@ -610,7 +614,7 @@ Table_access_impl::Table_access_impl(THD *thd, size_t count)
   */
   Global_THD_manager::get_instance()->add_thd(m_child_thd);
 
-  m_table_array = new TABLE_LIST[m_max_count];
+  m_table_array = new Table_ref[m_max_count];
   m_table_state_array = new Table_state[m_max_count];
 }
 
@@ -620,6 +624,14 @@ Table_access_impl::~Table_access_impl() {
   }
 
   close_thread_tables(m_child_thd);
+
+  if (!mysqld_server_started) {
+    /*
+      After initialization of the server, InnoDB's data dictionary cache is
+      reset. It requires all tables, including the cached ones, to be released.
+    */
+    close_cached_tables(m_child_thd, m_table_array, false, LONG_TIMEOUT);
+  }
 
   m_child_thd->release_resources();
   m_child_thd->restore_globals();
@@ -704,21 +716,21 @@ size_t Table_access_impl::add_table(const char *schema_name,
       table_name, table_name_length, cs, &errors);
   state->m_table_name[state->m_table_name_length] = '\0';
 
-  TABLE_LIST *current = &m_table_array[m_current_count];
+  Table_ref *current = &m_table_array[m_current_count];
 
   // FIXME : passing alias = table_name to force MDL key init.
-  *current = TABLE_LIST(state->m_schema_name, state->m_schema_name_length,
-                        state->m_table_name, state->m_table_name_length,
-                        state->m_table_name, lock_type);
+  *current = Table_ref(state->m_schema_name, state->m_schema_name_length,
+                       state->m_table_name, state->m_table_name_length,
+                       state->m_table_name, lock_type);
   assert(current->mdl_request.key.length() != 0);
 
   current->next_local = nullptr;
   current->next_global = nullptr;
   current->open_type = OT_BASE_ONLY;  // TODO: VIEWS ?
-  current->open_strategy = TABLE_LIST::OPEN_IF_EXISTS;
+  current->open_strategy = Table_ref::OPEN_IF_EXISTS;
 
   if (m_current_count > 0) {
-    TABLE_LIST *prev = &m_table_array[m_current_count - 1];
+    Table_ref *prev = &m_table_array[m_current_count - 1];
     prev->next_local = current;
     prev->next_global = current;
   }
@@ -727,7 +739,7 @@ size_t Table_access_impl::add_table(const char *schema_name,
 }
 
 int Table_access_impl::begin() {
-  if (m_write) {
+  if (m_write && m_parent_thd != nullptr) {
     if (m_parent_thd->global_read_lock.is_acquired()) {
       /*
         Avoid waiting in the child THD session
@@ -804,31 +816,31 @@ size_t impl_add_table(Table_access api_ta, const char *schema_name,
                       size_t schema_name_length, const char *table_name,
                       size_t table_name_length, TA_lock_type api_lock_type) {
   Table_access_impl *ta = Table_access_impl::from_api(api_ta);
-  enum thr_lock_type lock_type = convert_lock_type(api_lock_type);
+  const enum thr_lock_type lock_type = convert_lock_type(api_lock_type);
   assert(ta != nullptr);
-  size_t result = ta->add_table(schema_name, schema_name_length, table_name,
-                                table_name_length, lock_type);
+  const size_t result = ta->add_table(schema_name, schema_name_length,
+                                      table_name, table_name_length, lock_type);
   return result;
 }
 
 int impl_begin(Table_access api_ta) {
   Table_access_impl *ta = Table_access_impl::from_api(api_ta);
   assert(ta != nullptr);
-  int result = ta->begin();
+  const int result = ta->begin();
   return result;
 }
 
 int impl_commit(Table_access api_ta) {
   Table_access_impl *ta = Table_access_impl::from_api(api_ta);
   assert(ta != nullptr);
-  int result = ta->commit();
+  const int result = ta->commit();
   return result;
 }
 
 int impl_rollback(Table_access api_ta) {
   Table_access_impl *ta = Table_access_impl::from_api(api_ta);
   assert(ta != nullptr);
-  int result = ta->rollback();
+  const int result = ta->rollback();
   return result;
 }
 
@@ -911,7 +923,7 @@ int impl_check_table_fields(Table_access /* api_ta */, TA_table api_table,
 
     /* For types that have a length. */
     if (has_length) {
-      size_t actual = actual_field->char_length();
+      const size_t actual = actual_field->char_length();
       if (actual != expected_field->m_length) {
         return 6;
       }
@@ -1034,7 +1046,7 @@ int impl_index_init(Table_access /* api_ta */, TA_table api_table,
   }
 
   // TODO: sort order ?
-  int result = table->file->ha_index_init(index, false);
+  const int result = table->file->ha_index_init(index, false);
 
   if (result == 0) {
     TA_key_impl *key = new TA_key_impl();
@@ -1058,8 +1070,6 @@ int impl_index_read_map(Table_access /* api_ta */, TA_table api_table,
   assert(num_parts > 0);
   assert(num_parts <= key->m_key_info->actual_key_parts);
 
-  key->key_copy(table->record[0]);
-
   /*
     NUM_PARTS | KEY_PART_MAP
     ------------------------
@@ -1069,10 +1079,14 @@ int impl_index_read_map(Table_access /* api_ta */, TA_table api_table,
             4 | b1111 = 15
     etc
   */
-  key_part_map map = make_prev_keypart_map(num_parts);
+  const key_part_map map = make_prev_keypart_map(num_parts);
 
-  result = table->file->ha_index_read_idx_map(
-      table->record[0], key->m_key_index, key->m_key, map, HA_READ_KEY_EXACT);
+  const uint key_len = calculate_key_len(table, key->m_key_index, map);
+
+  key->key_copy(table->record[0], key_len);
+
+  result = table->file->ha_index_read_map(table->record[0], key->m_key, map,
+                                          HA_READ_KEY_EXACT);
 
   if (result == 0) {
     if (table->record[1]) {
@@ -1143,7 +1157,7 @@ int impl_index_end(Table_access /* api_ta */, TA_table api_table,
   assert(table != nullptr);
   TA_key_impl *key = TA_key_impl::from_api(api_key);
   assert(key != nullptr);
-  int result = table->file->ha_index_end();
+  const int result = table->file->ha_index_end();
   delete key;
   return result;
 }
@@ -1151,7 +1165,7 @@ int impl_index_end(Table_access /* api_ta */, TA_table api_table,
 int impl_rnd_init(Table_access /* api_ta */, TA_table api_table) {
   TABLE *table = TA_table_impl::from_api(api_table);
   assert(table != nullptr);
-  int result = table->file->ha_rnd_init(true);
+  const int result = table->file->ha_rnd_init(true);
 
   if (result == 0) {
     if (table->record[1]) {
@@ -1165,7 +1179,7 @@ int impl_rnd_init(Table_access /* api_ta */, TA_table api_table) {
 int impl_rnd_next(Table_access /* api_ta */, TA_table api_table) {
   TABLE *table = TA_table_impl::from_api(api_table);
   assert(table != nullptr);
-  int result = table->file->ha_rnd_next(table->record[0]);
+  const int result = table->file->ha_rnd_next(table->record[0]);
 
   if (result == 0) {
     if (table->record[1]) {
@@ -1179,28 +1193,29 @@ int impl_rnd_next(Table_access /* api_ta */, TA_table api_table) {
 int impl_rnd_end(Table_access /* api_ta */, TA_table api_table) {
   TABLE *table = TA_table_impl::from_api(api_table);
   assert(table != nullptr);
-  int result = table->file->ha_rnd_end();
+  const int result = table->file->ha_rnd_end();
   return result;
 }
 
 int impl_write_row(Table_access /* api_ta */, TA_table api_table) {
   TABLE *table = TA_table_impl::from_api(api_table);
   assert(table != nullptr);
-  int result = table->file->ha_write_row(table->record[0]);
+  const int result = table->file->ha_write_row(table->record[0]);
   return result;
 }
 
 int impl_update_row(Table_access /* api_ta */, TA_table api_table) {
   TABLE *table = TA_table_impl::from_api(api_table);
   assert(table != nullptr);
-  int result = table->file->ha_update_row(table->record[1], table->record[0]);
+  const int result =
+      table->file->ha_update_row(table->record[1], table->record[0]);
   return result;
 }
 
 int impl_delete_row(Table_access /* api_ta */, TA_table api_table) {
   TABLE *table = TA_table_impl::from_api(api_table);
   assert(table != nullptr);
-  int result = table->file->ha_delete_row(table->record[0]);
+  const int result = table->file->ha_delete_row(table->record[0]);
   return result;
 }
 

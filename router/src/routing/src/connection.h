@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -34,6 +34,7 @@
 #include "basic_protocol_splicer.h"
 #include "context.h"
 #include "destination.h"  // RouteDestination
+#include "destination_error.h"
 #include "mysql/harness/net_ts/io_context.h"
 #include "mysql/harness/net_ts/timer.h"
 #include "mysql/harness/stdx/monitor.h"
@@ -48,6 +49,7 @@ class MySQLRoutingConnectionBase {
   virtual ~MySQLRoutingConnectionBase() = default;
 
   MySQLRoutingContext &context() { return context_; }
+  const MySQLRoutingContext &context() const { return context_; }
 
   virtual std::string get_destination_id() const = 0;
 
@@ -129,7 +131,12 @@ class MySQLRoutingConnectionBase {
 
   void accepted();
 
-  void connected();
+  virtual void connected();
+
+  template <class F>
+  auto disconnect_request(F &&f) {
+    return disconnect_(std::forward<F>(f));
+  }
 
  protected:
   /** @brief wrapper for common data used by all routing threads */
@@ -138,16 +145,19 @@ class MySQLRoutingConnectionBase {
   std::function<void(MySQLRoutingConnectionBase *)> remove_callback_;
 
   Monitor<Stats> stats_{{}};
+
+  Monitor<bool> disconnect_{{}};
 };
 
 class ConnectorBase {
  public:
   using server_protocol_type = net::ip::tcp;
 
-  ConnectorBase(net::io_context &io_ctx, RouteDestination *route_destination)
+  ConnectorBase(net::io_context &io_ctx, RouteDestination *route_destination,
+                Destinations &destinations)
       : io_ctx_{io_ctx},
         route_destination_{route_destination},
-        destinations_{route_destination_->destinations()},
+        destinations_{destinations},
         destinations_it_{destinations_.begin()} {}
 
   enum class Function {
@@ -164,11 +174,16 @@ class ConnectorBase {
 
   bool connect_timed_out() const { return connect_timed_out_; }
 
+  void destination_id(std::string id) { destination_id_ = id; }
   std::string destination_id() const { return destination_id_; }
 
   void on_connect_failure(
       std::function<void(std::string, uint16_t, std::error_code)> func) {
     on_connect_failure_ = std::move(func);
+  }
+
+  void on_connect_success(std::function<void(std::string, uint16_t)> func) {
+    on_connect_success_ = std::move(func);
   }
 
   void on_is_destination_good(std::function<bool(std::string, uint16_t)> func) {
@@ -200,13 +215,12 @@ class ConnectorBase {
   server_protocol_type::endpoint server_endpoint_;
 
   RouteDestination *route_destination_;
-  Destinations destinations_;
+  Destinations &destinations_;
   Destinations::iterator destinations_it_;
   net::ip::tcp::resolver::results_type endpoints_;
   net::ip::tcp::resolver::results_type::iterator endpoints_it_;
 
-  std::error_code last_ec_{
-      make_error_code(std::errc::no_such_file_or_directory)};
+  std::error_code last_ec_{make_error_code(DestinationsErrc::kNotSet)};
 
   Function func_{Function::kInitDestination};
 
@@ -217,6 +231,7 @@ class ConnectorBase {
 
   std::function<void(std::string, uint16_t, std::error_code)>
       on_connect_failure_;
+  std::function<void(std::string, uint16_t)> on_connect_success_;
   std::function<bool(std::string, uint16_t)> on_is_destination_good_;
 };
 
@@ -259,8 +274,8 @@ class PooledConnector : public ConnectorBase {
       const server_protocol_type::endpoint &ep)>;
 
   PooledConnector(net::io_context &io_ctx, RouteDestination *route_destination,
-                  pool_lookup_cb pool_lookup)
-      : ConnectorBase{io_ctx, route_destination},
+                  Destinations &destinations, pool_lookup_cb pool_lookup)
+      : ConnectorBase{io_ctx, route_destination, destinations},
         pool_lookup_{std::move(pool_lookup)} {}
 
   stdx::expected<ConnectionType, std::error_code> connect() {

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -128,21 +128,21 @@ routing::RoutingStrategy get_default_routing_strategy(
 }
 
 /** @brief check that mode (if present) is correct for the role */
-bool mode_is_valid(const routing::AccessMode mode,
+bool mode_is_valid(const routing::Mode mode,
                    const DestMetadataCacheGroup::ServerRole role) {
   // no mode given, that's ok, nothing to check
-  if (mode == routing::AccessMode::kUndefined) {
+  if (mode == routing::Mode::kUndefined) {
     return true;
   }
 
   switch (role) {
     case DestMetadataCacheGroup::ServerRole::Primary:
-      return mode == routing::AccessMode::kReadWrite;
+      return mode == routing::Mode::kReadWrite;
     case DestMetadataCacheGroup::ServerRole::Secondary:
     case DestMetadataCacheGroup::ServerRole::PrimaryAndSecondary:
-      return mode == routing::AccessMode::kReadOnly;
+      return mode == routing::Mode::kReadOnly;
     default:;  //
-               /* fall-through, no acces mode is valid for that role */
+               /* fall-through, no access mode is valid for that role */
   }
 
   return false;
@@ -210,13 +210,12 @@ DestMetadataCacheGroup::DestMetadataCacheGroup(
     net::io_context &io_ctx, const std::string &metadata_cache,
     const routing::RoutingStrategy routing_strategy,
     const mysqlrouter::URIQuery &query, const Protocol::Type protocol,
-    const routing::AccessMode access_mode,
-    metadata_cache::MetadataCacheAPIBase *cache_api)
+    const routing::Mode mode, metadata_cache::MetadataCacheAPIBase *cache_api)
     : RouteDestination(io_ctx, protocol),
       cache_name_(metadata_cache),
       uri_query_(query),
       routing_strategy_(routing_strategy),
-      access_mode_(access_mode),
+      mode_(mode),
       server_role_(get_server_role_from_uri(query)),
       cache_api_(cache_api),
       disconnect_on_promoted_to_primary_(
@@ -228,28 +227,29 @@ DestMetadataCacheGroup::DestMetadataCacheGroup(
 #endif
 
 std::pair<AllowedNodes, bool> DestMetadataCacheGroup::get_available(
-    const metadata_cache::LookupResult &managed_servers,
+    const metadata_cache::cluster_nodes_list_t &instances,
     bool for_new_connections) const {
   AllowedNodes result;
 
   bool primary_fallback{false};
-  const auto &managed_servers_vec = managed_servers.instance_vector;
   if (routing_strategy_ == routing::RoutingStrategy::kRoundRobinWithFallback) {
     // if there are no secondaries available we fall-back to primaries
     std::lock_guard<std::mutex> lock(
         query_quarantined_destinations_callback_mtx_);
     auto secondary = std::find_if(
-        managed_servers_vec.begin(), managed_servers_vec.end(),
+        instances.begin(), instances.end(),
         [&](const metadata_cache::ManagedInstance &i) {
           if (for_new_connections && query_quarantined_destinations_callback_) {
             return i.mode == metadata_cache::ServerMode::ReadOnly &&
-                   !i.hidden && !query_quarantined_destinations_callback_(i);
+                   !i.hidden && !i.ignore &&
+                   !query_quarantined_destinations_callback_(i);
           } else {
-            return i.mode == metadata_cache::ServerMode::ReadOnly && !i.hidden;
+            return i.mode == metadata_cache::ServerMode::ReadOnly &&
+                   !i.hidden && !i.ignore;
           }
         });
 
-    primary_fallback = secondary == managed_servers_vec.end();
+    primary_fallback = secondary == instances.end();
   }
   // if we are gathering the nodes for the decision about keeping existing
   // connections we look also at the disconnect_on_promoted_to_primary_ setting
@@ -259,7 +259,8 @@ std::pair<AllowedNodes, bool> DestMetadataCacheGroup::get_available(
     primary_fallback = true;
   }
 
-  for (const auto &it : managed_servers_vec) {
+  for (const auto &it : instances) {
+    if (it.ignore) continue;
     if (for_new_connections) {
       // for new connections skip (do not include) the node if it is hidden - it
       // is not allowed
@@ -302,12 +303,11 @@ std::pair<AllowedNodes, bool> DestMetadataCacheGroup::get_available(
 }
 
 AllowedNodes DestMetadataCacheGroup::get_available_primaries(
-    const metadata_cache::LookupResult &managed_servers) const {
+    const metadata_cache::cluster_nodes_list_t &managed_servers) const {
   AllowedNodes result;
-  const auto &managed_servers_vec = managed_servers.instance_vector;
 
-  for (const auto &it : managed_servers_vec) {
-    if (it.hidden) continue;
+  for (const auto &it : managed_servers) {
+    if (it.hidden || it.ignore) continue;
 
     auto port = (protocol_ == Protocol::Type::kXProtocol) ? it.xport : it.port;
 
@@ -332,7 +332,7 @@ void DestMetadataCacheGroup::init() {
 
   // if the routing strategy is set we don't allow mode to be set
   if (routing_strategy_ != routing::RoutingStrategy::kUndefined &&
-      access_mode_ != routing::AccessMode::kUndefined) {
+      mode_ != routing::Mode::kUndefined) {
     throw std::runtime_error(
         "option 'mode' is not allowed together with 'routing_strategy' option");
   }
@@ -347,9 +347,9 @@ void DestMetadataCacheGroup::init() {
   // check that mode (if present) is correct for the role
   // we don't actually use it but support it for backward compatibility
   // and parity with STANDALONE routing destinations
-  if (!mode_is_valid(access_mode_, server_role_)) {
+  if (!mode_is_valid(mode_, server_role_)) {
     throw std::runtime_error(
-        "mode '" + routing::get_access_mode_name(access_mode_) +
+        "mode '" + routing::get_mode_name(mode_) +
         "' is not valid for 'role=" + get_server_role_name(server_role_) + "'");
   }
 
@@ -504,8 +504,12 @@ std::optional<Destinations> DestMetadataCacheGroup::refresh_destinations(
       auto const *primary_member = dynamic_cast<MetadataCacheDestination *>(
           previous_dests.begin()->get());
 
-      if (primary_member->last_error_code() ==
-          make_error_condition(std::errc::timed_out)) {
+      const auto err = primary_member->last_error_code();
+      log_debug("refresh_destinations(): %s:%s", err.category().name(),
+                err.message().c_str());
+
+      if (err == make_error_condition(std::errc::timed_out) ||
+          err == make_error_condition(std::errc::no_such_file_or_directory)) {
         return std::nullopt;
       }
 
@@ -626,8 +630,7 @@ Destinations DestMetadataCacheGroup::destinations() {
 
   AllowedNodes available;
   bool primary_failover;
-  const auto &all_replicaset_nodes =
-      cache_api_->get_cluster_nodes().instance_vector;
+  const auto &all_replicaset_nodes = cache_api_->get_cluster_nodes();
 
   std::tie(available, primary_failover) = get_available(all_replicaset_nodes);
 
@@ -637,8 +640,7 @@ Destinations DestMetadataCacheGroup::destinations() {
 Destinations DestMetadataCacheGroup::primary_destinations() {
   if (!cache_api_->is_initialized()) return {};
 
-  const auto &all_replicaset_nodes =
-      cache_api_->get_cluster_nodes().instance_vector;
+  const auto &all_replicaset_nodes = cache_api_->get_cluster_nodes();
 
   auto available = get_available_primaries(all_replicaset_nodes);
 
@@ -650,8 +652,7 @@ DestMetadataCacheGroup::AddrVector DestMetadataCacheGroup::get_destinations()
   // don't call lookup if the cache-api is not ready yet.
   if (!cache_api_->is_initialized()) return {};
 
-  auto available =
-      get_available(cache_api_->get_cluster_nodes().instance_vector).first;
+  auto available = get_available(cache_api_->get_cluster_nodes()).first;
 
   AddrVector addresses;
   for (const auto &dest : available) {
@@ -662,7 +663,7 @@ DestMetadataCacheGroup::AddrVector DestMetadataCacheGroup::get_destinations()
 }
 
 void DestMetadataCacheGroup::on_instances_change(
-    const metadata_cache::LookupResult &instances,
+    const metadata_cache::ClusterTopology &cluster_topology,
     const bool md_servers_reachable) {
   // we got notified that the metadata has changed.
   // If instances is empty then (most like is empty)
@@ -673,6 +674,7 @@ void DestMetadataCacheGroup::on_instances_change(
   const bool disconnect =
       md_servers_reachable || disconnect_on_metadata_unavailable_;
 
+  const auto instances = cluster_topology.get_all_members();
   const std::string reason =
       md_servers_reachable ? "metadata change" : "metadata unavailable";
 
@@ -693,14 +695,13 @@ void DestMetadataCacheGroup::on_instances_change(
 }
 
 void DestMetadataCacheGroup::notify_instances_changed(
-    const metadata_cache::LookupResult &instances,
-    const metadata_cache::metadata_servers_list_t & /*metadata_servers*/,
+    const metadata_cache::ClusterTopology &cluster_topology,
     const bool md_servers_reachable, const uint64_t /*view_id*/) noexcept {
-  on_instances_change(instances, md_servers_reachable);
+  on_instances_change(cluster_topology, md_servers_reachable);
 }
 
 bool DestMetadataCacheGroup::update_socket_acceptor_state(
-    const metadata_cache::LookupResult &instances) noexcept {
+    const metadata_cache::cluster_nodes_list_t &instances) noexcept {
   const auto &nodes_for_new_connections =
       get_available(instances, /*for_new_connections=*/true).first;
 
@@ -723,7 +724,9 @@ bool DestMetadataCacheGroup::update_socket_acceptor_state(
 }
 
 void DestMetadataCacheGroup::on_md_refresh(
-    const bool nodes_changed, const metadata_cache::LookupResult &instances) {
+    const bool nodes_changed,
+    const metadata_cache::ClusterTopology &cluster_topology) {
+  const auto instances = cluster_topology.get_all_members();
   const auto &available_nodes =
       get_available(instances, /*for_new_connections=*/true).first;
   std::lock_guard<std::mutex> lock(md_refresh_callback_mtx_);

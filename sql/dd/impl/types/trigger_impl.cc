@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -39,6 +39,8 @@
 #include "sql/dd/string_type.h"            // dd::String_type
 #include "sql/dd/types/object_table.h"
 #include "sql/dd/types/weak_object.h"
+
+struct CHARSET_INFO;
 
 using dd::tables::Triggers;
 

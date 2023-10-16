@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -63,7 +63,7 @@ int init_host(const PFS_global_param *param) {
 }
 
 /** Cleanup all the host buffers. */
-void cleanup_host(void) { global_host_container.cleanup(); }
+void cleanup_host() { global_host_container.cleanup(); }
 
 static const uchar *host_hash_get_key(const uchar *entry, size_t *length) {
   const PFS_host *const *typed_entry;
@@ -130,7 +130,7 @@ int init_host_hash(const PFS_global_param *param) {
 }
 
 /** Cleanup the host hash. */
-void cleanup_host_hash(void) {
+void cleanup_host_hash() {
   if (host_hash_inited) {
     lf_hash_destroy(&host_hash);
     host_hash_inited = false;
@@ -171,7 +171,6 @@ search:
   entry = reinterpret_cast<PFS_host **>(
       lf_hash_search(&host_hash, pins, &key, sizeof(key)));
   if (entry && (entry != MY_LF_ERRPTR)) {
-    PFS_host *pfs;
     pfs = *entry;
     pfs->inc_refcount();
     lf_hash_search_unpin(pins);
@@ -186,7 +185,7 @@ search:
 
     pfs->init_refcount();
     pfs->reset_stats();
-    pfs->m_disconnected_count = 0;
+    pfs->reset_connections_stats();
 
     int res;
     pfs->m_lock.dirty_to_allocated(&dirty_state);
@@ -299,7 +298,32 @@ void PFS_host::aggregate_status() {
 
 void PFS_host::aggregate_stats() {
   /* No parent to aggregate to, clean the stats */
-  m_disconnected_count = 0;
+  reset_connections_stats();
+}
+
+void PFS_host::aggregate_stats_from(PFS_account *pfs) {
+  m_disconnected_count += pfs->m_disconnected_count;
+
+  if (m_max_controlled_memory < pfs->m_max_controlled_memory) {
+    m_max_controlled_memory = pfs->m_max_controlled_memory;
+  }
+
+  if (m_max_total_memory < pfs->m_max_total_memory) {
+    m_max_total_memory = pfs->m_max_total_memory;
+  }
+}
+
+void PFS_host::aggregate_disconnect(ulonglong controlled_memory,
+                                    ulonglong total_memory) {
+  m_disconnected_count++;
+
+  if (m_max_controlled_memory < controlled_memory) {
+    m_max_controlled_memory = controlled_memory;
+  }
+
+  if (m_max_total_memory < total_memory) {
+    m_max_total_memory = total_memory;
+  }
 }
 
 void PFS_host::release() { dec_refcount(); }
@@ -385,7 +409,7 @@ class Proc_purge_host : public PFS_buffer_processor<PFS_host> {
 };
 
 /** Purge non connected hosts, reset stats of connected hosts. */
-void purge_all_host(void) {
+void purge_all_host() {
   PFS_thread *thread = PFS_thread::get_current_thread();
   if (unlikely(thread == nullptr)) {
     return;

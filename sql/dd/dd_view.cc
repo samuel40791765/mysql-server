@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,14 +30,15 @@
 #include <string>
 
 #include "lex_string.h"
+#include "m_string.h"
 #include "my_alloc.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_sys.h"
 #include "my_time.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/mysql_lex_string.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
@@ -78,6 +79,8 @@
 #include "sql/thd_raii.h"
 #include "sql/transaction.h"  // trans_commit
 #include "sql/tztime.h"       // Time_zone
+
+struct CHARSET_INFO;
 
 namespace dd {
 
@@ -211,14 +214,14 @@ static dd::View::enum_security_type dd_get_new_view_security_type(
 
   @param  thd       Thread Handle.
   @param  view_obj  DD view object.
-  @param  view      TABLE_LIST object of view.
+  @param  view      Table_ref object of view.
 
   @retval false     On Success.
   @retval true      On failure.
 */
 
 static bool fill_dd_view_columns(THD *thd, View *view_obj,
-                                 const TABLE_LIST *view) {
+                                 const Table_ref *view) {
   DBUG_TRACE;
 
   // Helper class which takes care restoration of THD::variables.sql_mode and
@@ -348,7 +351,7 @@ static bool fill_dd_view_columns(THD *thd, View *view_obj,
       }
       if (!name) return true; /* purecov: inspected */
       cr_field->field_name = name;
-    } else if (thd->lex->unit->is_union()) {
+    } else if (thd->lex->unit->is_set_operation()) {
       /*
         If view query has any duplicate column names then generated unique name
         is stored only with the first Query_block. So when Create_field instance
@@ -378,15 +381,15 @@ static bool fill_dd_view_columns(THD *thd, View *view_obj,
   View object.
 
   @param  view_obj       DD view object.
-  @param  view           TABLE_LIST object of view.
+  @param  view           Table_ref object of view.
   @param  query_tables   View query tables list.
 */
 
-static void fill_dd_view_tables(View *view_obj, const TABLE_LIST *view,
-                                const TABLE_LIST *query_tables) {
+static void fill_dd_view_tables(View *view_obj, const Table_ref *view,
+                                const Table_ref *query_tables) {
   DBUG_TRACE;
 
-  for (const TABLE_LIST *table = query_tables; table != nullptr;
+  for (const Table_ref *table = query_tables; table != nullptr;
        table = table->next_global) {
     /*
       Skip if table is not directly referred by a view or if table is a
@@ -395,7 +398,7 @@ static void fill_dd_view_tables(View *view_obj, const TABLE_LIST *view,
     if ((table->referencing_view && table->referencing_view != view) ||
         get_dictionary()->is_dd_table_name(table->get_db_name(),
                                            table->get_table_name()) ||
-        is_temporary_table(const_cast<TABLE_LIST *>(table)))
+        is_temporary_table(const_cast<Table_ref *>(table)))
       continue;
 
     LEX_CSTRING db_name = {table->db, table->db_length};
@@ -474,8 +477,7 @@ static void fill_dd_view_routines(View *view_obj,
   @retval true         On failure.
 */
 
-static bool fill_dd_view_definition(THD *thd, View *view_obj,
-                                    TABLE_LIST *view) {
+static bool fill_dd_view_definition(THD *thd, View *view_obj, Table_ref *view) {
   // View name.
   view_obj->set_name(view->table_name);
 
@@ -572,7 +574,7 @@ static bool fill_dd_view_definition(THD *thd, View *view_obj,
   return false;
 }
 
-bool update_view(THD *thd, dd::View *new_view, TABLE_LIST *view) {
+bool update_view(THD *thd, dd::View *new_view, Table_ref *view) {
   // Clear the columns, tables and routines since it will be added later.
   new_view->remove_children();
 
@@ -587,7 +589,7 @@ bool update_view(THD *thd, dd::View *new_view, TABLE_LIST *view) {
   return thd->dd_client()->update(new_view);
 }
 
-bool create_view(THD *thd, const dd::Schema &schema, TABLE_LIST *view) {
+bool create_view(THD *thd, const dd::Schema &schema, Table_ref *view) {
   // Create dd::View object.
   bool hidden_system_view = false;
   std::unique_ptr<dd::View> view_obj;
@@ -607,8 +609,8 @@ bool create_view(THD *thd, const dd::Schema &schema, TABLE_LIST *view) {
   return thd->dd_client()->store(view_obj.get());
 }
 
-bool read_view(TABLE_LIST *view, const dd::View &view_obj, MEM_ROOT *mem_root) {
-  // Fill TABLE_LIST 'view' with view details.
+bool read_view(Table_ref *view, const dd::View &view_obj, MEM_ROOT *mem_root) {
+  // Fill Table_ref 'view' with view details.
   String_type definer_user = view_obj.definer_user();
   view->definer.user.length = definer_user.length();
   view->definer.user.str = (char *)strmake_root(mem_root, definer_user.c_str(),

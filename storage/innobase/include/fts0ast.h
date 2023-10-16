@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2022, Oracle and/or its affiliates.
+Copyright (c) 2007, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -35,6 +35,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "ha_prototypes.h"
 #include "mem0mem.h"
+
+struct CHARSET_INFO;
 
 /* The type of AST Node */
 enum fts_ast_type_t {

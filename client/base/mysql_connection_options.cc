@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,9 +34,11 @@
 #include "client/base/abstract_options_provider.h"
 #include "client/base/abstract_program.h"
 #include "compression.h"
-#include "m_ctype.h"
+#include "m_string.h"
 #include "multi_factor_passwordopt-vars.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysys_err.h"
+#include "nulls.h"
 #include "typelib.h"
 
 using Mysql::Tools::Base::Abstract_program;
@@ -68,7 +70,10 @@ void Mysql_connection_options::create_options() {
                           "Directory for character set files.");
   this->create_new_option(&this->m_compress, "compress",
                           "Use compression in server/client protocol.")
-      ->set_short_character('C');
+      ->set_short_character('C')
+      ->add_callback(new std::function<void(char *)>([](char *) {
+        CLIENT_WARN_DEPRECATED("--compress", "--compression-algorithms");
+      }));
   this->create_new_option(
       &this->m_compress_algorithm, "compression-algorithms",
       "Use compression algorithm in server/client protocol. Valid values "

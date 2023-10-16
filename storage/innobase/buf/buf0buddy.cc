@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2006, 2022, Oracle and/or its affiliates.
+Copyright (c) 2006, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -47,7 +47,7 @@ safe to look at BUF_BUDDY_STAMP_OFFSET.
 The answer lies in following invariants:
 * All blocks allocated by buddy allocator are used for compressed
 page frame.
-* A compressed table always have space_id < dict_sys_t::s_log_space_first_id
+* A compressed table always have space_id < dict_sys_t::s_log_space_id
 * BUF_BUDDY_STAMP_OFFSET always points to the space_id field in
 a frame.
   -- The above is true because we look at these fields when the
@@ -75,7 +75,7 @@ constexpr uint32_t BUF_BUDDY_STAMP_OFFSET = FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID;
 
 /** Value that we stamp on all buffers that are currently on the zip_free
 list. This value is stamped at BUF_BUDDY_STAMP_OFFSET offset */
-constexpr uint64_t BUF_BUDDY_STAMP_FREE = dict_sys_t::s_log_space_first_id;
+constexpr uint64_t BUF_BUDDY_STAMP_FREE = dict_sys_t::s_log_space_id;
 
 /** Stamp value for non-free buffers. Will be overwritten by a non-zero
 value by the consumer of the block */
@@ -330,7 +330,7 @@ static buf_buddy_free_t *buf_buddy_alloc_zip(buf_pool_t *buf_pool, ulint i) {
 @param[in]      buf_pool        buffer pool instance
 @param[in]      buf             buffer frame to deallocate */
 static void buf_buddy_block_free(buf_pool_t *buf_pool, void *buf) {
-  const ulint fold = BUF_POOL_ZIP_FOLD_PTR(buf);
+  const auto hash_value = buf_pool_hash_zip_frame(buf);
   buf_page_t *bpage;
 
   ut_ad(!mutex_own(&buf_pool->zip_mutex));
@@ -338,7 +338,7 @@ static void buf_buddy_block_free(buf_pool_t *buf_pool, void *buf) {
 
   mutex_enter(&buf_pool->zip_hash_mutex);
 
-  HASH_SEARCH(hash, buf_pool->zip_hash, fold, buf_page_t *, bpage,
+  HASH_SEARCH(hash, buf_pool->zip_hash, hash_value, buf_page_t *, bpage,
               ut_ad(buf_page_get_state(bpage) == BUF_BLOCK_MEMORY &&
                     bpage->in_zip_hash && !bpage->in_page_hash),
               ((buf_block_t *)bpage)->frame == buf);
@@ -347,7 +347,7 @@ static void buf_buddy_block_free(buf_pool_t *buf_pool, void *buf) {
   ut_ad(!bpage->in_page_hash);
   ut_ad(bpage->in_zip_hash);
   ut_d(bpage->in_zip_hash = false);
-  HASH_DELETE(buf_page_t, hash, buf_pool->zip_hash, fold, bpage);
+  HASH_DELETE(buf_page_t, hash, buf_pool->zip_hash, hash_value, bpage);
 
   ut_ad(buf_pool->buddy_n_frames > 0);
   ut_d(buf_pool->buddy_n_frames--);
@@ -364,7 +364,7 @@ static void buf_buddy_block_free(buf_pool_t *buf_pool, void *buf) {
 @param[in]      block   buffer frame to allocate */
 static void buf_buddy_block_register(buf_block_t *block) {
   buf_pool_t *buf_pool = buf_pool_from_block(block);
-  const ulint fold = BUF_POOL_ZIP_FOLD(block);
+  const auto hash_value = buf_pool_hash_zip(block);
   ut_ad(!mutex_own(&buf_pool->zip_mutex));
   ut_ad(buf_block_get_state(block) == BUF_BLOCK_READY_FOR_USE);
 
@@ -378,7 +378,7 @@ static void buf_buddy_block_register(buf_block_t *block) {
   ut_d(block->page.in_zip_hash = true);
 
   mutex_enter(&buf_pool->zip_hash_mutex);
-  HASH_INSERT(buf_page_t, hash, buf_pool->zip_hash, fold, &block->page);
+  HASH_INSERT(buf_page_t, hash, buf_pool->zip_hash, hash_value, &block->page);
 
   ut_d(buf_pool->buddy_n_frames++);
   mutex_exit(&buf_pool->zip_hash_mutex);
@@ -715,7 +715,15 @@ bool buf_buddy_realloc(buf_pool_t *buf_pool, void *buf, ulint size) {
   }
 
   if (block == nullptr) {
-    /* Try allocating from the buf_pool->free list. */
+    /* Try allocating from the buf_pool->free list if it is not empty. This
+    method is executed during withdrawing phase of BufferPool resize only. It is
+    better to not block other user threads as much as possible. So, the main
+    strategy is to passively reserve and use blocks that are already on the free
+    list. Otherwise, if we were to call `buf_LRU_get_free_block` instead of
+    `buf_LRU_get_free_only`, we would have to release the LRU mutex before the
+    call and this would cause a need to break the reallocation loop in
+    `buf_pool_withdraw_blocks`, which would render withdrawing even more
+    inefficient. */
     block = buf_LRU_get_free_only(buf_pool);
 
     if (block == nullptr) {

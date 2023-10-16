@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -77,11 +77,10 @@
 #include <string>
 
 #include "lex_string.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
+#include "mysql/strings/m_ctype.h"
 #include "prealloced_array.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"  // GRANT_ACL
@@ -99,6 +98,7 @@
 #include "sql/sql_show.h"  // append_identifier
 #include "sql/table.h"
 #include "sql_string.h"  // String
+#include "string_with_len.h"
 #include "violite.h"
 
 #ifndef NDEBUG
@@ -122,7 +122,7 @@ void comma_maybe(String *str, bool *comma) {
 }
 
 /**
-  Append a key/value pair to a string, with an optional preceeding comma.
+  Append a key/value pair to a string, with an optional preceding comma.
   For numeric values.
 
   @param[in,out]   str                  The string to append to
@@ -232,7 +232,7 @@ int lex_user_comp(LEX_USER *l1, LEX_USER *l2) {
     return (key > 0 ? 1 : 0);
 }
 /**
-  Util method which does the real rewrite of the SQL statment.
+  Util method which does the real rewrite of the SQL statement.
   If a Rewriter is available for the specified SQL command then
   the rewritten query will be stored in the String rlb; otherwise,
   the string will just be cleared.
@@ -458,20 +458,22 @@ void Rewriter_user::rewrite_in_memory_user_application_user_metadata(
     const LEX *lex, String *str) const {
   if (lex->alter_user_attribute ==
       enum_alter_user_attribute::ALTER_USER_ATTRIBUTE) {
-    str->append(" ATTRIBUTE '");
+    str->append(" ATTRIBUTE ");
   } else if (lex->alter_user_attribute ==
              enum_alter_user_attribute::ALTER_USER_COMMENT) {
-    str->append(" COMMENT '");
+    str->append(" COMMENT ");
   }
   if (lex->alter_user_attribute !=
       enum_alter_user_attribute::ALTER_USER_COMMENT_NOT_USED) {
-    str->append(lex->alter_user_comment_text);
-    str->append("'");
+    String comment_text(lex->alter_user_comment_text.str,
+                        lex->alter_user_comment_text.length,
+                        system_charset_info);
+    append_query_string(m_thd, system_charset_info, &comment_text, str);
   }
 }
 
 /**
-  Default implementaiton of the the rewriter for user applicatiton
+  Default implementation of the the rewriter for user applicatiton
   user metadata.
   @param [in]       lex    LEX struct to know if the clause was specified
   @param [in, out]  str    The string in which the clause is suffixed
@@ -482,7 +484,7 @@ void Rewriter_create_user::rewrite_user_application_user_metadata(
 }
 
 /**
-  Default implementaiton of the the rewriter for user applicatiton
+  Default implementation of the the rewriter for user applicatiton
   user metadata.
   @param [in]       lex    LEX struct to know if the clause was specified
   @param [in, out]  str    The string in which the clause is suffixed
@@ -1053,7 +1055,7 @@ bool Rewriter_show_create_user::rewrite(String &rlb) const {
 }
 
 /**
-  Overrides implementaiton of the the rewriter for user application
+  Overrides implementation of the the rewriter for user application
   user metadata. This is needed because we have to read the
   ATTRIBUTE data from disk.
   @param [in]       lex    LEX struct to know if the clause was specified
@@ -1285,7 +1287,7 @@ Rewriter_grant::Rewriter_grant(THD *thd, Consumer_type type,
 bool Rewriter_grant::rewrite(String &rlb) const {
   LEX *lex = m_thd->lex;
 
-  TABLE_LIST *first_table = lex->query_block->table_list.first;
+  Table_ref *first_table = lex->query_block->get_table_list();
   bool proxy_grant = lex->type == TYPE_ENUM_PROXY;
   String cols(1024);
   int c;
@@ -1410,7 +1412,7 @@ bool Rewriter_grant::rewrite(String &rlb) const {
     AS ... clause is added in following cases
     1. User has explicitly executed GRANT ... AS ...
        In this case we write it as it.
-    2. --partial_revokes is ON and we are rewritting
+    2. --partial_revokes is ON and we are rewriting
        GRANT for binary log.
   */
   if (grant_params != nullptr) {

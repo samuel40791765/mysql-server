@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -496,7 +496,8 @@ void page_copy_rec_list_end_no_locks(
   while (!page_cur_is_after_last(&cur1)) {
     rec_t *cur1_rec = page_cur_get_rec(&cur1);
     rec_t *ins_rec;
-    offsets = rec_get_offsets(cur1_rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(cur1_rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
     ins_rec = page_cur_insert_rec_low(cur2, index, cur1_rec, offsets, mtr);
     if (UNIV_UNLIKELY(!ins_rec)) {
       ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_862)
@@ -647,7 +648,7 @@ rec_t *page_copy_rec_list_end(
     mem_heap_free(heap);
   }
 
-  btr_search_move_or_delete_hash_entries(new_block, block, index);
+  btr_search_update_hash_on_move(new_block, block, index);
 
   return (ret);
 }
@@ -716,8 +717,8 @@ rec_t *page_copy_rec_list_start(
   } else {
     while (page_cur_get_rec(&cur1) != rec) {
       rec_t *cur1_rec = page_cur_get_rec(&cur1);
-      offsets =
-          rec_get_offsets(cur1_rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(cur1_rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       cur2 = page_cur_insert_rec_low(cur2, index, cur1_rec, offsets, mtr);
       ut_a(cur2);
 
@@ -790,7 +791,7 @@ rec_t *page_copy_rec_list_start(
     mem_heap_free(heap);
   }
 
-  btr_search_move_or_delete_hash_entries(new_block, block, index);
+  btr_search_update_hash_on_move(new_block, block, index);
 
   return (ret);
 }
@@ -955,7 +956,8 @@ void page_delete_rec_list_end(
       page_cur_t cur;
       page_cur_position(rec, block, &cur);
 
-      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       rec = rec_get_next_ptr(rec, true);
 #ifdef UNIV_ZIP_DEBUG
       ut_a(page_zip_validate(page_zip, page, index));
@@ -985,7 +987,8 @@ void page_delete_rec_list_end(
 
     do {
       ulint s;
-      offsets = rec_get_offsets(rec2, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec2, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       s = rec_offs_size(offsets);
       ut_ad(rec2 - page + s - rec_offs_extra_size(offsets) < UNIV_PAGE_SIZE);
       ut_ad(size + s < UNIV_PAGE_SIZE);
@@ -1113,7 +1116,7 @@ void page_delete_rec_list_start(
 
   while (page_cur_get_rec(&cur1) != rec) {
     offsets = rec_get_offsets(page_cur_get_rec(&cur1), index, offsets,
-                              ULINT_UNDEFINED, &heap);
+                              ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
     page_cur_delete_rec(&cur1, index, offsets, mtr);
   }
 
@@ -1690,6 +1693,12 @@ bool page_rec_validate(
   if (page_rec_is_comp(rec)) {
     n_owned = rec_get_n_owned_new(rec);
     heap_no = rec_get_heap_no_new(rec);
+
+    /* Only one of the bit (INSTANT or VERSION) could be set */
+    if (rec_get_instant_flag_new(rec) && rec_new_is_versioned(rec)) {
+      ib::error(ER_CHECK_TABLE_INSTANT_VERSION_BIT_SET);
+      return false;
+    }
   } else {
     n_owned = rec_get_n_owned_old(rec);
     heap_no = rec_get_heap_no_old(rec);
@@ -2113,13 +2122,7 @@ bool page_is_spatial_non_leaf(const rec_t *rec, dict_index_t *index) {
   return (dict_index_is_spatial(index) && !page_is_leaf(page_align(rec)));
 }
 
-/** This function checks the consistency of an index page.
- @return true if ok */
-bool page_validate(
-    const page_t *page,  /*!< in: index page */
-    dict_index_t *index) /*!< in: data dictionary index containing
-                         the page record type definition */
-{
+bool page_validate(const page_t *page, dict_index_t *index) {
   const page_dir_slot_t *slot;
   mem_heap_t *heap;
   byte *buf;
@@ -2136,10 +2139,12 @@ bool page_validate(
   ulint i;
   ulint *offsets = nullptr;
   ulint *old_offsets = nullptr;
+  const page_no_t page_no = page_get_page_no(page);
+  bool is_first_non_leaf_page = false;
 
 #ifdef UNIV_GIS_DEBUG
   if (dict_index_is_spatial(index)) {
-    fprintf(stderr, "Page no: %lu\n", page_get_page_no(page));
+    fprintf(stderr, "Page no: %lu\n", page_no);
   }
 #endif /* UNIV_DEBUG */
 
@@ -2165,7 +2170,7 @@ bool page_validate(
   if (dict_index_is_sec_or_ibuf(index) && !index->table->is_temporary() &&
       page_is_leaf(page) && !page_is_empty(page)) {
     trx_id_t max_trx_id = page_get_max_trx_id(page);
-    /* This will be 0 during recv_apply_hashed_log_recs(true),
+    /* This will be 0 during recv_apply_hashed_log_recs(),
     because the transaction system has not been initialized yet */
     trx_id_t sys_next_trx_id_or_no = trx_sys_get_next_trx_id_or_no();
 
@@ -2195,8 +2200,8 @@ bool page_validate(
                       page_dir_get_nth_slot(page, n_slots - 1)))) {
     ib::warn(ER_IB_MSG_899)
         << "Record heap and dir overlap on space " << page_get_space_id(page)
-        << " page " << page_get_page_no(page) << " index " << index->name
-        << ", " << page_header_get_ptr(page, PAGE_HEAP_TOP) << ", "
+        << " page " << page_no << " index " << index->name << ", "
+        << page_header_get_ptr(page, PAGE_HEAP_TOP) << ", "
         << page_dir_get_nth_slot(page, n_slots - 1);
 
     goto func_exit;
@@ -2209,11 +2214,14 @@ bool page_validate(
   own_count = 1;
   slot_no = 0;
   slot = page_dir_get_nth_slot(page, slot_no);
+  is_first_non_leaf_page =
+      !page_is_leaf(page) && btr_is_first_page_on_level(page);
 
   rec = page_get_infimum_rec(page);
 
   for (;;) {
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     if (page_is_comp(page) && page_rec_is_user_rec(rec) &&
         UNIV_UNLIKELY(rec_get_node_ptr_flag(rec) == page_is_leaf(page))) {
@@ -2223,6 +2231,61 @@ bool page_validate(
 
     if (UNIV_UNLIKELY(!page_rec_validate(rec, offsets))) {
       goto func_exit;
+    }
+
+    DBUG_EXECUTE_IF(
+        "check_table_set_wrong_min_bit",
+        if (page_rec_is_user_rec(rec) &&
+            !(is_first_non_leaf_page && page_rec_is_first(rec, page))) {
+          ut_ad(!rec_is_min_rec_flag_set(rec, page_is_comp(page)));
+          ut_ad(page_is_comp(page));
+          rec_set_info_bits_new(
+              const_cast<rec_t *>(rec),
+              rec_get_info_bits(rec, true) | REC_INFO_MIN_REC_FLAG);
+          ib::info() << "Setting wrong min bit to " << count << "nd record";
+        });
+
+    DBUG_EXECUTE_IF(
+        "check_table_reset_correct_min_bit",
+        if (page_rec_is_user_rec(rec) &&
+            (is_first_non_leaf_page && page_rec_is_first(rec, page))) {
+          ut_ad(rec_is_min_rec_flag_set(rec, page_is_comp(page)));
+          ut_ad(page_is_comp(page));
+          rec_set_info_bits_new(
+              const_cast<rec_t *>(rec),
+              rec_get_info_bits(rec, true) & ~REC_INFO_MIN_REC_FLAG);
+          ib::info() << "Resetting correct min bit to " << count << "st record";
+        });
+
+    /* REC_INFO_MIN_REC_FLAG must be set only for first record on first non-leaf
+    page on a level. */
+    if (rec_is_min_rec_flag_set(rec, page_is_comp(page))) {
+      if (!page_rec_is_user_rec(rec) ||
+          !(is_first_non_leaf_page && page_rec_is_first(rec, page))) {
+        ib::error(ER_CHECK_TABLE_MIN_REC_FLAG_SET, (unsigned long int)page_no,
+                  (unsigned long int)btr_page_get_level(page), index->name(),
+                  index->table_name);
+        DBUG_EXECUTE_IF(
+            "check_table_set_wrong_min_bit", ut_ad(page_is_comp(page));
+            rec_set_info_bits_new(
+                const_cast<rec_t *>(rec),
+                rec_get_info_bits(rec, true) & ~REC_INFO_MIN_REC_FLAG););
+        goto func_exit;
+      }
+    } else {
+      if (is_first_non_leaf_page && page_rec_is_user_rec(rec) &&
+          page_rec_is_first(rec, page)) {
+        ib::error(ER_CHECK_TABLE_MIN_REC_FLAG_NOT_SET,
+                  (unsigned long int)page_no,
+                  (unsigned long int)btr_page_get_level(page), index->name(),
+                  index->table_name);
+        DBUG_EXECUTE_IF(
+            "check_table_reset_correct_min_bit", ut_ad(page_is_comp(page));
+            rec_set_info_bits_new(
+                const_cast<rec_t *>(rec),
+                rec_get_info_bits(rec, true) | REC_INFO_MIN_REC_FLAG););
+        goto func_exit;
+      }
     }
 
 #ifndef UNIV_HOTBACKUP
@@ -2256,11 +2319,10 @@ bool page_validate(
 
       if (ret <= 0 && !rtr_equal_nodeptrs && !multi_equal_nodeptrs &&
           !multi_value_on_ibuf) {
-        ib::error(ER_IB_MSG_901)
-            << "Records in wrong order on"
-               " space "
-            << page_get_space_id(page) << " page " << page_get_page_no(page)
-            << " index " << index->name;
+        ib::error(ER_IB_MSG_901) << "Records in wrong order on"
+                                    " space "
+                                 << page_get_space_id(page) << " page "
+                                 << page_no << " index " << index->name;
 
         fputs("\nInnoDB: previous record ", stderr);
         /* For spatial index, print the mbr info.*/
@@ -2400,7 +2462,8 @@ bool page_validate(
   rec = page_header_get_ptr(page, PAGE_FREE);
 
   while (rec != nullptr) {
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
     if (UNIV_UNLIKELY(!page_rec_validate(rec, offsets))) {
       goto func_exit;
     }
@@ -2441,7 +2504,7 @@ func_exit:
   func_exit2:
     ib::error(ER_IB_MSG_913)
         << "Apparent corruption in space " << page_get_space_id(page)
-        << " page " << page_get_page_no(page) << " index " << index->name;
+        << " page " << page_no << " index " << index->name;
   }
 
   return (ret);

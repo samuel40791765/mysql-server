@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2012, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -33,6 +33,8 @@
 #include "storage/perfschema/cursor_by_thread_connect_attr.h"
 #include "storage/perfschema/pfs_column_types.h"
 #include "storage/perfschema/table_helper.h"
+
+struct CHARSET_INFO;
 
 #define MAX_ATTR_NAME_CHARS 32
 #define MAX_ATTR_VALUE_CHARS 1024

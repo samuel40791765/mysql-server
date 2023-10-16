@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -60,7 +60,7 @@ and tracks up to which point in a total order all operations have
 been finished (there are no holes).
 
 It also allows to limit the last period in which there might be holes.
-These holes refer to unfinished concurrent operations, which preceed
+These holes refer to unfinished concurrent operations, which precede
 in the total order some operations that are already finished.
 
 Threads might concurrently report finished operations (lock-free).
@@ -316,7 +316,7 @@ bool Link_buf<Position>::advance_tail_until(Stop_condition stop_condition,
     auto next_load = slot.load(std::memory_order_acquire);
 
     if (next_load >= position + m_capacity) {
-      /* either we wrapped and tail was advanced mean while,
+      /* either we wrapped and tail was advanced meanwhile,
       or there is link start_lsn -> end_lsn of length >= m_capacity */
       position = m_tail.load(std::memory_order_acquire);
       if (position != from) {

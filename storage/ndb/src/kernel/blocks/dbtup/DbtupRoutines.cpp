@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,8 +28,8 @@
 #include "Dbtup.hpp"
 
 #include <cstring>
-#include "m_ctype.h"
 
+#include "mysql/strings/m_ctype.h"
 #include <RefConvert.hpp>
 #include <ndb_limits.h>
 #include <pc.hpp>
@@ -367,13 +367,12 @@ int Dbtup::readAttributes(KeyReqStruct *req_struct,
                           const Uint32* inBuffer,
                           Uint32  inBufLen,
                           Uint32* outBuf,
-                          Uint32  maxRead,
-                          bool    xfrm_flag)
+                          Uint32  maxRead)
 {
   Uint32 attributeId, descr_index, tmpAttrBufIndex, tmpAttrBufBits, inBufIndex;
-  TableDescriptor* attr_descr;
   AttributeHeader* ahOut;
 
+  const TableDescriptor* attr_descr = req_struct->attr_descr;
   Tablerec* const regTabPtr = req_struct->tablePtrP;
   Uint32 numAttributes= regTabPtr->m_no_of_attributes;
 
@@ -381,7 +380,7 @@ int Dbtup::readAttributes(KeyReqStruct *req_struct,
   req_struct->out_buf_index= 0;
   req_struct->out_buf_bits = 0;
   req_struct->max_read= 4*maxRead;
-  req_struct->xfrm_flag= xfrm_flag;
+  req_struct->xfrm_flag= false;  // Only read of keys may transform
   Uint8*outBuffer = (Uint8*)outBuf;
   thrjamDebug(req_struct->jamBuffer);
   while (inBufIndex < inBufLen)
@@ -400,7 +399,6 @@ int Dbtup::readAttributes(KeyReqStruct *req_struct,
     ahOut= (AttributeHeader*)&outBuffer[tmpAttrBufIndex];
     req_struct->out_buf_index= tmpAttrBufIndex + 4;
     req_struct->out_buf_bits = 0;
-    attr_descr= req_struct->attr_descr;
     if (likely(attributeId < numAttributes))
     {
       Uint32 attrDescriptor = attr_descr[descr_index].tabDescr;
@@ -447,6 +445,91 @@ int Dbtup::readAttributes(KeyReqStruct *req_struct,
   thrjamDebug(req_struct->jamBuffer);
   return pad32(req_struct->out_buf_index, req_struct->out_buf_bits) >> 2;
 }
+
+/**
+ * readKeyAttributes()
+ *
+ * Similar to readAttributes(), however:
+ *  - Expected to read only primary key attributes.
+ *    -- Thus, no handling of read_pseudo() and 'bits' needed
+ *  - Key attributes in outBuf is without AttributeHeader.
+ *    -- Thus suitable for cmp_key(), xfrm_key_hash(), md5_hash()
+ *  - If 'xfrm_hash=true' a hash-transformed key is generated.
+ *    -- Only intended as a hash key, not for compare.
+ *
+ *  Note that xfrm'ed key should *only* be used to generate a hash key.
+ *  Never use them to check for key equality - There is no guarantee
+ *  that non-equal keys will generate non-equal xfrm'ed keys.
+ */
+int Dbtup::readKeyAttributes(KeyReqStruct *req_struct,
+                          const Uint32* inBuffer,
+                          Uint32  inBufLen,
+                          Uint32* outBuf,
+                          Uint32  maxRead,
+                          bool    xfrm_hash)
+{
+  Uint32 attributeId, descr_index, tmpAttrBufIndex, inBufIndex;
+  AttributeHeader ahOutDummy;
+
+  const TableDescriptor* attr_descr = req_struct->attr_descr;
+  Tablerec* const regTabPtr = req_struct->tablePtrP;
+  Uint32 numAttributes= regTabPtr->m_no_of_attributes;
+
+  inBufIndex= 0;
+  req_struct->out_buf_index= 0;
+  req_struct->out_buf_bits = 0;
+  req_struct->max_read= 4*maxRead;
+  req_struct->xfrm_flag= xfrm_hash;
+  Uint8*outBuffer = (Uint8*)outBuf;
+  thrjamDebug(req_struct->jamBuffer);
+  while (inBufIndex < inBufLen)
+  {
+    thrjamDebug(req_struct->jamBuffer);
+    tmpAttrBufIndex= req_struct->out_buf_index;
+    AttributeHeader ahIn(inBuffer[inBufIndex++]);
+    attributeId= ahIn.getAttributeId();
+    descr_index= attributeId << ZAD_LOG_SIZE;
+
+    tmpAttrBufIndex = pad32(tmpAttrBufIndex,0);
+    req_struct->out_buf_index= tmpAttrBufIndex;
+    if (likely(attributeId < numAttributes))
+    {
+      Uint32 attrDescriptor = attr_descr[descr_index].tabDescr;
+      Uint32 attrDes2 = attr_descr[descr_index + 1].tabDescr;
+      Uint64 attrDes = (Uint64(attrDes2) << 32) +
+                        Uint64(attrDescriptor);
+
+      ReadFunction f= regTabPtr->readFunctionArray[attributeId];
+      thrjamLineDebug(req_struct->jamBuffer, attributeId);
+      if (likely((*f)(outBuffer,
+                      req_struct,
+                      &ahOutDummy,
+                      attrDes)))
+      {
+        // We only expect primary keys to be read
+        ndbassert(AttributeDescriptor::getPrimaryKey(attrDescriptor));
+        // Which can't be a Bit data type:
+        ndbassert(req_struct->out_buf_bits == 0);
+        continue;
+      }
+      else
+      {
+        ndbassert(!(attributeId & AttributeHeader::PSEUDO));
+        thrjam(req_struct->jamBuffer);
+        return -(int)req_struct->errorCode;
+      }
+    }
+    else
+    {
+      thrjam(req_struct->jamBuffer);
+      return -ZATTRIBUTE_ID_ERROR;
+    }//if
+  }//while
+  thrjamDebug(req_struct->jamBuffer);
+  ndbassert(req_struct->out_buf_bits == 0);
+  return pad32(req_struct->out_buf_index, 0) >> 2;
+}
+
 
 bool
 Dbtup::readFixedSizeTHOneWordNotNULL(Uint8* outBuffer,
@@ -783,7 +866,7 @@ Dbtup::xfrm_reader(Uint8* dstPtr,
   Uint32 maxBytes = AttributeDescriptor::getSizeInBytes(attrDescriptor);
 
   require(i < regTabPtr->noOfCharsets);
-  CHARSET_INFO* cs = regTabPtr->charsetArray[i];
+  const CHARSET_INFO* cs = regTabPtr->charsetArray[i];
 
   Uint32 lb, len;
   const bool ok = NdbSqlUtil::get_var_length(typeId, srcPtr, srcBytes, lb, len);
@@ -950,7 +1033,7 @@ Dbtup::readDynFixedSizeExpandedNotNULL(Uint8* outBuffer,
 {
   /*
     In the expanded format, we share the read code with static varsized, just
-    using different data base pointer and offset/lenght arrays.
+    using different data base pointer and offset/length arrays.
   */
   Uint32 attrDescriptor = Uint32((attrDes << 32) >> 32);
   Uint32 attrDes2 = Uint32(attrDes >> 32);
@@ -1120,7 +1203,7 @@ Dbtup::readDynBigFixedSizeExpandedNotNULL(Uint8* outBuffer,
 {
   /*
     In the expanded format, we share the read code with static varsized, just
-    using different data base pointer and offset/lenght arrays.
+    using different data base pointer and offset/length arrays.
   */
   Uint32 attrDescriptor = Uint32((attrDes << 32) >> 32);
   Uint32 attrDes2 = Uint32(attrDes >> 32);
@@ -1214,7 +1297,7 @@ Dbtup::readDynBigFixedSizeShrunkenNotNULL(Uint8* outBuffer,
   
   /*
     In the expanded format, we share the read code with static varsized, just
-    using different data base pointer and offset/lenght arrays.
+    using different data base pointer and offset/length arrays.
   */
   thrjamDebug(req_struct->jamBuffer);
   return varsize_reader(outBuffer, req_struct, ahOut, attrDes,
@@ -1418,7 +1501,7 @@ Dbtup::readDynVarSizeExpandedNotNULL(Uint8* outBuffer,
 {
   /*
     In the expanded format, we share the read code with static varsized, just
-    using different data base pointer and offset/lenght arrays.
+    using different data base pointer and offset/length arrays.
   */
   Uint32 attrDescriptor = Uint32((attrDes << 32) >> 32);
   Uint32 attrDes2 = Uint32(attrDes >> 32);
@@ -1506,7 +1589,7 @@ Dbtup::readDynVarSizeShrunkenNotNULL(Uint8* outBuffer,
 
   /*
     In the expanded format, we share the read code with static varsized, just
-    using different data base pointer and offset/lenght arrays.
+    using different data base pointer and offset/length arrays.
   */
   thrjamDebug(req_struct->jamBuffer);
   return varsize_reader(outBuffer, req_struct, ahOut, attrDes,
@@ -1975,21 +2058,13 @@ Dbtup::checkUpdateOfPrimaryKey(KeyReqStruct* req_struct,
   req_struct->out_buf_index = 0;
   req_struct->out_buf_bits = 0;
   req_struct->max_read = sizeof(keyReadBuffer);
-
-  bool tmp = req_struct->xfrm_flag;
   req_struct->xfrm_flag = false;
   ndbrequire((*f)((Uint8*)keyReadBuffer,
                    req_struct,
                    &attributeHeader,
                    attrDes));
-  req_struct->xfrm_flag = tmp;
   
   ndbrequire(req_struct->out_buf_index == attributeHeader.getByteSize());
-  if (unlikely(ahIn.getDataSize() != attributeHeader.getDataSize()))
-  {
-    thrjam(req_struct->jamBuffer);
-    return true;
-  }
 
   if (charsetFlag)
   {
@@ -2013,12 +2088,18 @@ Dbtup::checkUpdateOfPrimaryKey(KeyReqStruct* req_struct,
    * non-character column. (Little endian format would have required
    * 'cmp_attr' to correctly compare '>' or '<')
    */
-  else if (unlikely(memcmp(&keyReadBuffer[0], 
-                    &updateBuffer[1],
-                    req_struct->out_buf_index) != 0))
-  {
-    thrjam(req_struct->jamBuffer);
-    return true;
+  else {
+    /* Not charset, use binary comparison */
+    if (unlikely(ahIn.getDataSize() != attributeHeader.getDataSize())) {
+      thrjam(req_struct->jamBuffer);
+      return true;
+    }
+
+    if (unlikely(memcmp(&keyReadBuffer[0], &updateBuffer[1],
+                        req_struct->out_buf_index) != 0)) {
+      thrjam(req_struct->jamBuffer);
+      return true;
+    }
   }
   return false;
 }
@@ -2141,7 +2222,7 @@ Dbtup::fixsize_updater(Uint32* inBuffer,
         Uint32 i = AttributeOffset::getCharsetPos(attrDes2);
         require(i < regTabPtr->noOfCharsets);
         // not const in MySQL
-        CHARSET_INFO* cs = regTabPtr->charsetArray[i];
+        const CHARSET_INFO* cs = regTabPtr->charsetArray[i];
         int not_used;
         const char* ssrc = (const char*)&inBuffer[indexBuf + 1];
         Uint32 lb, len;
@@ -3372,7 +3453,7 @@ Dbtup::updateDiskFixedSizeNotNULL(Uint32* inBuffer,
         Uint32 i = AttributeOffset::getCharsetPos(attrDes2);
         require(i < regTabPtr->noOfCharsets);
         // not const in MySQL
-        CHARSET_INFO* cs = regTabPtr->charsetArray[i];
+        const CHARSET_INFO* cs = regTabPtr->charsetArray[i];
 	int not_used;
         const char* ssrc = (const char*)&inBuffer[indexBuf + 1];
         Uint32 lb, len;
@@ -3496,7 +3577,7 @@ Dbtup::updateDiskVarAsFixedSizeNotNULL(Uint32* inBuffer,
         Uint32 i = AttributeOffset::getCharsetPos(attrDes2);
         require(i < regTabPtr->noOfCharsets);
         // not const in MySQL
-        CHARSET_INFO* cs = regTabPtr->charsetArray[i];
+        const CHARSET_INFO* cs = regTabPtr->charsetArray[i];
 	int not_used;
         const char* ssrc = (const char*)&inBuffer[indexBuf + 1];
         Uint32 lb, len;
@@ -3934,8 +4015,7 @@ Dbtup::read_lcp_keys(Uint32 tableId,
                            attrIds,
                            numAttrs,
                            dst,
-                           ZNIL,
-                           false);
+                           ZNIL);
 
   {
     Uint32 *src = dst;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -212,7 +212,8 @@ enum mysql_option {
   MYSQL_OPT_ZSTD_COMPRESSION_LEVEL,
   MYSQL_OPT_LOAD_DATA_LOCAL_DIR,
   MYSQL_OPT_USER_PASSWORD,
-  MYSQL_OPT_SSL_SESSION_DATA
+  MYSQL_OPT_SSL_SESSION_DATA,
+  MYSQL_OPT_TLS_SNI_SERVERNAME
 };
 
 /**
@@ -284,8 +285,8 @@ enum mysql_ssl_fips_mode {
 typedef struct character_set {
   unsigned int number;   /* character set number              */
   unsigned int state;    /* character set state               */
-  const char *csname;    /* collation name                    */
-  const char *name;      /* character set name                */
+  const char *csname;    /* character set name                */
+  const char *name;      /* collation name                    */
   const char *comment;   /* comment                           */
   const char *dir;       /* character set directory           */
   unsigned int mbminlen; /* min. length for multibyte strings */
@@ -411,7 +412,7 @@ void STDCALL mysql_server_end(void);
 /*
   mysql_server_init/end need to be called when using libmysqld or
   libmysqlclient (exactly, mysql_server_init() is called by mysql_init() so
-  you don't need to call it explicitely; but you need to call
+  you don't need to call it explicitly; but you need to call
   mysql_server_end() to free memory). The names are a bit misleading
   (mysql_SERVER* to be used when using libmysqlCLIENT). So we add more general
   names which suit well whether you're using libmysqld or libmysqlclient. We
@@ -568,6 +569,7 @@ void STDCALL myodbc_remove_escape(MYSQL *mysql, char *name);
 unsigned int STDCALL mysql_thread_safe(void);
 bool STDCALL mysql_read_query_result(MYSQL *mysql);
 int STDCALL mysql_reset_connection(MYSQL *mysql);
+enum net_async_status STDCALL mysql_reset_connection_nonblocking(MYSQL *mysql);
 
 int STDCALL mysql_binlog_open(MYSQL *mysql, MYSQL_RPL *rpl);
 int STDCALL mysql_binlog_fetch(MYSQL *mysql, MYSQL_RPL *rpl);
@@ -615,7 +617,7 @@ enum enum_mysql_stmt_state {
 
   length         - On input: in case when lengths of input values
                    are different for each execute, you can set this to
-                   point at a variable containining value length. This
+                   point at a variable containing value length. This
                    way the value length can be different in each execute.
                    If length is not NULL, buffer_length is not used.
                    Note, length can even point at buffer_length if
@@ -806,6 +808,8 @@ MYSQL *STDCALL mysql_real_connect_dns_srv(MYSQL *mysql,
                                           const char *user, const char *passwd,
                                           const char *db,
                                           unsigned long client_flag);
+
+enum connect_stage STDCALL mysql_get_connect_nonblocking_stage(MYSQL *mysql);
 
 #ifdef __cplusplus
 }

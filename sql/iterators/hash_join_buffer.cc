@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,13 +30,13 @@
 #include <unordered_map>
 
 #include "field_types.h"
-#include "m_ctype.h"
 #include "my_alloc.h"
 #include "my_bit.h"
 #include "my_bitmap.h"
 #include "my_compiler.h"
 
 #include "my_inttypes.h"
+#include "mysql/strings/m_ctype.h"
 #include "sql/field.h"
 #include "sql/handler.h"
 #include "sql/item_cmpfunc.h"
@@ -44,7 +44,6 @@
 #include "sql/psi_memory_key.h"
 #include "sql/sql_class.h"
 #include "sql/sql_executor.h"
-#include "sql/sql_join_buffer.h"
 #include "sql/sql_optimizer.h"
 #include "sql/table.h"
 #include "tables_contained_in.h"
@@ -115,7 +114,7 @@ void LoadImmutableStringIntoTableBuffers(const TableCollection &tables,
 HashJoinRowBuffer::HashJoinRowBuffer(
     TableCollection tables, std::vector<HashJoinCondition> join_conditions,
     size_t max_mem_available)
-    : m_join_conditions(move(join_conditions)),
+    : m_join_conditions(std::move(join_conditions)),
       m_tables(std::move(tables)),
       m_mem_root(key_memory_hash_join, 16384 /* 16 kB */),
       m_overflow_mem_root(key_memory_hash_join, 256),
@@ -155,9 +154,8 @@ bool HashJoinRowBuffer::Init() {
   return false;
 }
 
-StoreRowResult HashJoinRowBuffer::StoreRow(
-    THD *thd, bool reject_duplicate_keys,
-    bool store_rows_with_null_in_condition) {
+StoreRowResult HashJoinRowBuffer::StoreRow(THD *thd,
+                                           bool reject_duplicate_keys) {
   bool full = false;
 
   // Make the key from the join conditions.
@@ -173,9 +171,12 @@ StoreRowResult HashJoinRowBuffer::StoreRow(
       return StoreRowResult::FATAL_ERROR;
     }
 
-    if (null_in_join_condition && !store_rows_with_null_in_condition) {
-      // SQL NULL values will never match in an inner join or semijoin, so skip
-      // the row.
+    if (null_in_join_condition) {
+      // One of the components of the join key had a NULL value, and
+      // that component was part of an equality predicate (=), *not* a
+      // NULL-safe equality predicate, so it can never match a row in
+      // the other table. There's no need to store the row in the hash
+      // table. Skip it.
       return StoreRowResult::ROW_STORED;
     }
   }

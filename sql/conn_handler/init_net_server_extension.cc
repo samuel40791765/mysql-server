@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -90,6 +90,13 @@ static void net_after_header_psi(NET *net [[maybe_unused]], void *user_data,
     */
     MYSQL_END_IDLE_WAIT(thd->m_idle_psi);
 
+#ifdef HAVE_PSI_THREAD_INTERFACE
+    PSI_thread *thread = thd_get_psi(thd);
+    if (thread != nullptr) {
+      PSI_THREAD_CALL(detect_telemetry)(thread);
+    }
+#endif
+
     if (!rc) {
       assert(thd->m_statement_psi == nullptr);
       thd->m_statement_psi = MYSQL_START_STATEMENT(
@@ -123,6 +130,7 @@ void init_net_server_extension(THD *thd) {
   thd->m_net_server_extension.m_before_header = net_before_header_psi;
   thd->m_net_server_extension.m_after_header = net_after_header_psi;
   thd->m_net_server_extension.compress_ctx.algorithm = MYSQL_UNCOMPRESSED;
+  thd->m_net_server_extension.timeout_on_full_packet = false;
   /* Activate this private extension for the mysqld server. */
   thd->get_protocol_classic()->get_net()->extension =
       &thd->m_net_server_extension;

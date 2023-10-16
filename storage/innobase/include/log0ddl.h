@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -240,7 +240,7 @@ class DDL_Log_Table {
   /** Constructor. */
   DDL_Log_Table();
 
-  /** Constructor and it initalizes transaction and query thread.
+  /** Constructor and it initializes transaction and query thread.
   Once trx is passed in, make sure destructor is called before the
   trx commits.
   @param[in,out]        trx     Transaction */
@@ -330,7 +330,7 @@ class DDL_Log_Table {
   @return value of the given offset. */
   ulint fetch_value(const byte *data, ulint offset);
 
-  /** Seach specified index by specified ID
+  /** Search specified index by specified ID
   @param[in]    id      ID to search
   @param[in]    index   index to search
   @param[in,out]        records DDL_Record(s) got by the search

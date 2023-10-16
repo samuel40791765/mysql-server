@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -34,7 +34,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #define buf0flu_h
 
 #include "buf0types.h"
-#include "log0log.h"
 #include "univ.i"
 #include "ut0byte.h"
 
@@ -246,10 +245,13 @@ ulint buf_pool_get_dirty_pages_count(
     space_id_t id,             /*!< in: space id to check */
     Flush_observer *observer); /*!< in: flush observer to check */
 
+/** Executes fsync for all tablespaces, to fsync all pages written to disk. */
+void buf_flush_fsync();
+
 /** Synchronously flush dirty blocks from the end of the flush list of all
  buffer pool instances. NOTE: The calling thread is not allowed to own any
  latches on pages! */
-void buf_flush_sync_all_buf_pools(void);
+void buf_flush_sync_all_buf_pools();
 
 /** Checks if all flush lists are empty. It is supposed to be used in
 single thread, during startup or shutdown. Hence it does not acquire
@@ -260,7 +262,7 @@ bool buf_are_flush_lists_empty_validate();
 
 /** We use Flush_observer to track flushing of non-redo logged pages in bulk
 create index(btr0load.cc).Since we disable redo logging during a index build,
-we need to make sure that all dirty pages modifed by the index build are
+we need to make sure that all dirty pages modified by the index build are
 flushed to disk before any redo logged operations go to the index. */
 
 class Flush_observer {
@@ -268,7 +270,7 @@ class Flush_observer {
   /** Constructor
   @param[in] space_id   table space id
   @param[in] trx                trx instance
-  @param[in,out] stage PFS progresss monitoring instance, it's used by
+  @param[in,out] stage PFS progress monitoring instance, it's used by
   ALTER TABLE. It is passed to log_preflush_pool_modified_pages() for
   accounting. */
   Flush_observer(space_id_t space_id, trx_t *trx, Alter_stage *stage) noexcept;

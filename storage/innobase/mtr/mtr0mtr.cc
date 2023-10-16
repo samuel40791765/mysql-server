@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -39,8 +39,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "log0meb.h"
 #ifndef UNIV_HOTBACKUP
 #include "clone0clone.h"
-#include "log0log.h"
+#include "log0buf.h"
+#include "log0chkp.h"
 #include "log0recv.h"
+#include "log0test.h"
+#include "log0write.h"
 #include "mtr0log.h"
 #endif /* !UNIV_HOTBACKUP */
 #include "my_dbug.h"
@@ -473,7 +476,7 @@ mtr_log_t mtr_t::set_log_mode(mtr_log_t mode) {
 #ifdef UNIV_DEBUG
   if (mode == MTR_LOG_NO_REDO && old_mode == MTR_LOG_ALL) {
     /* Should change to no redo mode before generating any redo. */
-    ut_ad(m_impl.m_n_log_recs == 0);
+    ut_ad(!has_any_log_record());
   }
 #endif /* UNIV_DEBUG */
 
@@ -491,18 +494,6 @@ mtr_log_t mtr_t::set_log_mode(mtr_log_t mode) {
 #endif /* !UNIV_HOTBACKUP */
 
   return old_mode;
-}
-
-/** Check if a mini-transaction is dirtying a clean page.
-@return true if the mtr is dirtying a clean page. */
-bool mtr_t::is_block_dirtied(const buf_block_t *block) {
-  ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-  ut_ad(block->page.buf_fix_count > 0);
-
-  /* It is OK to read oldest_modification because no
-  other thread can be performing a write of it and it
-  is only during write that the value is reset to 0. */
-  return !block->page.is_dirty();
 }
 
 #ifndef UNIV_HOTBACKUP
@@ -575,6 +566,7 @@ void mtr_t::start(bool sync) {
         m_impl.m_state == MTR_STATE_COMMITTED);
 
   UNIV_MEM_INVALID(this, sizeof(*this));
+  IF_DEBUG(UNIV_MEM_VALID(&m_restart_count, sizeof(m_restart_count)););
 
   UNIV_MEM_INVALID(&m_impl, sizeof(m_impl));
 
@@ -589,7 +581,6 @@ void mtr_t::start(bool sync) {
   m_impl.m_log_mode = MTR_LOG_ALL;
   m_impl.m_inside_ibuf = false;
   m_impl.m_modifications = false;
-  m_impl.m_made_dirty = false;
   m_impl.m_n_log_recs = 0;
   m_impl.m_state = MTR_STATE_ACTIVE;
   m_impl.m_flush_observer = nullptr;
@@ -605,6 +596,7 @@ void mtr_t::start(bool sync) {
   /* Assert there are no collisions in thread local context - it would mean
   reusing MTR without committing or destructing it. */
   ut_a(res.second);
+  m_restart_count++;
 #endif /* UNIV_DEBUG */
 }
 
@@ -676,8 +668,8 @@ void mtr_t::commit() {
 
   Command cmd(this);
 
-  if (m_impl.m_n_log_recs > 0 ||
-      (m_impl.m_modifications && m_impl.m_log_mode == MTR_LOG_NO_REDO)) {
+  if (has_any_log_record() ||
+      (has_modifications() && m_impl.m_log_mode == MTR_LOG_NO_REDO)) {
     ut_ad(!srv_read_only_mode || m_impl.m_log_mode == MTR_LOG_NO_REDO);
 
     cmd.execute();
@@ -714,13 +706,12 @@ void mtr_t::check_is_not_latching() const {
 /** Acquire a tablespace X-latch.
 NOTE: use mtr_x_lock_space().
 @param[in]      space           tablespace instance
-@param[in]      file            file name from where called
-@param[in]      line            line number in file */
-void mtr_t::x_lock_space(fil_space_t *space, const char *file, ulint line) {
+@param[in]      location        location from where called */
+void mtr_t::x_lock_space(fil_space_t *space, ut::Location location) {
   ut_ad(m_impl.m_magic_n == MTR_MAGIC_N);
   ut_ad(is_active());
 
-  x_lock(&space->latch, {file, line});
+  x_lock(&space->latch, location);
 }
 
 /** Release an object in the memo stack. */
@@ -730,7 +721,7 @@ void mtr_t::memo_release(const void *object, ulint type) {
 
   /* We cannot release a page that has been written to in the
   middle of a mini-transaction. */
-  ut_ad(!m_impl.m_modifications || type != MTR_MEMO_PAGE_X_FIX);
+  ut_ad(!has_modifications() || type != MTR_MEMO_PAGE_X_FIX);
 
   Find find(object, type);
   Iterate<Find> iterator(find);
@@ -749,7 +740,7 @@ void mtr_t::release_page(const void *ptr, mtr_memo_type_t type) {
 
   /* We cannot release a page that has been written to in the
   middle of a mini-transaction. */
-  ut_ad(!m_impl.m_modifications || type != MTR_MEMO_PAGE_X_FIX);
+  ut_ad(!has_modifications() || type != MTR_MEMO_PAGE_X_FIX);
 
   Find_page find(ptr, type);
   Iterate<Find_page> iterator(find);
@@ -790,17 +781,13 @@ ulint mtr_t::Command::prepare_write() {
   ulint len = m_impl->m_log.size();
   ut_ad(len > 0);
 
-  ulint n_recs = m_impl->m_n_log_recs;
+  const auto n_recs = m_impl->m_n_log_recs;
   ut_ad(n_recs > 0);
 
   ut_ad(log_sys != nullptr);
 
-  ut_ad(m_impl->m_n_log_recs == n_recs);
-
   /* This was not the first time of dirtying a
   tablespace since the latest checkpoint. */
-
-  ut_ad(n_recs == m_impl->m_n_log_recs);
 
   if (n_recs <= 1) {
     ut_ad(n_recs == 1);
@@ -978,7 +965,20 @@ int mtr_t::Logging::disable(THD *) {
   }
 
   /* Mark that it is unsafe to crash going forward. */
-  log_persist_disable(*log_sys);
+  if (!srv_read_only_mode) {
+    /* We need to check for read-only mode, because InnoDB might be
+    restarted in read-only mode on log files for which redo logging
+    has been disabled just before the crash. During runtime, InnoDB
+    refuses to disable redo logging in read-only mode, but in such
+    case, we must pretend redo logging is still disabled. It should
+    not matter because in read-only, redo logging isn't used anyway.
+    However to preserve old behaviour we call s_logging.disable in
+    such case and we only prevent from calling log_persist_disable,
+    which in the old code was no-op anyway in such case (read-only).*/
+    log_persist_disable(*log_sys);
+  } else {
+    ut_ad(srv_is_being_started);
+  }
 
   ib::warn(ER_IB_WRN_REDO_DISABLED);
   m_state.store(DISABLED);
@@ -1174,8 +1174,8 @@ static void mtr_commit_mlog_test_filling_block_low(log_t &log,
     static_assert(mtr_buf_t::MAX_DATA_SIZE >= MLOG_TEST_REC_OVERHEAD * 2);
     ut_a(payload > MLOG_TEST_REC_OVERHEAD);
 
-    /* Subtract space which we will consume by usage of next record.
-    The remaining space is maximum we are allowed to consume within
+    /* Subtract space which we will occupy by usage of next record.
+    The remaining space is maximum we are allowed to occupy within
     this record. */
     payload -= MLOG_TEST_REC_OVERHEAD;
 

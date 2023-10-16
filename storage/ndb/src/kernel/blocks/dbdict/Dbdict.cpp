@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,7 +25,7 @@
 #include <ndb_global.h>
 #include <cstring>
 #include "my_sys.h"
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 
 #define DBDICT_C
 #include "Dbdict.hpp"
@@ -408,6 +408,13 @@ void Dbdict::execDBINFO_SCANREQ(Signal *signal)
         c_attributeRecordPool.getUsedHi(),
         { CFG_DB_NO_ATTRIBUTES,0,0,0 },
         0},
+      { "Foreign Key Record",
+        c_fk_pool.getUsed(),
+        c_fk_pool.getSize(),
+        c_fk_pool.getEntrySize(),
+        c_fk_pool.getUsedHi(),
+        { 0,0,0,0 },
+        RT_DBDICT_FILE},
       { "Table Record",
         c_tableRecordPool_.getUsed(),
         c_noOfMetaTables,
@@ -750,7 +757,7 @@ void Dbdict::packTableIntoPages(Signal* signal)
       objEntry = getTableEntry(xsf, tableId);
     }
 
-    // The table seached for was not found
+    // The table searched for was not found
     if(objEntry == 0)
     {
       jam();
@@ -1250,7 +1257,6 @@ Dbdict::packFileIntoPages(SimpleProperties::Writer & w,
 void
 Dbdict::execCREATE_FRAGMENTATION_REQ(Signal* signal)
 {
-  LOCAL_SIGNAL(signal);
   CreateFragmentationReq* req = (CreateFragmentationReq*)signal->getDataPtr();
   D("execCREATE_FRAGMENTATION_REQ");
   if (req->primaryTableId == RNIL) {
@@ -3234,7 +3240,7 @@ void Dbdict::execREAD_CONFIG_REQ(Signal* signal)
   }
 
   sb /= LocalRope::getSegmentSizeInBytes();
-  sb += 100; // more safty
+  sb += 100; // more safety
   ndbrequire(sb < (Uint64(1) << 32));
   c_rope_pool.setSize(Uint32(sb));
 
@@ -7019,7 +7025,10 @@ Dbdict::create_fragmentation(Signal* signal,
      * and distributed in the same manner but has always a normal hash
      * fragmentation.
      */
-    frag_req->primaryTableId = RNIL;
+    if ((flags & CreateFragmentationReq::RI_ADD_FRAGMENTS) == 0)
+    {
+      frag_req->primaryTableId = RNIL;
+    }
   }
   else
   {
@@ -7621,7 +7630,7 @@ Dbdict::createTab_local(Signal* signal,
   ndbrequire(ok);
 
   /**
-   * Start by createing table in LQH
+   * Start by creating table in LQH
    */
   CreateTabReq* req = (CreateTabReq*)signal->getDataPtrSend();
   req->senderRef = reference();
@@ -10106,12 +10115,12 @@ Dbdict::alterTable_parse(Signal* signal, bool master,
       c_fragDataLen = 2 * newTablePtr.p->fragmentCount;
       Uint32 save1 = newTablePtr.p->primaryTableId;
       Uint32 flags = CreateFragmentationReq::RI_CREATE_FRAGMENTATION;
-      if (save1 == RNIL)
+      if (save1 == RNIL ||  newTablePtr.p->isHashIndex())
       {
         /**
-         * This is a "base" table
-         *   signal that this is a add-partitions
-         *   by setting primaryTableId to "original" table and setting flag
+         * This is either a base table or an UI table
+         * signal that this is an add-partitions operation
+         * by setting primaryTableId to "original" table and setting flag
          */
         flags = CreateFragmentationReq::RI_ADD_FRAGMENTS;
         newTablePtr.p->primaryTableId = tablePtr.p->tableId;
@@ -10301,13 +10310,13 @@ Dbdict::check_supported_add_fragment(Uint16* newdata, const Uint16* olddata)
   Uint32 oldFragments = olddata[1];
 #ifdef TODO_XXX
   /**
-   * This doesnt work after a add-nodegroup
-   *   dont't know why, so we instead just ignore what the API
+   * This doesn't work after a add-nodegroup
+   *   don't know why, so we instead just ignore what the API
    *   for the already existing partitions
    */
 
   // Check that all the old has the same properties...
-  // Only compare prefered primary, as replicas come in any order
+  // Only compare preferred primary, as replicas come in any order
   for (Uint32 i = 0; i<oldFragments; i++)
   {
     Uint32 idx = 2 + (1 + replicas) * i + 1;
@@ -12351,7 +12360,7 @@ Dbdict::doGET_TABINFOREQ(Signal* signal)
     objEntry = getTableEntry(xsf, obj_id);
   }
 
-  // The table seached for was not found
+  // The table searched for was not found
   if(objEntry == 0)
   {
     jam();
@@ -14615,7 +14624,7 @@ Dbdict::alterIndex_parse(Signal* signal, bool master,
        * Link operation to AlterTable
        *   either if prev op is AlterTable using baseop.i
        *       or if prev op is AlterIndex using baseop.p->m_base_op_ptr_i
-       *   (i.e recursivly, assuming that no operation can come inbetween)
+       *   (i.e recursively, assuming that no operation can come in between)
        */
       SchemaOpPtr baseop = op_ptr;
       LocalSchemaOp_list list(c_schemaOpPool, trans_ptr.p->m_op_list);
@@ -17083,8 +17092,6 @@ Dbdict::execINDEX_STAT_REP(Signal* signal)
 
   D("index stat: " << copyRope<MAX_TAB_NAME_SIZE>(indexPtr.p->tableName)
     << " request type:" << rep->requestType);
-
-  infoEvent("DICT: index %u stats auto-update requested", rep->indexId);
   indexPtr.p->indexStatBgRequest = rep->requestType;
 }
 
@@ -17128,13 +17135,14 @@ Dbdict::indexStatBg_process(Signal* signal)
     TxHandlePtr tx_ptr;
     if (!seizeTxHandle(tx_ptr)) {
       jam();
-      return; // wait for one
+      break; // wait for one
     }
     Callback c = {
       safe_cast(&Dbdict::indexStatBg_fromBeginTrans),
       tx_ptr.p->tx_key
     };
     tx_ptr.p->m_callback = c;
+    infoEvent("DICT: index %u stats auto-update starting", c_indexStatBgId);
     beginSchemaTrans(signal, tx_ptr);
     return;
   }
@@ -17153,6 +17161,7 @@ Dbdict::indexStatBg_fromBeginTrans(Signal* signal, Uint32 tx_key, Uint32 ret)
 
   if (ret != 0) {
     jam();
+    releaseTxHandle(tx_ptr);
     indexStatBg_sendContinueB(signal);
     return;
   }
@@ -17904,7 +17913,7 @@ Dbdict::prepareUtilTransaction(Callback *pcallback,
  * createEvent_RT_USER_GET
  * createEvent_RT_DICT_AFTER_GET
  *
- * repectively
+ * respectively
  *
  */
 
@@ -19067,6 +19076,7 @@ void Dbdict::createEvent_sendReply(Signal* signal,
     evntConf->setAttrListBitmask(evntRecPtr.p->m_request.getAttrListBitmask());
     evntConf->setEventType(evntRecPtr.p->m_request.getEventType());
     evntConf->setRequestType(evntRecPtr.p->m_request.getRequestType());
+    evntConf->setReportFlags(evntRecPtr.p->m_request.getReportFlags());
 
     signalLength = CreateEvntConf::SignalLength;
 #ifdef EVENT_PH2_DEBUG
@@ -23040,7 +23050,7 @@ void Dbdict::check_takeover_replies(Signal* signal)
               New master has already ended some operation,
               create it again so we can tell slaves to end it.
               Note: we don't add node to transaction since the
-              ressurected operation cannot be completed. Instead
+              resurrected operation cannot be completed. Instead
               we need to release it explicitly when transaction is
               ended.
             */
@@ -27115,7 +27125,8 @@ Dbdict::createFK_parse(Signal* signal, bool master,
       return;
     }
 
-    if (fk.ParentIndexVersion != parentIndexEntry->m_tableVersion)
+    if (table_version_major(fk.ParentIndexVersion) !=
+        table_version_major(parentIndexEntry->m_tableVersion))
     {
       jam();
       setError(error, CreateFKRef::InvalidParentIndexVersion, __LINE__);
@@ -27173,7 +27184,8 @@ Dbdict::createFK_parse(Signal* signal, bool master,
       return;
     }
 
-    if (fk.ChildIndexVersion != childIndexEntry->m_tableVersion)
+    if (table_version_major(fk.ChildIndexVersion) !=
+        table_version_major(childIndexEntry->m_tableVersion))
     {
       jam();
       setError(error, CreateFKRef::InvalidChildIndexVersion, __LINE__);
@@ -27564,6 +27576,7 @@ Dbdict::createFK_abortParse(Signal* signal, SchemaOpPtr op_ptr)
     ndbrequire(find_object(fk_ptr, impl_req->fkId));
 
     release_object(fk_ptr.p->m_obj_ptr_i);
+    c_fk_pool.release(fk_ptr);
   }
 
   sendTransConf(signal, op_ptr);
@@ -28856,6 +28869,7 @@ Dbdict::dropFK_fromLocal(Signal* signal, Uint32 op_key, Uint32 ret)
     ndbrequire(find_object(fk_ptr, impl_req->fkId));
 
     release_object(fk_ptr.p->m_obj_ptr_i);
+    c_fk_pool.release(fk_ptr);
 
     sendTransConf(signal, op_ptr);
   } else {
@@ -29874,7 +29888,7 @@ Dbdict::execSCHEMA_TRANS_BEGIN_REQ(Signal* signal)
        * TODO...use better mechanism...
        *
        * During restart...we need to check both old/new
-       *   schema file so that we don't accidently allocate
+       *   schema file so that we don't accidentally allocate
        *   an objectId that should be used to recreate an object
        */
       trans_ptr.p->m_obj_id = getFreeObjId(true);
@@ -31352,7 +31366,7 @@ void Dbdict::check_partial_trans_commit_start(SchemaTransPtr trans_ptr,
   if (ownNodePtr.p->nodeState == NodeRecord::NDB_MASTER_TAKEOVER)
   {
     /*
-      A new master is in the process of commiting a
+      A new master is in the process of committing a
       transaction taken over from the failed master.
       Check if some slave have already flushed the commit.
      */
@@ -31611,7 +31625,7 @@ void Dbdict::check_partial_trans_commit_next(SchemaTransPtr trans_ptr,
       A new master is in the process of committing a
       transaction taken over from the failed master.
       Check if any nodes should be skipped because they
-      have already commited the operation
+      have already committed the operation
     */
     jam();
     for (unsigned i = 1; i < MAX_NDB_NODES; i++) {
@@ -32215,7 +32229,7 @@ void Dbdict::trans_recover(Signal* signal, SchemaTransPtr trans_ptr)
     {
       jam();
       /*
-        Commit any uncommited operations
+        Commit any uncommitted operations
       */
       SchemaOpPtr op_ptr;
       ndbrequire(c_schemaOpPool.getPtr(op_ptr, trans_ptr.p->m_curr_op_ptr_i));
@@ -32266,7 +32280,7 @@ void Dbdict::trans_recover(Signal* signal, SchemaTransPtr trans_ptr)
   case SchemaTrans::TS_COMPLETING:
   {
     /*
-      Complete any uncommited operations
+      Complete any uncommitted operations
     */
     jam();
 #ifdef VM_TRACE
@@ -32658,7 +32672,7 @@ Dbdict::slave_run_flush(Signal *signal,
   case SchemaTransImplReq::RT_END:
     /**
      * No state check here, cause we get here regardless if transaction
-     *   succeded or not...
+     *   succeeded or not...
      */
     jam();
     trans_ptr.p->m_state = SchemaTrans::TS_ENDING;
@@ -32914,7 +32928,7 @@ Dbdict::sendTransRef(Signal* signal, SchemaTransPtr trans_ptr)
   ref->transKey = trans_ptr.p->trans_key;
   getError(trans_ptr.p->m_error, ref);
 
-  // erro has been reported, clear it
+  // error has been reported, clear it
   resetError(trans_ptr.p->m_error);
 
   const Uint32 masterRef = trans_ptr.p->m_masterRef;

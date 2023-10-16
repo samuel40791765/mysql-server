@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,6 +34,7 @@
 
 #include "client/client_priv.h"
 #include "compression.h"
+#include "m_string.h"
 #include "my_alloc.h"
 #include "my_dbug.h"
 #include "my_default.h"
@@ -42,8 +43,11 @@
 #include "my_macros.h"
 #include "my_systime.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/int2str.h"
 #include "mysql_version.h"
+#include "nulls.h"
 #include "print_version.h"
+#include "strxmov.h"
 #include "thr_cond.h"
 #include "thr_mutex.h"
 #include "typelib.h"
@@ -289,6 +293,9 @@ static bool get_one_option(int optid, const struct my_option *opt,
     case '?':
       usage();
       exit(0);
+    case 'C':
+      CLIENT_WARN_DEPRECATED("--compress", "--compression-algorithms");
+      break;
   }
   return false;
 }
@@ -326,7 +333,7 @@ static int get_options(int *argc, char ***argv) {
 static int write_to_table(char *filename, MYSQL *mysql) {
   char tablename[FN_REFLEN], hard_path[FN_REFLEN],
       escaped_name[FN_REFLEN * 2 + 1], sql_statement[FN_REFLEN * 16 + 256],
-      *end, *pos;
+      escaped_tablename[FN_REFLEN * 2 + 1], *end;
   DBUG_TRACE;
   DBUG_PRINT("enter", ("filename: %s", filename));
 
@@ -336,10 +343,14 @@ static int write_to_table(char *filename, MYSQL *mysql) {
   else
     my_load_path(hard_path, filename, nullptr); /* filename includes the path */
 
+  mysql_real_escape_string_quote(mysql, escaped_tablename, tablename,
+                                 (unsigned long)strlen(tablename), '`');
+
   if (opt_delete) {
     if (verbose)
       fprintf(stdout, "Deleting the old data from table %s\n", tablename);
-    snprintf(sql_statement, FN_REFLEN * 16 + 256, "DELETE FROM %s", tablename);
+    snprintf(sql_statement, FN_REFLEN * 16 + 256, "DELETE FROM `%s`",
+             escaped_tablename);
     if (mysql_query(mysql, sql_statement))
       return db_error_with_table(mysql, tablename);
   }
@@ -363,11 +374,7 @@ static int write_to_table(char *filename, MYSQL *mysql) {
   if (replace) end = my_stpcpy(end, " REPLACE");
   if (ignore) end = my_stpcpy(end, " IGNORE");
   end = my_stpcpy(end, " INTO TABLE `");
-  /* Turn any ` into `` in table name. */
-  for (pos = tablename; *pos; pos++) {
-    if (*pos == '`') *end++ = '`';
-    *end++ = *pos;
-  }
+  end = my_stpcpy(end, escaped_tablename);
   end = my_stpcpy(end, "`");
 
   if (fields_terminated || enclosed || opt_enclosed || escaped)
@@ -409,7 +416,7 @@ static int lock_table(MYSQL *mysql, int tablecount, char **raw_tablename) {
     dynstr_append(&query, " WRITE,");
   }
   if (mysql_real_query(mysql, query.str, (ulong)(query.length - 1)))
-    return db_error(mysql); /* We shall countinue here, if --force was given */
+    return db_error(mysql); /* We shall continue here, if --force was given */
   return 0;
 }
 
@@ -544,7 +551,7 @@ static char *field_escape(char *to, const char *from, uint length) {
       end_backslashes ^= 1; /* find odd number of backslashes */
     else {
       if (*from == '\'' && !end_backslashes)
-        *to++ = *from; /* We want a dublicate of "'" for MySQL */
+        *to++ = *from; /* We want a duplicate of "'" for MySQL */
       end_backslashes = 0;
     }
   }
@@ -571,7 +578,7 @@ static void *worker_thread(void *arg) {
   if (mysql_query(mysql, "/*!40101 set @@character_set_database=binary */;") &&
       (error = db_error(mysql))) {
     if (exitcode == 0) exitcode = error;
-    /* We shall countinue here, if --force was given */
+    /* We shall continue here, if --force was given */
     goto error;
   }
 
@@ -691,7 +698,7 @@ int main(int argc, char **argv) {
                     "/*!40101 set @@character_set_database=binary */;") &&
         (error = db_error(mysql))) {
       if (exitcode == 0) exitcode = error;
-      /* We shall countinue here, if --force was given */
+      /* We shall continue here, if --force was given */
       goto end;
     }
 

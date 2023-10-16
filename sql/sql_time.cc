@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -39,13 +39,13 @@
 #include <time.h>
 
 #include "decimal.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "my_compiler.h"
 
 #include "my_macros.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "sql/current_thd.h"
 #include "sql/derror.h"
 #include "sql/field.h"
@@ -54,6 +54,7 @@
 #include "sql/sql_const.h"
 #include "sql/system_variables.h"
 #include "sql/tztime.h"  // struct Time_zone
+#include "string_with_len.h"
 
 /**
   Name description of interval names used in statements.
@@ -127,7 +128,7 @@ bool str_to_time(const CHARSET_INFO *cs, const char *str, size_t length,
                  MYSQL_TIME *l_time, my_time_flags_t flags,
                  MYSQL_TIME_STATUS *status) {
   char cnv[MAX_TIME_FULL_WIDTH + 3];  // +3 for nanoseconds (for rounding)
-  if ((cs->state & MY_CS_NONASCII) != 0) {
+  if (!my_charset_is_ascii_based(cs)) {
     length = to_ascii(cs, str, length, cnv, sizeof(cnv));
     str = cnv;
   }
@@ -148,7 +149,7 @@ bool str_to_datetime(const CHARSET_INFO *cs, const char *str, size_t length,
                      MYSQL_TIME *l_time, my_time_flags_t flags,
                      MYSQL_TIME_STATUS *status) {
   char cnv[MAX_DATETIME_FULL_WIDTH + 3];  // +3 for nanoseconds (for rounding)
-  if ((cs->state & MY_CS_NONASCII) != 0) {
+  if (!my_charset_is_ascii_based(cs)) {
     length = to_ascii(cs, str, length, cnv, sizeof(cnv));
     str = cnv;
   }
@@ -210,7 +211,8 @@ static bool lldiv_t_to_datetime(lldiv_t lld, MYSQL_TIME *ltime,
     if (!*warnings) /* Neither sets warnings in case of ZERO DATE */
       *warnings |= MYSQL_TIME_WARN_TRUNCATED;
     return true;
-  } else if (ltime->time_type == MYSQL_TIMESTAMP_DATE) {
+  }
+  if (ltime->time_type == MYSQL_TIMESTAMP_DATE) {
     /*
       Generate a warning in case of DATE with fractional part:
         20011231.1234 -> '2001-12-31'
@@ -535,7 +537,8 @@ bool datetime_with_no_zero_in_date_to_timeval(const MYSQL_TIME *ltime,
     */
     *warnings |= MYSQL_TIME_WARN_OUT_OF_RANGE;
     return true;
-  } else if (is_in_dst_time_gap) {
+  }
+  if (is_in_dst_time_gap) {
     /*
       Set MYSQL_TIME_WARN_INVALID_TIMESTAMP warning to indicate
       that date was fine but pointed to winter/summer time switch gap.
@@ -654,7 +657,7 @@ const char *get_date_time_format_str(const Known_date_time_format *format,
    @page DEFAULT_TIME_FUNCS Functions to create default time/date/datetime
    strings
    @note
-    For the moment the Date_time_format argument is ignored becasue
+    For the moment the Date_time_format argument is ignored because
     MySQL doesn't support comparing of date/time/datetime strings that
     are not in arbutary order as dates are compared as strings in some
     context)
@@ -674,7 +677,8 @@ const char *get_date_time_format_str(const Known_date_time_format *format,
 */
 void make_time(const Date_time_format *format [[maybe_unused]],
                const MYSQL_TIME *l_time, String *str, uint dec) {
-  uint length = static_cast<uint>(my_time_to_str(*l_time, str->ptr(), dec));
+  const uint length =
+      static_cast<uint>(my_time_to_str(*l_time, str->ptr(), dec));
   str->length(length);
   str->set_charset(&my_charset_numeric);
 }
@@ -687,7 +691,7 @@ void make_time(const Date_time_format *format [[maybe_unused]],
 */
 void make_date(const Date_time_format *format [[maybe_unused]],
                const MYSQL_TIME *l_time, String *str) {
-  uint length = static_cast<uint>(my_date_to_str(*l_time, str->ptr()));
+  const uint length = static_cast<uint>(my_date_to_str(*l_time, str->ptr()));
   str->length(length);
   str->set_charset(&my_charset_numeric);
 }
@@ -701,7 +705,8 @@ void make_date(const Date_time_format *format [[maybe_unused]],
 */
 void make_datetime(const Date_time_format *format [[maybe_unused]],
                    const MYSQL_TIME *l_time, String *str, uint dec) {
-  uint length = static_cast<uint>(my_datetime_to_str(*l_time, str->ptr(), dec));
+  const uint length =
+      static_cast<uint>(my_datetime_to_str(*l_time, str->ptr(), dec));
   str->length(length);
   str->set_charset(&my_charset_numeric);
 }

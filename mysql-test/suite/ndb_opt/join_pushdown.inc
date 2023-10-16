@@ -4840,6 +4840,78 @@ set range_optimizer_max_mem_size = @save_range_opt_max;
 
 drop table t1;
 
+echo ------------------------------------------------------------------;
+echo Bug#35185670 'mysqld crashes on expensive query';
+echo       or we may assert, or just hang until timeout...;
+echo;
+#
+# In a fragmenetd signal, the list of ReceiverId's were not correctly
+# compiled into the REQuest. Some were duplicated, others were missing.
+# In order to provoke the bug we need more than 16 receiverId's
+#  -> Create table with many partitions.
+#  -> Require the result to be ordered, which prevent multiple
+#     fragments to be folded into the same receiver.
+#
+# Test case query is based on the above large IN-list queries.
+#
+
+create table t1 (
+  k1 varchar(32) not null,
+  k2 int not null default 0,
+  primary key(k1,k2),
+  i int default 0
+) engine = ndbcluster
+partition by key() partitions 32;
+
+create table t2 (
+  k1 int not null primary key
+) engine = ndbcluster
+partition by key() partitions 32;
+
+let $query = insert into t1(k1) values ('foo');
+let $values = 1;
+while ($values < 2000)
+{
+  let $query = $query,('row# $values');
+  inc $values;
+}
+
+###################
+echo;
+echo Inserting 2000 rows in table t1;
+
+--disable_query_log
+eval $query;
+analyze table t1;
+
+insert into t2(k1) values(0);
+analyze table t2;
+--enable_query_log
+
+let $query = select * from t1 left join t2 on t2.k1=t1.i where t1.k1 in ('foo';
+let $values = 0;
+while ($values < 2000)
+{
+  let $query = $query,'row# $values';
+  inc $values;
+}
+let $query = $query ) order by t1.k1, t1.k2;
+
+echo;
+echo Expect query and IN-condition to be pushed;
+echo (If join_pushdown is enabled);
+
+--replace_regex /'row# [0-9]+',// /'row#/ .... 'row#/
+eval explain $query;
+
+--disable_result_log
+--replace_regex /'row# [0-9]+',// /'row#/ .... 'row#/
+eval $query;
+--enable_result_log
+
+drop table t1;
+drop table t2;
+
 ############################################################
 # Bug#14010406 LARGE PUSHED JOIN HIT ASSERT IN SPJ BLOCK
 #
@@ -5762,6 +5834,240 @@ eval explain format=tree $query;
 eval $query;
 
 drop table t;
+
+
+--echo ##################
+--echo #
+--echo # Bug#34482783 NDB: mysqld crash in ::is_pushable_within_nest()
+--echo #
+--echo ##################
+
+create table t (
+  pk int primary key,
+  col_int_key int not null,
+  col_int int not null,
+  key(col_int_key)
+) engine = ndbcluster;
+
+# No rows needed in table to provoke bug
+
+let $query=
+SELECT *
+FROM t AS table1
+  LEFT JOIN t AS table2
+    JOIN t AS table3 ON table2.col_int IS NULL  # <- 'zero rows'
+  ON table1.col_int = table2.col_int AND
+     table1.col_int_key = table2.col_int_key AND
+     table1.pk = table3.pk;
+
+--replace_regex /  \(cost=.*//
+eval explain format=tree $query;
+--sorted_result
+eval $query;
+
+drop table t;
+
+
+--echo ##################
+--echo #
+--echo # Bug#34723413 A 'pushed join' should not start with a scan-table
+--echo #              returning very few rows .
+--echo #
+--echo ##################
+
+create table t10 (
+  k int not null auto_increment,
+  i int,
+  primary key(k),
+  key(i)
+) engine = ndbcluster;
+
+insert into t10(i) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(0);
+
+create table t100 like t10;
+insert into t100(i)
+ select x.i from t10 as x, t10 as y;
+
+create table t1000 like t10;
+insert into t1000(i)
+ select x.i from t10 as x, t10 as y, t10 as z;
+
+# Make t10 even smaller, increase join-fanout on 'i' for t100 and t1000
+delete from t10 where i > 2;
+update t100 set i = i/3;
+update t1000 set i = i/3;
+
+analyze table t10,t100,t1000;
+
+############################
+# We could have pushed 't10 join t1000 join t100'
+# However the small table t10 might not deliver rows to all SPJ workers,
+# leaving some of them idle. Thus it will usually be better to :
+# - Fetch t10 rows
+# - For every t10 row: Push 't1000 join t100'
+#
+# Expect the explain-warning:
+#
+# Didn't push table 't10' as root, too few rows to enable full parallelism
+#
+--replace_regex /  \(cost=.*//
+explain format=tree
+select *
+from t10
+  straight_join t1000 on t1000.i = t10.i
+  straight_join t100 on t100.k = t1000.k;
+
+############################
+# However:
+# Table 't100' is an ancestor of t10, and can't be made
+# and t1000 ancestor. Not pushing t10 will yield t1000 and t100
+# unpushed as well -> Push all 3 tables as first planned.
+#
+--replace_regex /  \(cost=.*//
+explain format=tree select *
+from t10
+  straight_join t1000 on t1000.i = t10.i
+  straight_join t100 on t100.k = t10.k;
+
+drop table t10,t100,t1000;
+
+
+--echo ##################
+--echo #
+--echo # Bug#34782276:
+--echo #   Improve SPJ-internal execution plan, evaluate inner-joins first
+--echo #
+--echo ##################
+#
+# The SPJ block will build its own query plan where it will evaluate
+# inner-joins first. Even in a star-join plan the joins will be evaluated
+# in sequence and found matches noted in the common ancestor. Later joins
+# will be skipped if some of the previously evaluated joins didn't find
+# a match. (It is a property of the inner-join that matches are required
+# for all tables in the same inner join 'nest').
+# This will reduce the work needed to be performed by the data nodes
+# in later table REQuests.
+#
+# Test case is the query tree:       t1
+#                                   /   \
+#                                  t2   t3
+#
+# There are matches for all rows in the join(t1,t3). However only 3 of the 9
+# rows will match in join(t1,t2). The SPJ block will create its own execution
+# Plan where:
+#   1) join(t1,t2), Annotate t1 rows where matches are found.
+#   2) Generate t3 requests from buffered t1 rows having matches.
+# -> There should only be 3 keys in the REQuest sent to t3
+
+create table t (
+  k int,
+  a int,
+  key ix1(k),
+  key ix2(a)
+) engine = ndb;
+
+insert into t values
+  (0,0), (1,1), (2,2),
+  (3,0), (4,1), (5,2),
+  (6,0), (7,1), (8,2);
+
+let $old_val = query_get_value(select sum(val) as Value from ndbinfo.counters where block_name='DBSPJ' and counter_name = 'SCAN_ROWS_RETURNED', Value, 1);
+
+# This test case is just for reference - Worked as expected even before bug fix.
+let $query=
+select straight_join *
+from t as t1
+  inner join t as t2 on t2.a = t1.k
+  inner join t as t3 on t3.k = t1.k;
+
+--replace_regex /  \(cost=.*//
+eval explain format=tree $query;
+
+let $old_val = query_get_value(select sum(val) as Value from ndbinfo.counters where block_name='DBSPJ' and counter_name = 'SCAN_ROWS_RETURNED', Value, 1);
+
+--disable_result_log
+eval $query;
+--enable_result_log
+
+--echo ############
+--echo # Verify the expect 21 rows were returned from SPJ:
+--echo # - 2 x 9 rows from t1 inner join t2
+--echo # - 3 rows from t1 join t3
+--echo # -> 21 rows (0 *SPJ* rows when not join-pushed (BKA))
+--echo #
+--disable_query_log
+--eval select sum(val) - $old_val as SPJ_rows_returned from ndbinfo.counters where block_name="DBSPJ" and counter_name = "SCAN_ROWS_RETURNED"
+--enable_query_log
+
+
+##### Same test case with outer join:
+#
+# Should stil evaluate t1 join t2 first.
+# A non-match on t2 will eliminate the inner joined t1 rows.
+# Thus, t1 left join t3 may be skipped for t1 rows not having t2 matches
+#
+let $query=
+select straight_join *
+from t as t1
+  inner join t as t2 on t2.a = t1.k
+  left join t as t3 on t3.k = t1.k;
+
+--replace_regex /  \(cost=.*//
+eval explain format=tree $query;
+
+let $old_val = query_get_value(select sum(val) as Value from ndbinfo.counters where block_name='DBSPJ' and counter_name = 'SCAN_ROWS_RETURNED', Value, 1);
+
+--disable_result_log
+eval $query;
+--enable_result_log
+
+--echo ############
+--echo # As above, t1 inner join t2 is evaluated first
+--echo # - 2 x 9 rows from join(t1,t2)
+--echo # - Only the 3 matching t1 rows are requested from t3!
+--echo # -> still 21 rows (and still 0 *SPJ* rows when not join-pushed (BKA))
+--echo #
+--disable_query_log
+--eval select sum(val) - $old_val as SPJ_rows_returned from ndbinfo.counters where block_name="DBSPJ" and counter_name = "SCAN_ROWS_RETURNED";
+--enable_query_log
+
+
+##### Same test case with outer join evaluated before inner join:
+#
+# There is a legacy limitation in the SPJ API protocol, where scans need
+# to be evaluated in the same order as specified in the optimizer table order.
+# Test case verify that we do *not* skip t3 rows in these cases.
+# (As t1 left join t2 will not eliminate non matching t1 rows and we cant evaluate
+#  t1 inner join t3 first due to legacy limitation.)
+#
+let $query=
+select straight_join *
+from t as t1
+  left join t as t2 on t2.a = t1.k
+  inner join t as t3 on t3.k = t1.k;
+
+--replace_regex /  \(cost=.*//
+eval explain format=tree $query;
+
+let $old_val = query_get_value(select sum(val) as Value from ndbinfo.counters where block_name='DBSPJ' and counter_name = 'SCAN_ROWS_RETURNED', Value, 1);
+
+--disable_result_log
+eval $query;
+--enable_result_log
+
+--echo ############
+--echo # Verify that all 3 x 9 rows were returned from SPJ:
+--echo # - 2 x 9 rows from t1 outer join t2
+--echo #   (No t1-match elimination in an outer-join)
+--echo # - 9 rows from t1 inner join t3
+--echo # -> 27 rows
+--echo #
+--disable_query_log
+--eval select sum(val) - $old_val as SPJ_rows_returned from ndbinfo.counters where block_name="DBSPJ" and counter_name = "SCAN_ROWS_RETURNED"
+--enable_query_log
+
+drop table t;
+
 
 ########################################
 # Verify counters for entire test:

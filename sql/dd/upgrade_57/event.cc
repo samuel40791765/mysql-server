@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -26,17 +26,16 @@
 #include <sys/types.h>
 
 #include "lex_string.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "my_base.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_sys.h"
 #include "my_time.h"
 #include "my_user.h"  // parse_user
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/my_loglevel.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
@@ -66,6 +65,7 @@
 #include "sql/transaction.h"  // trans_commit
 #include "sql/tztime.h"       // my_tz_find
 #include "sql_string.h"
+#include "string_with_len.h"
 #include "thr_lock.h"
 
 namespace dd {
@@ -568,7 +568,7 @@ bool migrate_events_to_dd(THD *thd) {
   MEM_ROOT records_mem_root;
   Thd_mem_root_guard root_guard(thd, &records_mem_root);
 
-  TABLE_LIST tables("mysql", "event", TL_READ);
+  Table_ref tables("mysql", "event", TL_READ);
   auto table_list = &tables;
 
   if (open_and_lock_tables(thd, table_list, flags, &prelocking_strategy)) {

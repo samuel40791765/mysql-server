@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -204,8 +204,9 @@ bool Sql_cmd_call::execute_inner(THD *thd) {
     if (sp->is_not_allowed_in_function(where)) return true;
   }
 
-  if (mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_STORED_PROGRAM_EXECUTE),
-                         proc_name->m_db.str, proc_name->m_name.str, nullptr))
+  if (mysql_event_tracking_stored_program_notify(
+          thd, AUDIT_EVENT(EVENT_TRACKING_STORED_PROGRAM_EXECUTE),
+          proc_name->m_db.str, proc_name->m_name.str, nullptr))
     return true;
 
   if (sp->m_flags & sp_head::MULTI_RESULTS) {
@@ -222,7 +223,7 @@ bool Sql_cmd_call::execute_inner(THD *thd) {
     thd->server_status |= SERVER_MORE_RESULTS_EXISTS;
   }
 
-  ha_rows select_limit = thd->variables.select_limit;
+  const ha_rows select_limit = thd->variables.select_limit;
   thd->variables.select_limit = HA_POS_ERROR;
 
   /*
@@ -232,7 +233,7 @@ bool Sql_cmd_call::execute_inner(THD *thd) {
       into binlog.
     So just execute the statement.
   */
-  bool result = sp->execute_procedure(thd, proc_args);
+  const bool result = sp->execute_procedure(thd, proc_args);
 
   thd->variables.select_limit = select_limit;
 

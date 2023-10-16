@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,6 +27,7 @@
 #include "libbinlogevents/include/binlog_event.h"
 #include "m_string.h"
 #include "my_byteorder.h"
+#include "string_with_len.h"
 
 #if !defined(NDEBUG) && defined(HAVE_MYSYS)
 /* Event parser state names */

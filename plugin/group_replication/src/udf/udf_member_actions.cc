@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -22,6 +22,7 @@
 
 #include "plugin/group_replication/include/udf/udf_member_actions.h"
 #include <cinttypes>
+#include "m_string.h"
 #include "mutex_lock.h"
 #include "mysql/plugin.h"
 #include "plugin/group_replication/include/plugin.h"

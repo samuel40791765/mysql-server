@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,7 +27,8 @@
 
 #include <ndb_global.h>
 #include "portlib/ndb_compiler.h"
-#include <NdbTCP.h>
+#include "portlib/ndb_socket.h"
+#include "util/NdbSocket.h"
 
 /**
  * Output stream
@@ -82,15 +83,15 @@ public:
   void flush() override { fflush(f); }
 };
 
-class SocketOutputStream : public OutputStream {
+class SecureSocketOutputStream : public OutputStream {
 protected:
-  NDB_SOCKET_TYPE m_socket;
+  const NdbSocket & m_socket;
   unsigned m_timeout_ms;
   bool m_timedout;
   unsigned m_timeout_remain;
 public:
-  SocketOutputStream(NDB_SOCKET_TYPE socket, unsigned write_timeout_ms = 1000);
-  ~SocketOutputStream() override {}
+  SecureSocketOutputStream(const NdbSocket &, unsigned write_timeout_ms = 1000);
+  ~SecureSocketOutputStream() override {}
   bool timedout() { return m_timedout; }
   void reset_timeout() override { m_timedout= false; m_timeout_remain= m_timeout_ms;}
 
@@ -101,13 +102,24 @@ public:
   int write(const void * buf, size_t len) override;
 };
 
+class SocketOutputStream : public SecureSocketOutputStream {
+public:
+  SocketOutputStream(ndb_socket_t s, unsigned timeout_ms = 1000) :
+    SecureSocketOutputStream(m_owned_socket, timeout_ms),
+    m_owned_socket(s, NdbSocket::From::Existing) {}
+  ~SocketOutputStream() override {}
 
-class BufferedSockOutputStream : public SocketOutputStream {
+private:
+  NdbSocket m_owned_socket;
+};
+
+class BufferedSecureOutputStream : public SecureSocketOutputStream {
+protected:
   class UtilBuffer& m_buffer;
 public:
-  BufferedSockOutputStream(NDB_SOCKET_TYPE socket,
-                           unsigned write_timeout_ms = 1000);
-  ~BufferedSockOutputStream() override;
+  BufferedSecureOutputStream(const NdbSocket & socket,
+                             unsigned write_timeout_ms = 1000);
+  ~BufferedSecureOutputStream() override;
 
   int print(const char * fmt, ...) override
     ATTRIBUTE_FORMAT(printf, 2, 3);
@@ -118,6 +130,17 @@ public:
   void flush() override;
 };
 
+class BufferedSockOutputStream : public BufferedSecureOutputStream {
+public:
+  BufferedSockOutputStream(ndb_socket_t s, unsigned timeout_msec = 1000) :
+    BufferedSecureOutputStream(m_owned_socket, timeout_msec),
+    m_owned_socket(s, NdbSocket::From::Existing) {}
+
+  ~BufferedSockOutputStream() override {}
+private:
+  NdbSocket m_owned_socket;
+};
+
 
 class NullOutputStream : public OutputStream {
 public:
@@ -125,7 +148,7 @@ public:
   ~NullOutputStream() override {}
   int print(const char * /* unused */, ...) override { return 1;}
   int println(const char * /* unused */, ...) override { return 1;}
-  int write(const void * buf, size_t len) override { return 1;}
+  int write(const void * /*buf*/, size_t /*len*/) override { return 1;}
 };
 
 class StaticBuffOutputStream : public OutputStream

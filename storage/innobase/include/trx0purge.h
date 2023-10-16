@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -33,7 +33,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef trx0purge_h
 #define trx0purge_h
 
-#include <unordered_set>
 #include "fil0fil.h"
 #include "mtr0mtr.h"
 #include "page0page.h"
@@ -322,6 +321,7 @@ struct Tablespace {
         m_space_name(),
         m_file_name(),
         m_log_file_name(),
+        m_log_file_name_old(),
         m_rsegs() {}
 
   /** Copy Constructor
@@ -334,6 +334,7 @@ struct Tablespace {
         m_space_name(),
         m_file_name(),
         m_log_file_name(),
+        m_log_file_name_old(),
         m_rsegs() {
     ut_ad(m_id == 0 || is_reserved(m_id));
 
@@ -362,6 +363,11 @@ struct Tablespace {
     if (m_log_file_name != nullptr) {
       ut::free(m_log_file_name);
       m_log_file_name = nullptr;
+    }
+
+    if (m_log_file_name_old != nullptr) {
+      ut::free(m_log_file_name_old);
+      m_log_file_name_old = nullptr;
     }
 
     /* Clear the cached rollback segments.  */
@@ -422,9 +428,10 @@ struct Tablespace {
   }
 
   /** Build a log file name based on space_id
-  @param[in]    space_id        id of the undo tablespace.
+  @param[in]  space_id  id of the undo tablespace.
+  @param[in]  location  directory location of the file.
   @return DB_SUCCESS or error code */
-  char *make_log_file_name(space_id_t space_id);
+  char *make_log_file_name(space_id_t space_id, const char *location);
 
   /** Get the undo log filename. Make it if not yet made.
   NOTE: This is only called from stack objects so there is no
@@ -433,10 +440,20 @@ struct Tablespace {
   @return tablespace filename created from the space_id */
   char *log_file_name() {
     if (m_log_file_name == nullptr) {
-      m_log_file_name = make_log_file_name(m_id);
+      m_log_file_name = make_log_file_name(m_id, srv_undo_dir);
     }
 
     return (m_log_file_name);
+  }
+
+  /** Get the old undo log filename from the srv_log_group_home_dir.
+  Make it if not yet made. */
+  char *log_file_name_old() {
+    if (m_log_file_name_old == nullptr) {
+      m_log_file_name_old = make_log_file_name(m_id, srv_log_group_home_dir);
+    }
+
+    return (m_log_file_name_old);
   }
 
   /** Get the undo tablespace ID.
@@ -630,9 +647,13 @@ struct Tablespace {
   from the space number. */
   char *m_file_name;
 
-  /** The tablespace log file name, auto-generated when needed
-  from the space number. */
+  /** The truncation log file name, auto-generated when needed
+  from the space number and the srv_undo_dir. */
   char *m_log_file_name;
+
+  /** The old truncation log file name, auto-generated when needed
+  from the space number and the srv_log_group_home_dir. */
+  char *m_log_file_name_old;
 
   /** List of rollback segments within this tablespace.
   This is not always used. Must call init_rsegs to use it. */
@@ -999,7 +1020,7 @@ struct trx_purge_t {
   bool view_active;
 
   /** Count of total tasks submitted to the task queue */
-  volatile ulint n_submitted;
+  ulint n_submitted;
 
   /** Count of total tasks completed */
   std::atomic<ulint> n_completed;
@@ -1057,8 +1078,9 @@ struct trx_purge_t {
   /** Heap for reading the undo log records */
   mem_heap_t *heap;
 
-  /** Set of all THDs allocated by the purge system. */
-  ut::unordered_set<THD *> thds;
+  /** Is the this thread related to purge? This is false by default and set to
+  true by srv_purge_coordinator_thread() and srv_worker_thread() only. */
+  static inline thread_local bool is_this_a_purge_thread{false};
 
   /** Set of all rseg queue. */
   std::vector<trx_rseg_t *> rsegs_queue;

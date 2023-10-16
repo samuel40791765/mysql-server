@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <algorithm>
+#include <array>
 #include <iomanip>
 #include <memory>
 #include <new>
@@ -40,7 +41,6 @@
 
 #include "keyring_operations_helper.h"
 #include "lex_string.h"
-#include "m_ctype.h"
 #include "m_string.h"
 #include "my_aes.h"
 #include "my_compiler.h"
@@ -48,7 +48,6 @@
 #include "my_default.h"  // check_file_permissions
 #include "my_getopt.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_rnd.h"
 #include "my_sys.h"
@@ -60,14 +59,18 @@
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
 #include "mysql/components/services/system_variable_source_type.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_file.h"
 #include "mysql/psi/mysql_memory.h"
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql/status_var.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_version.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "prealloced_array.h"
 #include "scope_guard.h"
+#include "sql-common/json_dom.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_internal.h"
 #include "sql/auth/sql_security_ctx.h"
@@ -75,7 +78,6 @@
 #include "sql/debug_sync.h"  // DEBUG_SYNC
 #include "sql/derror.h"      // ER_THD
 #include "sql/item.h"
-#include "sql/json_dom.h"
 #include "sql/log.h"
 #include "sql/mysqld.h"
 #include "sql/server_component/mysql_server_keyring_lockable_imp.h"
@@ -197,7 +199,7 @@ std::string tolower_varname(const char *name) {
 
 st_persist_var::st_persist_var() {
   if (current_thd) {
-    my_timeval tv =
+    const my_timeval tv =
         current_thd->query_start_timeval_trunc(DATETIME_MAX_DECIMALS);
     timestamp = tv.m_tv_sec * 1000000ULL + tv.m_tv_usec;
   } else
@@ -206,7 +208,7 @@ st_persist_var::st_persist_var() {
 }
 
 st_persist_var::st_persist_var(THD *thd) {
-  my_timeval tv = thd->query_start_timeval_trunc(DATETIME_MAX_DECIMALS);
+  const my_timeval tv = thd->query_start_timeval_trunc(DATETIME_MAX_DECIMALS);
   timestamp = tv.m_tv_sec * 1000000ULL + tv.m_tv_usec;
   user = thd->security_context()->user().str;
   host = thd->security_context()->host().str;
@@ -349,7 +351,7 @@ Persisted_variables_cache *Persisted_variables_cache::get_instance() {
 */
 static bool check_boolean_value(const char *value, String &bool_str) {
   bool ret = false;
-  bool result = get_bool_argument(value, &ret);
+  const bool result = get_bool_argument(value, &ret);
   if (ret) return true;
   if (result) {
     bool_str = String("ON", system_charset_info);
@@ -389,6 +391,7 @@ bool Persisted_variables_cache::set_variable(THD *thd, set_var *setvar) {
       String bool_str;
       if (setvar->value) {
         res = setvar->value->val_str(&str);
+        if (setvar->value->is_null()) is_null = true;
         if (system_var->get_var_type() == GET_BOOL) {
           if (res == nullptr ||
               check_boolean_value(res->c_ptr_quick(), bool_str)) {
@@ -431,7 +434,7 @@ bool Persisted_variables_cache::set_variable(THD *thd, set_var *setvar) {
 
     auto assign_value = [&](const char *name) -> bool {
       struct st_persist_var tmp_var(thd);
-      bool is_sensitive = system_var->is_sensitive();
+      const bool is_sensitive = system_var->is_sensitive();
 
       if (is_sensitive && !m_keyring_support_available) {
         if (!opt_persist_sensitive_variables_in_plaintext) {
@@ -446,18 +449,7 @@ bool Persisted_variables_cache::set_variable(THD *thd, set_var *setvar) {
         }
       }
 
-      /* structured variables may have basename if specified */
-      if (setvar->m_var_tracker.is_keycache_var()) {
-        std::string_view cache_name = setvar->m_var_tracker.get_keycache_name();
-        if (!cache_name.empty()) {
-          tmp_var.key.clear();
-          tmp_var.key.append(cache_name).append(".").append(name);
-        } else {
-          tmp_var.key = string(name);
-        }
-      } else {
-        tmp_var.key = string(name);
-      }
+      tmp_var.key = string(name);
       tmp_var.value = var_value;
       tmp_var.is_null = is_null;
 
@@ -683,7 +675,7 @@ bool Persisted_variables_cache::write_persist_file_v2(String &dest,
                                                       bool &clean_up) {
   clean_up = false;
   Json_object main_json_object;
-  string key_version("Version");
+  const string key_version("Version");
   Json_int value_version(static_cast<int>(File_version::VERSION_V2));
   main_json_object.add_clone(key_version.c_str(), &value_version);
 
@@ -775,12 +767,13 @@ bool Persisted_variables_cache::write_persist_file_v2(String &dest,
   Json_wrapper json_wrapper(&main_json_object);
   json_wrapper.set_alias();
   String str;
-  json_wrapper.to_string(&str, true, String().ptr());
+  json_wrapper.to_string(&str, true, String().ptr(),
+                         JsonDocumentDefaultDepthHandler);
   dest.append(str);
 
   if (encryption_success == return_status::SUCCESS) {
     /*
-      If we succeded in writing sensitive variables in blob, clear them
+      If we succeeded in writing sensitive variables in blob, clear them
       before next write operation
     */
     clean_up = true;
@@ -812,7 +805,7 @@ bool Persisted_variables_cache::flush_to_file() {
     return ret;
   }
   /*
-    Always write to backup file. Once write is successfull, rename backup
+    Always write to backup file. Once write is successful, rename backup
     file to original file.
   */
   if (open_persist_backup_file(O_CREAT | O_WRONLY)) {
@@ -823,8 +816,11 @@ bool Persisted_variables_cache::flush_to_file() {
     if (mysql_file_fputs(dest.c_ptr(), m_fd) < 0) {
       ret = true;
     }
+    DBUG_EXECUTE_IF("crash_after_write_persist_file", DBUG_SUICIDE(););
+    /* flush contents to disk immediately */
+    if (mysql_file_fflush(m_fd) != 0) ret = true;
+    if (my_sync(my_fileno(m_fd->m_file), MYF(MY_WME)) == -1) ret = true;
   }
-  DBUG_EXECUTE_IF("crash_after_write_persist_file", DBUG_SUICIDE(););
   close_persist_file();
   if (!ret) {
     DBUG_EXECUTE_IF("crash_after_close_persist_file", DBUG_SUICIDE(););
@@ -921,23 +917,32 @@ void Persisted_variables_cache::set_parse_early_sources() {
   set_persisted_options() will set the options read from persisted config file
 
   This function does nothing when --no-defaults is set or if
-  persisted_globals_load is set to false
+  persisted_globals_load is set to false.
+  Initial call to set_persisted_options(false) is needed to initialize
+  m_persisted_dynamic_plugin_variables set, so that next subsequent
+  set_persisted_options(true) calls will work with correct state.
 
    @param [in] plugin_options      Flag which tells what options are being set.
                                    If set to false non dynamically-registered
                                    system variables are set
                                    else plugin- and component-registered
                                    variables are set.
+   @param [in] target_var_name     If not-null the name of variable to try and
+                                   set from the persisted cache values
+   @param [in] target_var_name_length length of target_var_name
   @return Error state
     @retval true An error occurred
     @retval false Success
 */
-bool Persisted_variables_cache::set_persisted_options(bool plugin_options) {
+bool Persisted_variables_cache::set_persisted_options(
+    bool plugin_options, const char *target_var_name,
+    int target_var_name_length) {
   THD *thd;
-  bool result = false, new_thd = false;
+  const bool result = false;
+  bool new_thd = false;
   const std::vector<std::string> priv_list = {
-      "ENCRYPTION_KEY_ADMIN", "ROLE_ADMIN", "SYSTEM_VARIABLES_ADMIN",
-      "AUDIT_ADMIN"};
+      "ENCRYPTION_KEY_ADMIN", "ROLE_ADMIN",          "SYSTEM_VARIABLES_ADMIN",
+      "AUDIT_ADMIN",          "TELEMETRY_LOG_ADMIN", "CONNECTION_ADMIN"};
   const ulong static_priv_list = (SUPER_ACL | FILE_ACL);
   Sctx_ptr<Security_context> ctx;
   /*
@@ -1008,9 +1013,33 @@ bool Persisted_variables_cache::set_persisted_options(bool plugin_options) {
 
   /* create a sorted set of values sorted by timestamp */
   std::multiset<st_persist_var, sort_tv_by_timestamp> sorted_vars;
-  sorted_vars.insert(persist_variables.begin(), persist_variables.end());
-  sorted_vars.insert(persist_sensitive_variables.begin(),
-                     persist_sensitive_variables.end());
+
+  /*
+    if a target variable is specified try to find and set only the variable
+    and not every value in the persist file
+  */
+  if (target_var_name != nullptr && target_var_name_length > 0 &&
+      *target_var_name != 0) {
+    auto it = std::find_if(
+        persist_variables.begin(), persist_variables.end(),
+        [target_var_name, target_var_name_length](st_persist_var const &s) {
+          return !strncmp(s.key.c_str(), target_var_name,
+                          target_var_name_length);
+        });
+    if (it != persist_variables.end()) sorted_vars.insert(*it);
+    auto sensitive_it = std::find_if(
+        persist_sensitive_variables.begin(), persist_sensitive_variables.end(),
+        [target_var_name, target_var_name_length](st_persist_var const &s) {
+          return !strncmp(s.key.c_str(), target_var_name,
+                          target_var_name_length);
+        });
+    if (sensitive_it != persist_sensitive_variables.end())
+      sorted_vars.insert(*sensitive_it);
+  } else {
+    sorted_vars.insert(persist_variables.begin(), persist_variables.end());
+    sorted_vars.insert(persist_sensitive_variables.begin(),
+                       persist_sensitive_variables.end());
+  }
 
   for (const st_persist_var &iter : sorted_vars) {
     const std::string &var_name = iter.key;
@@ -1129,6 +1158,25 @@ bool Persisted_variables_cache::set_persisted_options(bool plugin_options) {
 
       if (set_source(m_persisted_dynamic_variables))
         (void)set_source(m_persisted_dynamic_sensitive_variables);
+
+      /*
+        We need to keep the currently set persisted variable into the in-memory
+        copy for plugin vars for further UNINSTALL followed by INSTALL sans
+        restart.
+      */
+      if (sysvar->cast_pluginvar() && !plugin_options) {
+        auto &plugin_vars =
+            m_persisted_dynamic_sensitive_plugin_variables.find(iter) ==
+                    m_persisted_dynamic_sensitive_plugin_variables.end()
+                ? m_persisted_dynamic_plugin_variables
+                : m_persisted_dynamic_sensitive_plugin_variables;
+#ifndef NDEBUG
+        auto ret =
+#endif
+            plugin_vars.insert(iter);
+        // the value should not be present in the plugins copy
+        assert(ret.second);
+      }
 
       return false;
     };
@@ -1792,6 +1840,37 @@ void Persisted_variables_cache::load_aliases() {
 }
 
 /**
+  Function to recategorize variables based on changes in their properties.
+
+  It is possible that during the course of development, we reclassify
+  certain variables. Such an action may have an impact on when and how
+  the persisted values of such variables are used/applied.
+
+  If such variables are persisted using previous versions of the server
+  binary, it is important that we move them to correct in-memory
+  containers so that,
+  1. Variables will be handled as required during bootstrap
+  2. Upon next change to persisted option file, variables will be
+     placed into appropriate JSON arrays.
+*/
+void Persisted_variables_cache::handle_option_type_change() {
+  std::array<std::string, 1> dynamic_to_parse_early_static = {"ssl_fips_mode"};
+
+  for (auto one : dynamic_to_parse_early_static) {
+    auto find_variable = [&one](st_persist_var const &s) -> bool {
+      return s.key == one;
+    };
+    auto it = std::find_if(m_persisted_dynamic_variables.begin(),
+                           m_persisted_dynamic_variables.end(), find_variable);
+    if (it != m_persisted_dynamic_variables.end()) {
+      st_persist_var variable_info = *it;
+      m_persisted_static_parse_early_variables[one] = variable_info;
+      m_persisted_dynamic_variables.erase(it);
+    }
+  }
+}
+
+/**
   read_persist_file() reads the persisted config file
 
   This function does following:
@@ -1816,8 +1895,6 @@ int Persisted_variables_cache::read_persist_file() {
   auto read_file = [&]() -> bool {
     string parsed_value;
     char buff[4096] = {0};
-    size_t offset = 0;
-    const char *error = nullptr;
     do {
       /* Read the persisted config file into a string buffer */
       parsed_value.append(buff);
@@ -1825,8 +1902,9 @@ int Persisted_variables_cache::read_persist_file() {
     } while (mysql_file_fgets(buff, sizeof(buff) - 1, m_fd));
     close_persist_file();
     /* parse the file contents to check if it is in json format or not */
-    json = Json_dom::parse(parsed_value.c_str(), parsed_value.length(), &error,
-                           &offset);
+    json = Json_dom::parse(
+        parsed_value.c_str(), parsed_value.length(),
+        [](const char *, size_t) {}, JsonDocumentDefaultDepthHandler);
     if (!json.get()) return true;
     return false;
   };
@@ -1842,8 +1920,11 @@ int Persisted_variables_cache::read_persist_file() {
       LogErr(ERROR_LEVEL, ER_JSON_PARSE_ERROR);
       return 1;
     }
+  } else {
+    /* backup file was read successfully, thus rename it to original. */
+    my_rename(m_persist_backup_filename.c_str(), m_persist_filename.c_str(),
+              MYF(MY_WME));
   }
-
   Json_object *json_obj = down_cast<Json_object *>(json.get());
   /* Check file version */
   Json_dom *version_dom = json_obj->get("Version");
@@ -1874,7 +1955,10 @@ int Persisted_variables_cache::read_persist_file() {
       break;
   };
 
-  if (!retval) load_aliases();
+  if (!retval) {
+    load_aliases();
+    handle_option_type_change();
+  }
   return retval;
 }
 
@@ -1962,20 +2046,23 @@ err:
   @param [in] argv                      Pointer to argv of original program
   @param [in] arg_separator_added       This flag tells whether arg separator
                                         has already been added or not
-  @param [in] plugin_options            This flag tells wether options are
+  @param [in] plugin_options            This flag tells whether options are
                                         handled during plugin install.
                                         If set to true options are handled
                                         as part of
-  install plugin.
+  @param [in] root                      The memory root to use for the
+                                        allocations. Null if you want to use
+                                        the PV cache root(s). install plugin.
 
   @return 0 Success
   @return 1 Failure
 */
 bool Persisted_variables_cache::append_read_only_variables(
     int *argc, char ***argv, bool arg_separator_added /* = false */,
-    bool plugin_options /* = false */) {
+    bool plugin_options /* = false */, MEM_ROOT *root /* = nullptr */) {
   Prealloced_array<char *, 100> my_args(key_memory_persisted_variables);
-  MEM_ROOT alloc{key_memory_persisted_variables, 512};
+  MEM_ROOT local_alloc{key_memory_persisted_variables, 512};
+  MEM_ROOT &alloc = root ? *root : local_alloc;
 
   if (plugin_options == false) keyring_support_available();
 
@@ -2007,7 +2094,7 @@ bool Persisted_variables_cache::append_read_only_variables(
    reasd only options to be appendded
   */
   if (my_args.size()) {
-    unsigned int extra_args = (arg_separator_added == false) ? 2 : 1;
+    const unsigned int extra_args = (arg_separator_added == false) ? 2 : 1;
     char **res = new (&alloc) char *[my_args.size() + *argc + extra_args];
     if (res == nullptr) goto err;
     memset(res, 0, (sizeof(char *) * (my_args.size() + *argc + extra_args)));
@@ -2029,11 +2116,13 @@ bool Persisted_variables_cache::append_read_only_variables(
     res[my_args.size() + *argc + (extra_args - 1)] = nullptr; /* last null */
     (*argc) += (int)my_args.size() + (extra_args - 1);
     *argv = res;
-    if (plugin_options)
-      ro_persisted_plugin_argv_alloc =
-          std::move(alloc);  // Possibly overwrite previous.
-    else
-      ro_persisted_argv_alloc = std::move(alloc);
+    if (!root) {
+      if (plugin_options)
+        ro_persisted_plugin_argv_alloc =
+            std::move(alloc);  // Possibly overwrite previous.
+      else
+        ro_persisted_argv_alloc = std::move(alloc);
+    }
     return false;
   }
   return false;
@@ -2061,7 +2150,7 @@ bool Persisted_variables_cache::reset_persisted_variables(THD *thd,
                                                           const char *name,
                                                           bool if_exists) {
   bool result = false, found = false;
-  bool reset_all = (name ? 0 : 1);
+  const bool reset_all = (name ? 0 : 1);
   /* update on m_persisted_dynamic_variables/m_persisted_static_variables must
    * be thread safe */
   lock();
@@ -2298,7 +2387,7 @@ bool Persisted_variables_cache::get_file_encryption_key(
     return retval;
   }
 
-  /* First retrieve mater key or create one if it's not available */
+  /* First retrieve master key or create one if it's not available */
   unsigned char *secret = nullptr;
   size_t secret_length = 0;
   char *secret_type = nullptr;
@@ -2358,7 +2447,7 @@ bool Persisted_variables_cache::get_file_encryption_key(
       return retval;
 
     /* encrypt file key */
-    size_t encrypted_key_length =
+    const size_t encrypted_key_length =
         (file_key_length / MY_AES_BLOCK_SIZE) * MY_AES_BLOCK_SIZE;
     std::unique_ptr<unsigned char[]> encrypted_key =
         std::make_unique<unsigned char[]>(encrypted_key_length);
@@ -2382,8 +2471,8 @@ bool Persisted_variables_cache::get_file_encryption_key(
     retval = false;
   } else {
     /* File key exists, decrypt it */
-    std::string unhex_key = from_hex(m_key_info.m_file_key);
-    std::string unhex_iv = from_hex(m_key_info.m_file_key_iv);
+    const std::string unhex_key = from_hex(m_key_info.m_file_key);
+    const std::string unhex_iv = from_hex(m_key_info.m_file_key_iv);
 
     std::unique_ptr<unsigned char[]> decrypted_file_key =
         std::make_unique<unsigned char[]>(unhex_key.length());
@@ -2421,7 +2510,7 @@ Persisted_variables_cache::encrypt_sensitive_variables() {
 
   return_status retval = return_status::ERROR;
   /*
-    Presense of blob/iv indicates that they could not be parsed at the
+    Presence of blob/iv indicates that they could not be parsed at the
     beginning.
   */
   if (m_sensitive_variables_blob.length() != 0 || m_iv.length() != 0)
@@ -2446,12 +2535,14 @@ Persisted_variables_cache::encrypt_sensitive_variables() {
   Json_wrapper json_wrapper(&sensitive_variables_object);
   json_wrapper.set_alias();
   String str;
-  json_wrapper.to_string(&str, true, String().ptr());
+  json_wrapper.to_string(&str, true, String().ptr(),
+                         JsonDocumentDefaultDepthHandler);
 
   /* Encrypt sensitive variables */
   unsigned char iv[16];
   if (my_rand_buffer(iv, sizeof(iv))) return retval;
-  size_t data_len = (str.length() / MY_AES_BLOCK_SIZE + 1) * MY_AES_BLOCK_SIZE;
+  const size_t data_len =
+      (str.length() / MY_AES_BLOCK_SIZE + 1) * MY_AES_BLOCK_SIZE;
   std::unique_ptr<unsigned char[]> encrypted_buffer =
       std::make_unique<unsigned char[]>(data_len);
   if (encrypted_buffer.get() == nullptr) return retval;
@@ -2497,8 +2588,8 @@ Persisted_variables_cache::decrypt_sensitive_variables() {
   if (get_file_encryption_key(file_key, file_key_length, false)) return retval;
 
   /* Convert from hex to binary */
-  std::string unhex_iv = from_hex(m_iv);
-  std::string unhex_data = from_hex(m_sensitive_variables_blob);
+  const std::string unhex_iv = from_hex(m_iv);
+  const std::string unhex_data = from_hex(m_sensitive_variables_blob);
 
   /* Decrypt the blob */
   std::unique_ptr<unsigned char[]> decrypted_data =
@@ -2518,11 +2609,9 @@ Persisted_variables_cache::decrypt_sensitive_variables() {
   }
 
   /* Parse the decrypted blob */
-  const char *errormsg = nullptr;
-  size_t offset = 0;
-  std::unique_ptr<Json_dom> json(
-      Json_dom::parse(reinterpret_cast<char *>(decrypted_data.get()), error,
-                      &errormsg, &offset));
+  std::unique_ptr<Json_dom> json(Json_dom::parse(
+      reinterpret_cast<char *>(decrypted_data.get()), error,
+      [](const char *, size_t) {}, JsonDocumentDefaultDepthHandler));
   if (!json.get()) return retval;
 
   if (json.get()->json_type() != enum_json_type::J_OBJECT) return retval;
@@ -2546,7 +2635,7 @@ Persisted_variables_cache::decrypt_sensitive_variables() {
 
 /**
   We cache keyring support status just after reading manifest file.
-  This is required because in the absense of a keyring component,
+  This is required because in the absence of a keyring component,
   keyring plugin may provide some of the services through
   daemon proxy keyring.
 

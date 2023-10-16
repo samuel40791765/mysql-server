@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -85,7 +85,8 @@ class MySQL_thread {
  protected:
   /** Register the thread with the server */
   void preamble() {
-    my_thread_init();
+    const bool ret = my_thread_init();
+    ut_a(!ret);
 
 #if defined(UNIV_PFS_THREAD) && !defined(UNIV_HOTBACKUP)
     if (m_pfs_key.m_value != PFS_NOT_INSTRUMENTED.m_value) {

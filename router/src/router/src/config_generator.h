@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -49,10 +49,6 @@
 namespace mysql_harness {
 class Path;
 }
-
-#ifdef FRIEND_TEST
-class TestConfigGenerator;
-#endif
 
 namespace mysqlrouter {
 class ClusterMetadata;
@@ -209,7 +205,7 @@ class ConfigGenerator {
                        const std::string &bootstrap_socket);
 
   /**
-   * init() calls this to connect to metadata server; sets mysql_ (conection)
+   * init() calls this to connect to metadata server; sets mysql_ (connection)
    * object.
    *
    * @param u parsed server URL (--bootstrap|-B argument)
@@ -386,7 +382,8 @@ class ConfigGenerator {
 
   /** @brief Creates Router account (low-level function)
    *
-   * Creates Router accout using CREATE USER [IF NOT EXISTS] ang give it GRANTs.
+   * Creates Router account using CREATE USER [IF NOT EXISTS] and gives it
+   * GRANTs.
    *
    * @param username Router account to be created - the username part
    * @param hostnames Router accounts to be created - the hostnames part
@@ -427,8 +424,8 @@ class ConfigGenerator {
                                 const std::set<std::string> &hostnames);
 
   ExistingConfigOptions get_options_from_config_if_it_exists(
-      const std::string &config_file_path, const std::string &cluster_name,
-      bool forcing_overwrite);
+      const std::string &config_file_path,
+      const mysqlrouter::ClusterInfo &cluster_info, bool forcing_overwrite);
 
   void update_router_info(uint32_t router_id, const Options &options);
 
@@ -466,9 +463,7 @@ class ConfigGenerator {
                            const std::string &hostname_override, bool force);
 
   void verify_router_account(const std::string &username,
-                             const std::string &password,
-                             const std::string &primary_cluster_name,
-                             bool strict);
+                             const std::string &password, bool strict);
 
   /**
    * @brief Prepare X.509 certificates for the Router.
@@ -506,7 +501,7 @@ class ConfigGenerator {
       const mysql_harness::Directory &dir) const;
 
  private:
-  mysql_harness::UniquePtr<MySQLSession> mysql_;
+  std::unique_ptr<MySQLSession> mysql_;
   std::unique_ptr<ClusterMetadata> metadata_;
   int connect_timeout_;
   int read_timeout_;
@@ -547,10 +542,6 @@ class ConfigGenerator {
 #endif
 
   mysqlrouter::MetadataSchemaVersion schema_version_;
-
-#ifdef FRIEND_TEST
-  friend class ::TestConfigGenerator;
-#endif
 };
 }  // namespace mysqlrouter
 #endif  // ROUTER_CONFIG_GENERATOR_INCLUDED

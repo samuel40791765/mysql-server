@@ -62,7 +62,7 @@ test/t1	5	0	1	3	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 c1	0	13	16711934	0	0	0
 c3	1	13	16711934	0	0	0
-c2_dropped_v1	5	13	16711934	0	0	1
+!hidden!_dropped_v1_p4_c2	5	13	16711934	0	0	1
 # DD Metadata of table
 NAME	SE_PRIVATE_DATA
 t1	NULL
@@ -73,7 +73,7 @@ c3	2	MYSQL_TYPE_STRING	0	Visible	physical_pos=5;table_id=TABLE_ID;
 DB_ROW_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	4	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	5	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c2_dropped_v1	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
+!hidden!_dropped_v1_p4_c2	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
 select * from t1;
 c1	c3
 r1c1	r1c3
@@ -166,7 +166,7 @@ test/t1	5	0	1	3	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 c1	0	13	16711934	0	0	0
 c3	1	13	16711934	0	0	0
-c2_dropped_v1	5	13	16711934	0	0	1
+!hidden!_dropped_v1_p4_c2	5	13	16711934	0	0	1
 # DD Metadata of table
 NAME	SE_PRIVATE_DATA
 t1	NULL
@@ -177,7 +177,7 @@ c3	2	MYSQL_TYPE_STRING	0	Visible	physical_pos=5;table_id=TABLE_ID;
 DB_ROW_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	4	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	5	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c2_dropped_v1	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
+!hidden!_dropped_v1_p4_c2	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
 select * from t1;
 c1	c3
 r1c1	r1c3
@@ -1443,7 +1443,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -1456,7 +1456,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -1464,7 +1464,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -1472,7 +1472,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 5	100
@@ -1485,7 +1485,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -1498,7 +1498,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -1506,7 +1506,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -1514,7 +1514,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 15	100
@@ -1526,7 +1526,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -1539,7 +1539,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -1547,7 +1547,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -1555,7 +1555,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 15	100
@@ -1566,7 +1566,6 @@ a	1	MYSQL_TYPE_LONG	1	Visible	table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -1604,7 +1603,6 @@ a	1	MYSQL_TYPE_LONG	1	Visible	table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -1687,7 +1685,7 @@ c5	4	MYSQL_TYPE_LONG	0	Visible	default_null=1;physical_pos=7;table_id=TABLE_ID;v
 DB_ROW_ID	5	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	6	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	7	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c3_dropped_v2	8	MYSQL_TYPE_LONG	0	SE	physical_pos=5;version_dropped=2;
+!hidden!_dropped_v2_p5_c3	8	MYSQL_TYPE_LONG	0	SE	physical_pos=5;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p0	100	NULL
@@ -1703,7 +1701,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p1	7	0	2	4	4	5
@@ -1713,7 +1711,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	7	0	2	4	4	5
@@ -1723,7 +1721,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	7	0	2	4	4	5
@@ -1733,7 +1731,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 ALTER TABLE t1 TRUNCATE partition p0, p1, p2, p3;
 # DD Metadata of columns in table
 NAME	ORDINAL_POSITION	TYPE	HAS_NO_DEFAULT	HIDDEN	SE_PRIVATE_DATA
@@ -1744,7 +1742,6 @@ c5	4	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_ROW_ID	5	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_TRX_ID	6	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	7	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-c3_dropped_v2	8	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p0	100	NULL
@@ -1798,6 +1795,115 @@ SET GLOBAL innodb_purge_stop_now=ON;
 Update t1 set c2="r122222", c4="c44";
 alter table t1 drop column c2, algorithm=instant;
 SET GLOBAL innodb_purge_run_now=ON;
+DROP TABLE t1;
+# Scenario 66
+# Inplace update is failing
+# INSTANT ADD and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=REDUNDANT;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 add column c4 char(10) after c1, ALGORITHM=INSTANT;
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+Insert into t1 values ("r2c1", "r2c4", "r2c2", "r2c3");
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+r2c1	r2c4	r2c2	r2c3
+# Disable flush to make sure REDO is applied after restart
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r112	r1c3
+r2c1	r2c4	r212	r2c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r112	r1c3
+r2c1	r2c4	r212	r2c3
+DROP TABLE t1;
+# INSTANT DROP and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=REDUNDANT;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 drop column c1, algorithm=instant;
+Insert into t1 values ("r2c2", "r2c3");
+Select * from t1;
+c2	c3
+r1c2	r1c3
+r2c2	r2c3
+SET GLOBAL innodb_log_checkpoint_now = ON;
+SET GLOBAL innodb_page_cleaner_disabled_debug = 1;
+SET GLOBAL innodb_dict_stats_disabled_debug = 1;
+SET GLOBAL innodb_master_thread_disabled_debug = 1;
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Select * from t1;
+c2	c3
+r112	r1c3
+r212	r2c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c2	c3
+r112	r1c3
+r212	r2c3
+DROP TABLE t1;
+# INSTANT ADD and DROP and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=REDUNDANT;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 add column c4 char(10) after c1, ALGORITHM=INSTANT;
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+Insert into t1 values ("r2c1", "r2c4", "r2c2", "r2c3");
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+r2c1	r2c4	r2c2	r2c3
+Alter table t1 drop column c1, algorithm=instant;
+Select * from t1;
+c4	c2	c3
+NULL	r1c2	r1c3
+r2c4	r2c2	r2c3
+Insert into t1 values ("r3c4", "r3c2", "r3c3");
+Select * from t1;
+c4	c2	c3
+NULL	r1c2	r1c3
+r2c4	r2c2	r2c3
+r3c4	r3c2	r3c3
+SET GLOBAL innodb_log_checkpoint_now = ON;
+SET GLOBAL innodb_page_cleaner_disabled_debug = 1;
+SET GLOBAL innodb_dict_stats_disabled_debug = 1;
+SET GLOBAL innodb_master_thread_disabled_debug = 1;
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Update t1 set c2="r312" where c2="r3c2";
+Select * from t1;
+c4	c2	c3
+NULL	r112	r1c3
+r2c4	r212	r2c3
+r3c4	r312	r3c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c4	c2	c3
+NULL	r112	r1c3
+r2c4	r212	r2c3
+r3c4	r312	r3c3
 DROP TABLE t1;
 ###########
 # CLEANUP #
@@ -1866,7 +1972,7 @@ test/t1	5	0	1	3	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 c1	0	13	16711934	0	0	0
 c3	1	13	16711934	0	0	0
-c2_dropped_v1	5	13	16711934	0	0	1
+!hidden!_dropped_v1_p4_c2	5	13	16711934	0	0	1
 # DD Metadata of table
 NAME	SE_PRIVATE_DATA
 t1	NULL
@@ -1877,7 +1983,7 @@ c3	2	MYSQL_TYPE_STRING	0	Visible	physical_pos=5;table_id=TABLE_ID;
 DB_ROW_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	4	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	5	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c2_dropped_v1	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
+!hidden!_dropped_v1_p4_c2	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
 select * from t1;
 c1	c3
 r1c1	r1c3
@@ -1970,7 +2076,7 @@ test/t1	5	0	1	3	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 c1	0	13	16711934	0	0	0
 c3	1	13	16711934	0	0	0
-c2_dropped_v1	5	13	16711934	0	0	1
+!hidden!_dropped_v1_p4_c2	5	13	16711934	0	0	1
 # DD Metadata of table
 NAME	SE_PRIVATE_DATA
 t1	NULL
@@ -1981,7 +2087,7 @@ c3	2	MYSQL_TYPE_STRING	0	Visible	physical_pos=5;table_id=TABLE_ID;
 DB_ROW_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	4	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	5	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c2_dropped_v1	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
+!hidden!_dropped_v1_p4_c2	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
 select * from t1;
 c1	c3
 r1c1	r1c3
@@ -3247,7 +3353,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -3260,7 +3366,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -3268,7 +3374,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -3276,7 +3382,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 5	100
@@ -3289,7 +3395,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -3302,7 +3408,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -3310,7 +3416,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -3318,7 +3424,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 15	100
@@ -3330,7 +3436,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -3343,7 +3449,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -3351,7 +3457,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -3359,7 +3465,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 15	100
@@ -3370,7 +3476,6 @@ a	1	MYSQL_TYPE_LONG	1	Visible	table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -3408,7 +3513,6 @@ a	1	MYSQL_TYPE_LONG	1	Visible	table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -3491,7 +3595,7 @@ c5	4	MYSQL_TYPE_LONG	0	Visible	default_null=1;physical_pos=7;table_id=TABLE_ID;v
 DB_ROW_ID	5	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	6	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	7	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c3_dropped_v2	8	MYSQL_TYPE_LONG	0	SE	physical_pos=5;version_dropped=2;
+!hidden!_dropped_v2_p5_c3	8	MYSQL_TYPE_LONG	0	SE	physical_pos=5;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p0	100	NULL
@@ -3507,7 +3611,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p1	7	0	2	4	4	5
@@ -3517,7 +3621,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	7	0	2	4	4	5
@@ -3527,7 +3631,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	7	0	2	4	4	5
@@ -3537,7 +3641,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 ALTER TABLE t1 TRUNCATE partition p0, p1, p2, p3;
 # DD Metadata of columns in table
 NAME	ORDINAL_POSITION	TYPE	HAS_NO_DEFAULT	HIDDEN	SE_PRIVATE_DATA
@@ -3548,7 +3652,6 @@ c5	4	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_ROW_ID	5	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_TRX_ID	6	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	7	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-c3_dropped_v2	8	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p0	100	NULL
@@ -3602,6 +3705,115 @@ SET GLOBAL innodb_purge_stop_now=ON;
 Update t1 set c2="r122222", c4="c44";
 alter table t1 drop column c2, algorithm=instant;
 SET GLOBAL innodb_purge_run_now=ON;
+DROP TABLE t1;
+# Scenario 66
+# Inplace update is failing
+# INSTANT ADD and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=DYNAMIC;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 add column c4 char(10) after c1, ALGORITHM=INSTANT;
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+Insert into t1 values ("r2c1", "r2c4", "r2c2", "r2c3");
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+r2c1	r2c4	r2c2	r2c3
+# Disable flush to make sure REDO is applied after restart
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r112	r1c3
+r2c1	r2c4	r212	r2c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r112	r1c3
+r2c1	r2c4	r212	r2c3
+DROP TABLE t1;
+# INSTANT DROP and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=DYNAMIC;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 drop column c1, algorithm=instant;
+Insert into t1 values ("r2c2", "r2c3");
+Select * from t1;
+c2	c3
+r1c2	r1c3
+r2c2	r2c3
+SET GLOBAL innodb_log_checkpoint_now = ON;
+SET GLOBAL innodb_page_cleaner_disabled_debug = 1;
+SET GLOBAL innodb_dict_stats_disabled_debug = 1;
+SET GLOBAL innodb_master_thread_disabled_debug = 1;
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Select * from t1;
+c2	c3
+r112	r1c3
+r212	r2c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c2	c3
+r112	r1c3
+r212	r2c3
+DROP TABLE t1;
+# INSTANT ADD and DROP and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=DYNAMIC;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 add column c4 char(10) after c1, ALGORITHM=INSTANT;
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+Insert into t1 values ("r2c1", "r2c4", "r2c2", "r2c3");
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+r2c1	r2c4	r2c2	r2c3
+Alter table t1 drop column c1, algorithm=instant;
+Select * from t1;
+c4	c2	c3
+NULL	r1c2	r1c3
+r2c4	r2c2	r2c3
+Insert into t1 values ("r3c4", "r3c2", "r3c3");
+Select * from t1;
+c4	c2	c3
+NULL	r1c2	r1c3
+r2c4	r2c2	r2c3
+r3c4	r3c2	r3c3
+SET GLOBAL innodb_log_checkpoint_now = ON;
+SET GLOBAL innodb_page_cleaner_disabled_debug = 1;
+SET GLOBAL innodb_dict_stats_disabled_debug = 1;
+SET GLOBAL innodb_master_thread_disabled_debug = 1;
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Update t1 set c2="r312" where c2="r3c2";
+Select * from t1;
+c4	c2	c3
+NULL	r112	r1c3
+r2c4	r212	r2c3
+r3c4	r312	r3c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c4	c2	c3
+NULL	r112	r1c3
+r2c4	r212	r2c3
+r3c4	r312	r3c3
 DROP TABLE t1;
 ###########
 # CLEANUP #
@@ -3670,7 +3882,7 @@ test/t1	5	0	1	3	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 c1	0	13	16711934	0	0	0
 c3	1	13	16711934	0	0	0
-c2_dropped_v1	5	13	16711934	0	0	1
+!hidden!_dropped_v1_p4_c2	5	13	16711934	0	0	1
 # DD Metadata of table
 NAME	SE_PRIVATE_DATA
 t1	NULL
@@ -3681,7 +3893,7 @@ c3	2	MYSQL_TYPE_STRING	0	Visible	physical_pos=5;table_id=TABLE_ID;
 DB_ROW_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	4	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	5	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c2_dropped_v1	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
+!hidden!_dropped_v1_p4_c2	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
 select * from t1;
 c1	c3
 r1c1	r1c3
@@ -3774,7 +3986,7 @@ test/t1	5	0	1	3	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 c1	0	13	16711934	0	0	0
 c3	1	13	16711934	0	0	0
-c2_dropped_v1	5	13	16711934	0	0	1
+!hidden!_dropped_v1_p4_c2	5	13	16711934	0	0	1
 # DD Metadata of table
 NAME	SE_PRIVATE_DATA
 t1	NULL
@@ -3785,7 +3997,7 @@ c3	2	MYSQL_TYPE_STRING	0	Visible	physical_pos=5;table_id=TABLE_ID;
 DB_ROW_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	4	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	5	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c2_dropped_v1	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
+!hidden!_dropped_v1_p4_c2	6	MYSQL_TYPE_STRING	0	SE	physical_pos=4;version_dropped=1;
 select * from t1;
 c1	c3
 r1c1	r1c3
@@ -5051,7 +5263,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -5064,7 +5276,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -5072,7 +5284,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -5080,7 +5292,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 5	100
@@ -5093,7 +5305,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -5106,7 +5318,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -5114,7 +5326,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -5122,7 +5334,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 15	100
@@ -5134,7 +5346,7 @@ a	1	MYSQL_TYPE_LONG	1	Visible	physical_pos=0;table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	default=80000064;physical_pos=4;table_id=TABLE_ID;version_added=1;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
+!hidden!_dropped_v2_p3_b	5	MYSQL_TYPE_LONG	0	SE	physical_pos=3;table_id=TABLE_ID;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -5147,7 +5359,7 @@ test/t1#p#p1	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	5	0	2	2	2	3
@@ -5155,7 +5367,7 @@ test/t1#p#p2	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	5	0	2	2	2	3
@@ -5163,7 +5375,7 @@ test/t1#p#p3	5	0	2	2	2	3
 NAME	POS	MTYPE	PRTYPE	HAS_DEFAULT	VERSION_ADDED	VERSION_DROPPED
 a	0	6	1283	0	0	0
 c	1	6	1027	1	1	0
-b_dropped_v2	5	6	1027	0	0	2
+!hidden!_dropped_v2_p3_b	5	6	1027	0	0	2
 SELECT * FROM t1;
 a	c
 15	100
@@ -5174,7 +5386,6 @@ a	1	MYSQL_TYPE_LONG	1	Visible	table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -5212,7 +5423,6 @@ a	1	MYSQL_TYPE_LONG	1	Visible	table_id=TABLE_ID;
 c	2	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_TRX_ID	3	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	4	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-b_dropped_v2	5	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p1	10	NULL
@@ -5295,7 +5505,7 @@ c5	4	MYSQL_TYPE_LONG	0	Visible	default_null=1;physical_pos=7;table_id=TABLE_ID;v
 DB_ROW_ID	5	MYSQL_TYPE_INT24	0	SE	physical_pos=0;table_id=TABLE_ID;
 DB_TRX_ID	6	MYSQL_TYPE_INT24	0	SE	physical_pos=1;table_id=TABLE_ID;
 DB_ROLL_PTR	7	MYSQL_TYPE_LONGLONG	0	SE	physical_pos=2;table_id=TABLE_ID;
-c3_dropped_v2	8	MYSQL_TYPE_LONG	0	SE	physical_pos=5;version_dropped=2;
+!hidden!_dropped_v2_p5_c3	8	MYSQL_TYPE_LONG	0	SE	physical_pos=5;version_dropped=2;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p0	100	NULL
@@ -5311,7 +5521,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p1	7	0	2	4	4	5
@@ -5321,7 +5531,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p2	7	0	2	4	4	5
@@ -5331,7 +5541,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 # Metadata from INFORMATION_SCHEMA.TABLES
 NAME	N_COLS	INSTANT_COLS	TOTAL_ROW_VERSIONS	INITIAL_COLUMN_COUNTS	CURRENT_COLUMN_COUNTS	TOTAL_COLUMN_COUNTS
 test/t1#p#p3	7	0	2	4	4	5
@@ -5341,7 +5551,7 @@ c1	0	6	1027	0	0	0
 c2	1	6	1027	0	0	0
 c4	2	5	16711932	0	0	0
 c5	3	6	1027	1	1	0
-c3_dropped_v2	7	6	1027	0	0	2
+!hidden!_dropped_v2_p5_c3	7	6	1027	0	0	2
 ALTER TABLE t1 TRUNCATE partition p0, p1, p2, p3;
 # DD Metadata of columns in table
 NAME	ORDINAL_POSITION	TYPE	HAS_NO_DEFAULT	HIDDEN	SE_PRIVATE_DATA
@@ -5352,7 +5562,6 @@ c5	4	MYSQL_TYPE_LONG	0	Visible	table_id=TABLE_ID;
 DB_ROW_ID	5	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_TRX_ID	6	MYSQL_TYPE_INT24	0	SE	table_id=TABLE_ID;
 DB_ROLL_PTR	7	MYSQL_TYPE_LONGLONG	0	SE	table_id=TABLE_ID;
-c3_dropped_v2	8	MYSQL_TYPE_LONG	0	SE	table_id=TABLE_ID;
 # DD Metadata of partitions in table
 NAME	DESCRIPTION_UTF8	SE_PRIVATE_DATA
 p0	100	NULL
@@ -5406,6 +5615,115 @@ SET GLOBAL innodb_purge_stop_now=ON;
 Update t1 set c2="r122222", c4="c44";
 alter table t1 drop column c2, algorithm=instant;
 SET GLOBAL innodb_purge_run_now=ON;
+DROP TABLE t1;
+# Scenario 66
+# Inplace update is failing
+# INSTANT ADD and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=COMPACT;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 add column c4 char(10) after c1, ALGORITHM=INSTANT;
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+Insert into t1 values ("r2c1", "r2c4", "r2c2", "r2c3");
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+r2c1	r2c4	r2c2	r2c3
+# Disable flush to make sure REDO is applied after restart
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r112	r1c3
+r2c1	r2c4	r212	r2c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r112	r1c3
+r2c1	r2c4	r212	r2c3
+DROP TABLE t1;
+# INSTANT DROP and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=COMPACT;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 drop column c1, algorithm=instant;
+Insert into t1 values ("r2c2", "r2c3");
+Select * from t1;
+c2	c3
+r1c2	r1c3
+r2c2	r2c3
+SET GLOBAL innodb_log_checkpoint_now = ON;
+SET GLOBAL innodb_page_cleaner_disabled_debug = 1;
+SET GLOBAL innodb_dict_stats_disabled_debug = 1;
+SET GLOBAL innodb_master_thread_disabled_debug = 1;
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Select * from t1;
+c2	c3
+r112	r1c3
+r212	r2c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c2	c3
+r112	r1c3
+r212	r2c3
+DROP TABLE t1;
+# INSTANT ADD and DROP and INPLACE UPDATE
+CREATE TABLE t1 (c1 char(10), c2 char(10), c3 char(10)) ROW_FORMAT=COMPACT;
+Insert into t1 values ("r1c1", "r1c2", "r1c3");
+Select * from t1;
+c1	c2	c3
+r1c1	r1c2	r1c3
+Alter table t1 add column c4 char(10) after c1, ALGORITHM=INSTANT;
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+Insert into t1 values ("r2c1", "r2c4", "r2c2", "r2c3");
+Select * from t1;
+c1	c4	c2	c3
+r1c1	NULL	r1c2	r1c3
+r2c1	r2c4	r2c2	r2c3
+Alter table t1 drop column c1, algorithm=instant;
+Select * from t1;
+c4	c2	c3
+NULL	r1c2	r1c3
+r2c4	r2c2	r2c3
+Insert into t1 values ("r3c4", "r3c2", "r3c3");
+Select * from t1;
+c4	c2	c3
+NULL	r1c2	r1c3
+r2c4	r2c2	r2c3
+r3c4	r3c2	r3c3
+SET GLOBAL innodb_log_checkpoint_now = ON;
+SET GLOBAL innodb_page_cleaner_disabled_debug = 1;
+SET GLOBAL innodb_dict_stats_disabled_debug = 1;
+SET GLOBAL innodb_master_thread_disabled_debug = 1;
+Update t1 set c2="r112" where c2="r1c2";
+Update t1 set c2="r212" where c2="r2c2";
+Update t1 set c2="r312" where c2="r3c2";
+Select * from t1;
+c4	c2	c3
+NULL	r112	r1c3
+r2c4	r212	r2c3
+r3c4	r312	r3c3
+# Kill the running server
+# Kill the server
+# Start the server
+Select * from t1;
+c4	c2	c3
+NULL	r112	r1c3
+r2c4	r212	r2c3
+r3c4	r312	r3c3
 DROP TABLE t1;
 ###########
 # CLEANUP #

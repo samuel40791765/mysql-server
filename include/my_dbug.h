@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -143,7 +143,7 @@ class AutoDebugTrace {
 };
 
 #define DBUG_TRACE \
-  AutoDebugTrace _db_trace(DBUG_PRETTY_FUNCTION, __FILE__, __LINE__)
+  const AutoDebugTrace _db_trace(DBUG_PRETTY_FUNCTION, __FILE__, __LINE__)
 
 #endif
 
@@ -222,7 +222,7 @@ class AutoDebugTrace {
 #ifdef _WIN32
 #define DBUG_SUICIDE() DBUG_EXIT()
 #else
-extern void _db_suicide_() MY_ATTRIBUTE((noreturn));
+[[noreturn]] extern void _db_suicide_();
 extern void _db_flush_gcov_();
 #define DBUG_SUICIDE() (_db_flush_(), _db_suicide_())
 #endif
@@ -321,10 +321,24 @@ extern void _db_flush_gcov_();
     }                                                  \
   } while (0)
 
+/**
+  Shortcut for printing a variable name and its value in DBUG_LOG output.
+
+  Use like:
+
+  DBUG_LOG("info", DBUG_VAR(i) << " " << DBUG_VAR(thd->query));
+
+  Example output for the above might be:
+
+  i=[4711] thd->query=[INSERT INTO t VALUES (1)]
+*/
+#define DBUG_VAR(v) #v << "=[" << (v) << "]"
+
 #else /* NDEBUG */
 #define DBUG_LOG(keyword, v) \
   do {                       \
   } while (0)
+#define DBUG_VAR(v) ""
 #endif /* NDEBUG */
 
 /**

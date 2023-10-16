@@ -1,7 +1,7 @@
 #ifndef HISTOGRAMS_EQUI_HEIGHT_BUCKET_INCLUDED
 #define HISTOGRAMS_EQUI_HEIGHT_BUCKET_INCLUDED
 
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -53,16 +53,16 @@ template <class T>
 class Bucket {
  private:
   /// Lower inclusive value contained in this bucket.
-  const T m_lower_inclusive;
+  T m_lower_inclusive;
 
   /// Upper inclusive value contained in this bucket.
-  const T m_upper_inclusive;
+  T m_upper_inclusive;
 
   /// The cumulative frequency. 0.0 <= m_cumulative_frequency <= 1.0.
-  const double m_cumulative_frequency;
+  double m_cumulative_frequency;
 
   /// Number of distinct values in this bucket.
-  const ha_rows m_num_distinct;
+  ha_rows m_num_distinct;
 
   /**
     Add values to a JSON bucket.

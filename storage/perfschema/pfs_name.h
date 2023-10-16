@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -28,9 +28,13 @@
   Object names (declarations).
 */
 
-#include "m_ctype.h"
+#include <assert.h>
+#include <string.h>
+
 #include "my_hostname.h"  // HOSTNAME_LENGTH
-#include "mysql_com.h"    // NAME_LEN
+#include "my_inttypes.h"
+#include "mysql/strings/m_ctype.h"
+#include "mysql_com.h"  // NAME_LEN
 
 /* Not used yet. */
 #define ROLENAME_CHAR_LENGTH 32

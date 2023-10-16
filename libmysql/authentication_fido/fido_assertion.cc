@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -142,8 +142,8 @@ end:
 */
 void fido_prepare_assert::get_signed_challenge(unsigned char **challenge_res,
                                                size_t &challenge_res_len) {
-  unsigned long authdata_len = get_authdata_len();
-  unsigned long sig_len = get_signature_len();
+  const unsigned long authdata_len = get_authdata_len();
+  const unsigned long sig_len = get_signature_len();
   challenge_res_len = net_length_size(authdata_len) + net_length_size(sig_len) +
                       authdata_len + sig_len;
   *challenge_res = new (std::nothrow) unsigned char[challenge_res_len];

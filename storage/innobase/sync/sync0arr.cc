@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -404,8 +404,8 @@ void sync_array_cell_print(FILE *file, const sync_cell_t *cell) {
     rwlock = cell->latch.lock;
 
     fprintf(file, " RW-latch at %p created in file %s line %lu\n",
-            (void *)rwlock, innobase_basename(rwlock->cfile_name),
-            (ulong)rwlock->cline);
+            (void *)rwlock, innobase_basename(rwlock->clocation.filename),
+            (ulong)rwlock->clocation.line);
 
     writer = rw_lock_get_writer(rwlock);
 
@@ -669,7 +669,7 @@ static bool sync_array_detect_deadlock(sync_array_t *const arr,
   // mark the fact the cell is on stack
   cell->last_scan = arr->last_scan;
   const bool deadlocked = sync_array_detect_deadlock_low(arr, cell, depth);
-  // mark the fact the cell as fully proccessed;
+  // mark the fact the cell as fully processed;
   cell->last_scan++;
   if (deadlocked && depth == 0) {
 #ifdef UNIV_NO_ERR_MSGS
@@ -736,7 +736,7 @@ static bool sync_arr_cell_can_wake_up(
 /** Increments the signalled count. */
 void sync_array_object_signalled() { ++sg_count; }
 
-/** If the wakeup algorithm does not work perfectly at semaphore relases,
+/** If the wakeup algorithm does not work perfectly at semaphore releases,
  this function will do the waking (see the comment in mutex_exit). This
  function should be called about every 1 second in the server.
 
@@ -765,7 +765,7 @@ static void sync_array_wake_threads_if_sema_free_low(
   sync_array_exit(arr);
 }
 
-/** If the wakeup algorithm does not work perfectly at semaphore relases,
+/** If the wakeup algorithm does not work perfectly at semaphore releases,
  this function will do the waking (see the comment in mutex_exit). This
  function should be called about every 1 second in the server.
 

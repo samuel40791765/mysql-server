@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -38,7 +38,6 @@ struct plugin_local_variables {
   rpl_sidno group_sidno;
   rpl_sidno view_change_sidno;
 
-  mysql_mutex_t force_members_running_mutex;
   mysql_mutex_t plugin_online_mutex;
   mysql_mutex_t plugin_modules_termination_mutex;
   mysql_mutex_t plugin_applier_module_initialize_terminate_mutex;
@@ -50,7 +49,6 @@ struct plugin_local_variables {
   std::atomic<bool> group_replication_running;
   std::atomic<bool> group_replication_cloning;
 
-  bool force_members_running;
   uint gr_lower_case_table_names;
   bool gr_default_table_encryption;
   bool known_server_reset;
@@ -93,7 +91,6 @@ struct plugin_local_variables {
     group_replication_running = false;
     group_replication_cloning = false;
 
-    force_members_running = false;
     gr_lower_case_table_names = 0;
     gr_default_table_encryption = false;
     known_server_reset = false;
@@ -190,7 +187,7 @@ struct plugin_options_variables {
   bool allow_local_lower_version_join_var;
 
   /*
-    The default value for auto_increment_increment is choosen taking into
+    The default value for auto_increment_increment is chosen taking into
     account the maximum usable values for each possible auto_increment_increment
     and what is a normal group expected size.
   */

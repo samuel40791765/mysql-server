@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,12 +27,15 @@
 
 #include <set>
 
+#include "my_inttypes.h"
 #include "my_sys.h"  // ErrorHandlerFunctionPointer
 #include "sql/dd/string_type.h"
 #include "sql/error_handler.h"  // Internal_error_handler
 
 class THD;
 class Time_zone;
+
+struct CHARSET_INFO;
 
 using sql_mode_t = ulonglong;
 

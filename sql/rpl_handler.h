@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -50,7 +50,7 @@ struct Binlog_storage_observer;
 struct Binlog_transmit_observer;
 struct Server_state_observer;
 struct Trans_observer;
-struct TABLE_LIST;
+class Table_ref;
 
 /**
   Variable to keep the value set for the
@@ -61,7 +61,7 @@ struct TABLE_LIST;
   `0`, again. While the value of the variable is `1`, we are also exchanging the
   `Delegate` class read-write lock by an atomic-based shared spin-lock.
 
-  This behaviour is usefull for increasing the throughtput of the master when a
+  This behaviour is useful for increasing the throughtput of the master when a
   large number of slaves is connected, by preventing the acquisition of the
   `LOCK_plugin` mutex and using a more read-friendly lock in the `Delegate`
   class, when invoking the observer's hooks.
@@ -252,7 +252,7 @@ class Delegate {
   };
 
   /**
-    Increases the `info->plugin` reference counting and stores that refernce
+    Increases the `info->plugin` reference counting and stores that reference
     internally.
    */
   void acquire_plugin_ref_count(Observer_info *info);
@@ -459,6 +459,6 @@ extern Binlog_relay_IO_delegate *binlog_relay_io_delegate;
 
 #define NO_HOOK(group) (group##_delegate->is_empty())
 
-int launch_hook_trans_begin(THD *thd, TABLE_LIST *table);
+int launch_hook_trans_begin(THD *thd, Table_ref *table);
 
 #endif /* RPL_HANDLER_H */

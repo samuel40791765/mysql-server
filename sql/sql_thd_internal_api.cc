@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -47,6 +47,7 @@
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql/psi/mysql_socket.h"
 #include "mysql/thread_type.h"
+#include "nulls.h"
 #include "sql/binlog.h"       // mysql_bin_log
 #include "sql/current_thd.h"  // current_thd
 #include "sql/mysqld.h"
@@ -61,6 +62,7 @@
 #include "sql/transaction_info.h"
 #include "violite.h"
 
+struct CHARSET_INFO;
 struct mysql_cond_t;
 struct mysql_mutex_t;
 
@@ -109,9 +111,7 @@ void destroy_internal_thd(THD *thd) {
   delete thd;
 }
 
-void thd_init(THD *thd, char *stack_start, bool bound [[maybe_unused]],
-              PSI_thread_key psi_key [[maybe_unused]],
-              unsigned int psi_seqnum [[maybe_unused]]) {
+void thd_init(THD *thd, char *stack_start) {
   DBUG_TRACE;
   // TODO: Purge threads currently terminate too late for them to be added.
   // Note that P_S interprets all threads with thread_id != 0 as
@@ -122,15 +122,6 @@ void thd_init(THD *thd, char *stack_start, bool bound [[maybe_unused]],
     Global_THD_manager *thd_manager = Global_THD_manager::get_instance();
     thd_manager->add_thd(thd);
   }
-#ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_thread *psi;
-  psi = PSI_THREAD_CALL(new_thread)(psi_key, psi_seqnum, thd, thd->thread_id());
-  if (bound) {
-    PSI_THREAD_CALL(set_thread_os_id)(psi);
-  }
-  PSI_THREAD_CALL(set_thread_THD)(psi, thd);
-  thd->set_psi(psi);
-#endif /* HAVE_PSI_THREAD_INTERFACE */
 
   if (!thd->system_thread) {
     DBUG_PRINT("info",
@@ -141,6 +132,24 @@ void thd_init(THD *thd, char *stack_start, bool bound [[maybe_unused]],
   thd_set_thread_stack(thd, stack_start);
 
   thd->store_globals();
+}
+
+void thd_init(THD *thd, char *stack_start, bool bound [[maybe_unused]],
+              PSI_thread_key psi_key [[maybe_unused]],
+              unsigned int psi_seqnum [[maybe_unused]]) {
+  DBUG_TRACE;
+
+  thd_init(thd, stack_start);
+
+#ifdef HAVE_PSI_THREAD_INTERFACE
+  PSI_thread *psi;
+  psi = PSI_THREAD_CALL(new_thread)(psi_key, psi_seqnum, thd, thd->thread_id());
+  if (bound) {
+    PSI_THREAD_CALL(set_thread_os_id)(psi);
+  }
+  PSI_THREAD_CALL(set_thread_THD)(psi, thd);
+  thd->set_psi(psi);
+#endif /* HAVE_PSI_THREAD_INTERFACE */
 }
 
 THD *create_thd(bool enable_plugins, bool background_thread, bool bound,
@@ -156,10 +165,10 @@ THD *create_thd(bool enable_plugins, bool background_thread, bool bound,
   return thd;
 }
 
-void destroy_thd(THD *thd) {
+void destroy_thd(THD *thd, bool clear_pfs_events [[maybe_unused]]) {
   thd->release_resources();
 #ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_THREAD_CALL(delete_thread)(thd->get_psi());
+  if (clear_pfs_events) PSI_THREAD_CALL(delete_thread)(thd->get_psi());
   thd->set_psi(nullptr);
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
@@ -170,6 +179,8 @@ void destroy_thd(THD *thd) {
   }
   delete thd;
 }
+
+void destroy_thd(THD *thd) { return destroy_thd(thd, true); }
 
 void thd_set_thread_stack(THD *thd, const char *stack_start) {
   thd->thread_stack = stack_start;
@@ -244,7 +255,7 @@ LEX_CSTRING thd_query_unsafe(THD *thd) {
 
 size_t thd_query_safe(THD *thd, char *buf, size_t buflen) {
   mysql_mutex_lock(&thd->LOCK_thd_query);
-  LEX_CSTRING query_string = thd->query();
+  const LEX_CSTRING query_string = thd->query();
   size_t len = std::min(buflen - 1, query_string.length);
   if (len > 0) strncpy(buf, query_string.str, len);
   buf[len] = '\0';
@@ -315,8 +326,8 @@ bool is_mysql_datadir_path(const char *path) {
   char mysql_data_dir[FN_REFLEN], path_dir[FN_REFLEN];
   convert_dirname(path_dir, path, NullS);
   convert_dirname(mysql_data_dir, mysql_unpacked_real_data_home, NullS);
-  size_t mysql_data_home_len = dirname_length(mysql_data_dir);
-  size_t path_len = dirname_length(path_dir);
+  const size_t mysql_data_home_len = dirname_length(mysql_data_dir);
+  const size_t path_len = dirname_length(path_dir);
 
   if (path_len < mysql_data_home_len) return true;
 
@@ -337,8 +348,9 @@ int mysql_tmpfile_path(const char *path, const char *prefix) {
 #ifdef _WIN32
   mode |= O_TRUNC | O_SEQUENTIAL;
 #endif
-  File fd = mysql_file_create_temp(PSI_NOT_INSTRUMENTED, filename, path, prefix,
-                                   mode, UNLINK_FILE, MYF(MY_WME));
+  const File fd =
+      mysql_file_create_temp(PSI_NOT_INSTRUMENTED, filename, path, prefix, mode,
+                             UNLINK_FILE, MYF(MY_WME));
   return fd;
 }
 

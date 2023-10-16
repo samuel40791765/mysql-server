@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2021, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -292,6 +292,7 @@ dict_index_t *dict_mem_index_create(
 
   index = static_cast<dict_index_t *>(mem_heap_zalloc(heap, sizeof(*index)));
 
+  new (&index->fields_array)(decltype(index->fields_array))();
   dict_mem_fill_index_struct(index, heap, table_name, index_name, space, type,
                              n_fields);
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,8 +34,8 @@
 #include "sql/rpl_group_replication.h"
 
 // Forward declaration of Group Replication callback...
-void handle_group_replication_incoming_connection(THD *thd, int fd,
-                                                  SSL *ssl_ctx);
+int handle_group_replication_incoming_connection(THD *thd, int fd,
+                                                 SSL *ssl_ctx);
 
 bool Gcs_mysql_network_provider_auth_interface_impl::get_credentials(
     std::string &username, std::string &password) {
@@ -179,12 +179,10 @@ bool Gcs_mysql_network_provider::configure_secure_connections(
   return false;
 }
 
-bool Gcs_mysql_network_provider::cleanup_secure_connections_context() {
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-  ERR_remove_thread_state(0);
-#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
-
-  return false;
+void Gcs_mysql_network_provider::cleanup_secure_connections_context() {
+  auto secure_connections_context_cleaner =
+      this->get_secure_connections_context_cleaner();
+  std::invoke(secure_connections_context_cleaner);
 }
 
 bool Gcs_mysql_network_provider::finalize_secure_connections_context() {
@@ -256,10 +254,12 @@ std::unique_ptr<Network_connection> Gcs_mysql_network_provider::open_connection(
   m_native_interface->mysql_options(mysql_connection, MYSQL_OPT_SSL_MODE,
                                     &client_ssl_mode);
   m_native_interface->mysql_options(mysql_connection, MYSQL_OPT_LOCAL_INFILE,
-                                    0);
-  m_native_interface->mysql_options(mysql_connection, MYSQL_PLUGIN_DIR, 0);
+                                    nullptr);
+  m_native_interface->mysql_options(mysql_connection, MYSQL_PLUGIN_DIR,
+                                    nullptr);
 
-  m_native_interface->mysql_options(mysql_connection, MYSQL_DEFAULT_AUTH, 0);
+  m_native_interface->mysql_options(mysql_connection, MYSQL_DEFAULT_AUTH,
+                                    nullptr);
 
   uint connect_timeout = (connection_timeout / 1000)
                              ? connection_timeout / 1000
@@ -289,14 +289,15 @@ std::unique_ptr<Network_connection> Gcs_mysql_network_provider::open_connection(
 
   if (!m_native_interface->mysql_real_connect(
           mysql_connection, address.c_str(), recovery_username.c_str(),
-          recovery_password.c_str(), 0, port, 0, client_flag)) {
+          recovery_password.c_str(), nullptr, port, nullptr, client_flag)) {
     LogPluginErr(ERROR_LEVEL,
                  ER_GRP_RPL_MYSQL_NETWORK_PROVIDER_CLIENT_ERROR_CONN_ERR);
     goto err;
   }
 
-  if (m_native_interface->send_command(
-          mysql_connection, COM_SUBSCRIBE_GROUP_REPLICATION_STREAM, 0, 0, 0)) {
+  if (m_native_interface->send_command(mysql_connection,
+                                       COM_SUBSCRIBE_GROUP_REPLICATION_STREAM,
+                                       nullptr, 0, 0)) {
     LogPluginErr(ERROR_LEVEL,
                  ER_GRP_RPL_MYSQL_NETWORK_PROVIDER_CLIENT_ERROR_COMMAND_ERR);
     goto err;

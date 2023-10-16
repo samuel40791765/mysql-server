@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -24,7 +24,7 @@
 #define PLUGIN_CONSTANTS_INCLUDE
 
 /*
-  Plugin user to acess the server
+  Plugin user to access the server
 */
 #define GROUPREPL_USER "mysql.session"
 #define GROUPREPL_HOST "localhost"

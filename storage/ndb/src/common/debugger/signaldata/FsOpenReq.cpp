@@ -1,4 +1,4 @@
-/* Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -23,11 +23,18 @@
 
 #include <signaldata/FsOpenReq.hpp>
 
-bool 
-printFSOPENREQ(FILE * output, const Uint32 * theData, Uint32 len, Uint16 receiverBlockNo){
-  
-  const FsOpenReq * const sig = (FsOpenReq *) theData;
-  
+bool printFSOPENREQ(FILE *output,
+                    const Uint32 *theData,
+                    Uint32 len,
+                    Uint16 /*receiverBlockNo*/)
+{
+  if (len < FsOpenReq::SignalLength)
+  {
+    assert(false);
+    return false;
+  }
+
+  const FsOpenReq *const sig = (const FsOpenReq *)theData;
 
   fprintf(output, " UserReference: H\'%.8x, userPointer: H\'%.8x\n", 
 	  sig->userReference, sig->userPointer);

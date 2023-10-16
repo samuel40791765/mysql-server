@@ -1,6 +1,6 @@
 /***********************************************************************
 
-Copyright (c) 2011, 2021, Oracle and/or its affiliates.
+Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -104,7 +104,7 @@ ib_err_t innodb_api_begin(
     innodb_engine_t *engine,       /*!< in: InnoDB Memcached engine */
     const char *dbname,            /*!< in: NUL terminated database name */
     const char *name,              /*!< in: NUL terminated table name */
-    innodb_conn_data_t *conn_data, /*!< in/out: connnection specific
+    innodb_conn_data_t *conn_data, /*!< in/out: connection specific
                                    data */
     ib_trx_t ib_trx,               /*!< in: transaction */
     ib_crsr_t *crsr,               /*!< out: innodb cursor */

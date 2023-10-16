@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2019, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,6 +28,7 @@
 #include <mutex>
 #include <unordered_set>
 
+#include "m_string.h"
 #include "mysql/components/my_service.h"
 #include "mysql/components/services/dynamic_privilege.h"
 #include "sql/auth/acl_change_notification.h"
@@ -41,6 +42,7 @@
 #include "storage/ndb/plugin/ndb_sql_metadata_table.h"
 #include "storage/ndb/plugin/ndb_thd.h"
 #include "storage/ndb/plugin/ndb_thd_ndb.h"
+#include "string_with_len.h"
 
 using ChangeNotice = const Acl_change_notification;
 
@@ -480,7 +482,7 @@ inline bool blacklisted(std::string user) {
    This query selects only those users that have been directly granted
    NDB_STORED_USER, not those granted it transitively via a role. This
    entails that the direct grant is required -- a limitation which must
-   be documented. If there were a table in information_schema analagous to
+   be documented. If there were a table in information_schema analogous to
    mysql.role_edges, we could solve this problem by issuing a JOIN query
    of user_privileges and role_edges. For now, though, living with the
    documented limitation is preferable to relying on the mysql table.
@@ -643,15 +645,23 @@ int ThreadContext::drop_users(ChangeNotice *notice,
    matches the snapshot, then return without doing anything, so that the
    last_mod timestamp on the user's password does not get unnecessarily reset.
 
-   Otherwise apply the statement to create the user. For idempotence, it
-   must be rewritten as several statements. The final result is:
-      CREATE USER IF NOT EXISTS user@host;
+   Otherwise, try to apply the statement as-is. This can fail for several
+   reasons (some of which are tested in the apply_stored_grants test case),
+   but if might succeed.
+
+   If running the CREATE USER statement failed, it must be rewritten as
+   several statements. The final result is:
+      CREATE USER IF NOT EXISTS user@host  IDENTIFIED BY RANDOM PASSWORD;
       REVOKE ALL ON *.* FROM user@host;
       ALTER USER user@host ...;   [CLEAR RESOURCE LIMITS]
       ALTER USER user@host ...;   [SET VALUES FROM SHOW CREATE USER]
+      ALTER USER user@host DEFAULT ROLE ... ;
+
+  The DEFAULT ROLE statement is pushed to the end of a list and run later,
+  after some other statement in the snapshot possibly creates the named role.
 */
 void ThreadContext::create_user(std::string &name, std::string &statement) {
-  const std::string create_user("CREATE USER IF NOT EXISTS ");
+  const std::string create_user_if_ne("CREATE USER IF NOT EXISTS ");
   const std::string random_pass(" IDENTIFIED BY RANDOM PASSWORD");
   const std::string alter_user("ALTER USER ");
   const std::string revoke_all("REVOKE ALL ON *.* FROM ");
@@ -659,9 +669,9 @@ void ThreadContext::create_user(std::string &name, std::string &statement) {
       " WITH MAX_QUERIES_PER_HOUR 0 MAX_UPDATES_PER_HOUR 0 "
       " MAX_CONNECTIONS_PER_HOUR 0 MAX_USER_CONNECTIONS 0");
 
-  const bool exists_local = get_local_user(name);
+  const bool exists_in_cache = get_local_user(name);
 
-  if (exists_local) {
+  if (exists_in_cache) {
     /* Compare the snapshot user to the local one. Before comparing, we must
        detect whether the password hash stored in the snapshot used hex encoding
        or a plain string.  In statement.find(), 36 characters skips past
@@ -671,14 +681,20 @@ void ThreadContext::create_user(std::string &name, std::string &statement) {
     bool is_hex = (statement.find(" AS 0x", 36) != std::string::npos);
     if (show_create_user(name, show_create, is_hex) && show_create == statement)
       return;  // Current SHOW CREATE USER already matches snapshot
+  } else {
+    local_granted_users.insert(name);
   }
 
-  if (!exists_local) {
-    /* Create the user with a random password */
-    ndb_log_info("From stored snapshot, adding NDB stored user: %s",
-                 name.c_str());
-    run_acl_statement(create_user + name + random_pass);
-  }
+  ndb_log_info("From stored snapshot, adding NDB stored user: %s",
+               name.c_str());
+
+  /* Try to run the CREATE USER statement stored in the snapshot.
+     If this succeeds, we are done; but there are several reasons it might fail.
+  */
+  if (try_create_user(statement) == false) return;
+
+  /* Create the user with a random password (unless the user already exists) */
+  run_acl_statement(create_user_if_ne + name + random_pass);
 
   /* Revoke any privileges the user may have had prior to this snapshot. */
   run_acl_statement(revoke_all + name);
@@ -717,8 +733,8 @@ void ThreadContext::create_user(std::string &name, std::string &statement) {
 void ThreadContext::apply_current_snapshot() {
   for (const char *row : m_current_rows) {
     unsigned int note = 0;
-    size_t str_length;
-    const char *str_start;
+    size_t str_length = 0;
+    const char *str_start = nullptr;
     bool is_null;
 
     int type = Buffer::getType(row);

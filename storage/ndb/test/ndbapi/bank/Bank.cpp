@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1134,7 +1134,7 @@ int Bank::sumTransactionsForGL(const Uint64 glTime,
     eof = pOp->nextResult();
 
     if ((rows % 100) == 0){
-      // "refresh" ownner transaction every 100th row
+      // "refresh" owner transaction every 100th row
       if (pTrans->refresh() == -1) {
         const NdbError err = pTrans->getNdbError();
         if (err.status == NdbError::TemporaryError){

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -248,7 +248,10 @@ struct Builder {
     ddl::file_t m_file{};
 
     /** Buffer to use for file writes. */
-    Aligned_buffer m_aligned_buffer{};
+    ut::unique_ptr_aligned<byte[]> m_aligned_buffer{};
+
+    /** Buffer to use for file writes. */
+    IO_buffer m_io_buffer;
 
     /** Record list starting offset in the output file. */
     Merge_offsets m_offsets{};

@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1531,7 +1531,7 @@ DblqhProxy::execLQH_TRANSREQ(Signal* signal)
   if (signal->getLength() < LqhTransReq::SignalLength)
   {
     /**
-     * TC that performs take over doesn't suppport taking over one
+     * TC that performs take over doesn't support taking over one
      * TC instance at a time
      */
     jam();

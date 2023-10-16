@@ -1,6 +1,6 @@
 #ifndef _EVENT_H_
 #define _EVENT_H_
-/* Copyright (c) 2004, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -69,7 +69,7 @@ extern PSI_stage_info stage_waiting_on_empty_queue;
 extern PSI_stage_info stage_waiting_for_next_activation;
 extern PSI_stage_info stage_waiting_for_scheduler_to_stop;
 
-int sortcmp_lex_string(LEX_CSTRING s, LEX_CSTRING t, CHARSET_INFO *cs);
+int sortcmp_lex_string(LEX_CSTRING s, LEX_CSTRING t, const CHARSET_INFO *cs);
 
 /**
   @brief A facade to the functionality of the Event Scheduler.

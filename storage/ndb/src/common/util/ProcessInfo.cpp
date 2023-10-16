@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,9 +29,10 @@
 #include "OwnProcessInfo.hpp"
 #include "signaldata/ProcessInfoRep.hpp"
 #include "BaseString.hpp"
-#include "ndb_net.h"
 #include "ndb_socket.h"
 #include "NdbTCP.h"
+
+class ndb_sockaddr;
 
 /* Utility Functions */
 
@@ -120,7 +121,7 @@ ProcessInfo * ProcessInfo::forNodeId(Uint16 nodeId)
 */
 void ProcessInfo::release(ProcessInfo *self)
 {
-  if((self != 0) && (self != getOwnProcessInfo(0)))
+  if((self != nullptr) && (self != getOwnProcessInfo(0)))
     delete self;
 }
 
@@ -136,7 +137,7 @@ bool ProcessInfo::isValidUri(const char *scheme, const char *path)
 
 void ProcessInfo::setProcessName(const char * name) {
   size_t len = 0;
-  if (name != NULL)
+  if (name != nullptr)
   {
     len = truncateUtf8(name, ProcessNameLength);
     strncpy(process_name, name, len);
@@ -155,7 +156,7 @@ int ProcessInfo::getPid() const {
 
 void ProcessInfo::setUriPath(const char * path) {
   size_t len = 0;
-  if (path != NULL)
+  if (path != nullptr)
   {
     len = truncateUtf8(path, UriPathLength);
     strncpy(uri_path, path, len);
@@ -185,10 +186,10 @@ void ProcessInfo::setHostAddress(Uint32 * signal_data) {
   setHostAddress((const char *) signal_data);
 }
 
-void ProcessInfo::setHostAddress(const struct in6_addr * addr) {
+void ProcessInfo::setHostAddress(const ndb_sockaddr * addr) {
   /* If address passed in is a wildcard address, do not use it. */
-  if (!IN6_IS_ADDR_UNSPECIFIED(addr))
-    Ndb_inet_ntop(AF_INET6, addr, host_address, AddressStringLength);
+  if (!addr->is_unspecified())
+    Ndb_inet_ntop(addr, host_address, AddressStringLength);
 }
 
 void ProcessInfo::setAngelPid(Uint32 pid) {

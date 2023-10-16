@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -53,14 +53,15 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <exception>
 #include <iostream>
 #include <sstream>
-#include "m_string.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_dir.h"
 #include "my_getopt.h"
 #include "my_io.h"
 #include "my_macros.h"
+#include "nulls.h"
 #include "print_version.h"
+#include "template_utils.h"
 #include "typelib.h"
 #include "welcome_copyright_notice.h"
 
@@ -905,17 +906,31 @@ bool tablespace_creator::create() {
 
       ut_ad(first_page_num == 0);
 
-      page_no_t pages = static_cast<page_no_t>(size / page_size.physical());
+      const auto max_tablespace_size = uint64_t{page_size.physical()} *
+                                       std::numeric_limits<page_no_t>::max();
+
+      if (!(size < max_tablespace_size)) {
+        ib::error()
+            << "Tablespace file reaches max permissible size for page size "
+            << page_size.physical() << ", and crosses the limit by "
+            << size - max_tablespace_size << " bytes";
+        return true;
+      }
+
+      const auto pages = static_cast<page_no_t>(size / page_size.physical());
+      const auto computed_size = uint64_t{pages} * page_size.physical();
 
       DBUG_EXECUTE_IF("ib_partial_page", size++;);
 
-      if (pages * page_size.physical() != size) {
+      if (computed_size != size) {
         ib::warn() << "There is a partial page at the"
-                   << " end, of size " << size - (pages * page_size.physical())
+                   << " end, of size " << size - computed_size
                    << ". This partial page is ignored";
       }
 
+      ib::dbug() << "Total Size in the file: " << size;
       ib::dbug() << "Total Number of pages in the file: " << pages;
+      ib::dbug() << "Physical Page size in the file: " << page_size.physical();
 
       ib_file_t ibd_file;
       ibd_file.first_page_num = first_page_num;
@@ -932,9 +947,8 @@ bool tablespace_creator::create() {
                        " root page numbers couldn't"
                        " be determined";
         return true;
-      } else {
-        m_tablespace->add_sdi(root);
       }
+      m_tablespace->add_sdi(root);
 
     } else {
       /* We found next file of system tablespace. */
@@ -1141,12 +1155,11 @@ bool tablespace_creator::determine_page_size(File file_in,
 
   if (min_corruption_ratio == 1.0) {
     ib::error() << "Page size couldn't be determined";
-    return (false);
-  } else {
-    ib::info() << "Page size determined is : " << final_page_size;
-    page_size.copy_from(final_page_size);
-    return (true);
+    return false;
   }
+  ib::info() << "Page size determined is : " << final_page_size;
+  page_size.copy_from(final_page_size);
+  return true;
 }
 
 /** Verify checksum of the page and return corruption ratio
@@ -1317,7 +1330,7 @@ class ibd2sdi {
   @return false on success, true on failure */
   bool process_sdi_from_copy(ib_tablespace *ts);
 
-  /** Iterate over record from a single SDI copy. There is no comparision
+  /** Iterate over record from a single SDI copy. There is no comparison
   involved with the records in other copy
   @param[in]	ts		tablespace structure
   @param[in]	root_page_num	SDI root page number
@@ -1459,7 +1472,7 @@ bool ibd2sdi::process_sdi_from_copy(ib_tablespace *ts) {
   return (dump_all_recs_in_leaf_level(ts, ts->get_sdi_root(), m_out_stream));
 }
 
-/** Iterate over record from a single SDI copy. There is no comparision
+/** Iterate over record from a single SDI copy. There is no comparison
 involved with the records in other copy
 @param[in]	ts		tablespace structure
 @param[in]	root_page_num	SDI root page number
@@ -1541,9 +1554,8 @@ uint64_t ibd2sdi::read_page_and_return_level(ib_tablespace *ts,
   if (fetch_page(ts, page_num, buf_len, buf) == IB_ERROR) {
     ib::error() << "Couldn't read page " << page_num;
     return UINT64_MAX;
-  } else {
-    ib::dbug() << "Read page number: " << page_num;
   }
+  ib::dbug() << "Read page number: " << page_num;
 
   ulint page_type = fil_page_get_type(buf);
 
@@ -1788,9 +1800,8 @@ err_t ibd2sdi::reach_to_leftmost_leaf_level(ib_tablespace *ts, uint32_t buf_len,
     if (rec_type != REC_STATUS_INFIMUM) {
       ib::error() << "INFIMUM not found on index page " << cur_page_num;
       break;
-    } else {
-      ib::dbug() << "INFIMUM found";
     }
+    ib::dbug() << "INFIMUM found";
 
     ulint next_rec_off_t =
         mach_read_from_2(buf + PAGE_NEW_INFIMUM - REC_OFF_NEXT);
@@ -1822,10 +1833,9 @@ err_t ibd2sdi::reach_to_leftmost_leaf_level(ib_tablespace *ts, uint32_t buf_len,
     ib::error() << "Leftmost leaf level page not found"
                 << " or invalid";
     return FALIURE;
-  } else {
-    ib::dbug() << "Reached leaf level";
-    return SUCCESS;
   }
+  ib::dbug() << "Reached leaf level";
+  return SUCCESS;
 }
 
 /** Extract SDI record fields
@@ -2016,9 +2026,8 @@ byte *ibd2sdi::get_next_rec(ib_tablespace *ts, byte *current_rec_arg,
       ib::error() << "Couldn't read next page " << next_page_num;
       *corrupt = true;
       return nullptr;
-    } else {
-      ib::dbug() << "Read page number: " << next_page_num;
     }
+    ib::dbug() << "Read page number: " << next_page_num;
 
     ulint page_type = fil_page_get_type(buf);
 
@@ -2295,7 +2304,7 @@ int main(int argc, char **argv) {
 
   if (!ret && opts.is_dump_file) {
     /* Rename file can fail if the source and destination
-    are across parititions. */
+    are across partitions. */
     if (my_rename(tmp_filename_buf, opts.dump_filename, MYF(0)) == -1) {
       if (my_copy(tmp_filename_buf, opts.dump_filename, MYF(0)) != 0) {
         ib::error() << "Copy failed: from: " << tmp_filename_buf
@@ -2306,9 +2315,8 @@ int main(int argc, char **argv) {
                     << " temporary file " << tmp_filename_buf
                     << " and delete it manually";
         return 1;
-      } else {
-        try_delete_temporary_filename(tmp_filename_buf);
       }
+      try_delete_temporary_filename(tmp_filename_buf);
     }
   } else if (opts.is_dump_file) {
     try_delete_temporary_filename(tmp_filename_buf);

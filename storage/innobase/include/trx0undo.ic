@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -285,6 +285,16 @@ inline void trx_undo_t::set_prepared(const XID *in_xid) {
   state = TRX_UNDO_PREPARED;
   xid = *in_xid;
   flag |= TRX_UNDO_FLAG_XID;
+}
+
+inline void trx_undo_t::set_prepared_in_tc() {
+  ut_ad(!xid.is_null());
+  state = TRX_UNDO_PREPARED_IN_TC;
+}
+
+inline bool trx_undo_t::is_prepared() const {
+  return state == TRX_UNDO_PREPARED_80028 || state == TRX_UNDO_PREPARED ||
+         state == TRX_UNDO_PREPARED_IN_TC;
 }
 
 #endif /* !UNIV_HOTBACKUP */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -89,6 +89,8 @@ Plugin_table table_prepared_stmt_instances::m_table_def(
     "  SUM_NO_INDEX_USED bigint(20) unsigned NOT NULL,\n"
     "  SUM_NO_GOOD_INDEX_USED bigint(20) unsigned NOT NULL,\n"
     "  SUM_CPU_TIME BIGINT unsigned not null,\n"
+    "  MAX_CONTROLLED_MEMORY BIGINT unsigned not null,\n"
+    "  MAX_TOTAL_MEMORY BIGINT unsigned not null,\n"
     "  COUNT_SECONDARY bigint(20) unsigned NOT NULL,\n"
     "  PRIMARY KEY (OBJECT_INSTANCE_BEGIN) USING HASH,\n"
     "  UNIQUE KEY (OWNER_THREAD_ID, OWNER_EVENT_ID) USING HASH,\n"
@@ -189,12 +191,12 @@ PFS_engine_table *table_prepared_stmt_instances::create(
   return new table_prepared_stmt_instances();
 }
 
-int table_prepared_stmt_instances::delete_all_rows(void) {
+int table_prepared_stmt_instances::delete_all_rows() {
   reset_prepared_stmt_instances();
   return 0;
 }
 
-ha_rows table_prepared_stmt_instances::get_row_count(void) {
+ha_rows table_prepared_stmt_instances::get_row_count() {
   return global_prepared_stmt_container.get_row_count();
 }
 
@@ -203,12 +205,12 @@ table_prepared_stmt_instances::table_prepared_stmt_instances()
   m_normalizer = time_normalizer::get_statement();
 }
 
-void table_prepared_stmt_instances::reset_position(void) {
+void table_prepared_stmt_instances::reset_position() {
   m_pos = 0;
   m_next_pos = 0;
 }
 
-int table_prepared_stmt_instances::rnd_next(void) {
+int table_prepared_stmt_instances::rnd_next() {
   PFS_prepared_stmt *pfs;
 
   m_pos.set_at(&m_next_pos);
@@ -265,7 +267,7 @@ int table_prepared_stmt_instances::index_init(uint idx, bool) {
   return 0;
 }
 
-int table_prepared_stmt_instances::index_next(void) {
+int table_prepared_stmt_instances::index_next() {
   PFS_prepared_stmt *pfs;
   bool has_more = true;
 
@@ -350,8 +352,8 @@ int table_prepared_stmt_instances::read_row_values(TABLE *table,
           break;
         case 2: /* STATEMENT_NAME */
           if (m_row.m_stmt_name_length > 0)
-            set_field_varchar_utf8(f, m_row.m_stmt_name,
-                                   m_row.m_stmt_name_length);
+            set_field_varchar_utf8mb4(f, m_row.m_stmt_name,
+                                      m_row.m_stmt_name_length);
           else {
             f->set_null();
           }

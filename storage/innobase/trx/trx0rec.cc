@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -376,6 +376,8 @@ const byte *trx_undo_read_v_idx(const dict_table_t *table, const byte *ptr,
 @return true if stored successfully, false if space is not enough */
 static bool trx_undo_store_multi_value(page_t *undo_page,
                                        const dfield_t *vfield, byte **ptr) {
+  ut_ad(vfield != nullptr);
+
   Multi_value_logger mv_logger(
       static_cast<multi_value_data *>(dfield_get_data(vfield)),
       dfield_get_len(vfield));
@@ -417,7 +419,7 @@ static bool trx_undo_report_insert_virtual(page_t *undo_page,
     const dict_v_col_t *col = dict_table_get_nth_v_col(table, col_no);
 
     if (col->m_col.ord_part) {
-      /* make sure enought space to write the length */
+      /* make sure enough space to write the length */
       if (trx_undo_left(undo_page, *ptr) < 5) {
         return (false);
       }
@@ -1599,7 +1601,7 @@ static ulint trx_undo_page_report_modify(
         ulint max_v_log_len = dict_max_v_field_len_store_undo(table, pos);
 
         /* Write field number to undo log.
-        Make sure there is enought space in log */
+        Make sure there is enough space in log */
         if (trx_undo_left(undo_page, ptr) < 5) {
           return 0;
         }
@@ -1618,6 +1620,8 @@ static ulint trx_undo_page_report_modify(
         if (update) {
           ut_ad(!row);
           if (update->old_vrow == nullptr) {
+            /* This only happens in cascade update. And virtual column can't be
+            affected, so it is Ok to set it to NULL */
             flen = UNIV_SQL_NULL;
           } else {
             vfield = dtuple_get_nth_v_field(update->old_vrow, col->v_pos);
@@ -1647,6 +1651,11 @@ static ulint trx_undo_page_report_modify(
         }
 
         if (col->m_col.is_multi_value()) {
+          dfield_t multi_value_field;
+          if (vfield == nullptr) {
+            dfield_set_null(&multi_value_field);
+            vfield = &multi_value_field;
+          }
           bool suc = trx_undo_store_multi_value(undo_page, vfield, &ptr);
           if (!suc) {
             return 0;
@@ -2004,7 +2013,7 @@ byte *trx_undo_rec_get_partial_row(
       }
 
       /* This column shouldn't be dropped unless index on this column is
-       * dropped. */
+      dropped. */
       ut_ad(!col->is_instant_dropped() || !col->ord_part);
       if (col->is_instant_dropped()) {
         continue;
@@ -2563,6 +2572,9 @@ bool trx_undo_prev_version_build(
       if (missing_extern) {
         /* treat as a fresh insert, not to
         cause assertion error at the caller. */
+        if (update != nullptr) {
+          update->reset();
+        }
         return true;
       }
     }
@@ -2601,7 +2613,8 @@ bool trx_undo_prev_version_build(
 #if defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
   ut_a(!rec_offs_any_null_extern(
       index, *old_vers,
-      rec_get_offsets(*old_vers, index, nullptr, ULINT_UNDEFINED, &heap)));
+      rec_get_offsets(*old_vers, index, nullptr, ULINT_UNDEFINED,
+                      UT_LOCATION_HERE, &heap)));
 #endif  // defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
 
   /* If vrow is not NULL it means that the caller is interested in the values of

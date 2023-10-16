@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -247,7 +247,9 @@ class mock_gcs_xcom_state_exchange_interface
  private:
   int m_process_member_state_iteration;
 
-  bool free_xcom_member_state(Xcom_member_state *m) {
+  bool free_xcom_member_state(Xcom_member_state *m,
+                              const Gcs_member_identifier &,
+                              Gcs_protocol_version, Gcs_protocol_version) {
     delete m;
     if (m_process_member_state_iteration == 0) {
       m_process_member_state_iteration++;
@@ -256,8 +258,14 @@ class mock_gcs_xcom_state_exchange_interface
       return true;
   }
 
-  bool free_members_joined(std::vector<Gcs_member_identifier *> &total,
-                           std::vector<Gcs_member_identifier *> &joined) {
+  bool free_members_joined(synode_no,
+                           std::vector<Gcs_member_identifier *> &total,
+                           std::vector<Gcs_member_identifier *> &,
+                           std::vector<Gcs_member_identifier *> &joined,
+                           std::vector<std::unique_ptr<Gcs_message_data>> &,
+                           Gcs_view *, std::string *,
+                           const Gcs_member_identifier &,
+                           const Gcs_xcom_nodes &) {
     std::vector<Gcs_member_identifier *>::iterator it;
 
     for (it = total.begin(); it != total.end(); it++) delete (*it);
@@ -273,14 +281,14 @@ class mock_gcs_xcom_state_exchange_interface
   mock_gcs_xcom_state_exchange_interface()
       : m_process_member_state_iteration(0) {
     ON_CALL(*this, process_member_state(_, _, _, _))
-        .WillByDefault(WithArgs<0>(Invoke(
+        .WillByDefault(Invoke(
             this,
-            &mock_gcs_xcom_state_exchange_interface::free_xcom_member_state)));
+            &mock_gcs_xcom_state_exchange_interface::free_xcom_member_state));
 
     ON_CALL(*this, state_exchange(_, _, _, _, _, _, _, _, _))
-        .WillByDefault(WithArgs<1, 3>(Invoke(
+        .WillByDefault(Invoke(
             this,
-            &mock_gcs_xcom_state_exchange_interface::free_members_joined)));
+            &mock_gcs_xcom_state_exchange_interface::free_members_joined));
     ON_CALL(*this, compute_incompatible_members())
         .WillByDefault(Return(std::vector<Gcs_xcom_node_information>()));
     ON_CALL(*this, process_recovery_state()).WillByDefault(Return(true));
@@ -332,9 +340,9 @@ class mock_gcs_xcom_proxy : public Gcs_xcom_proxy_base {
     ON_CALL(*this, xcom_client_add_node(_, _, _)).WillByDefault(Return(false));
     ON_CALL(*this, xcom_client_send_data(_, _)).WillByDefault(Return(10));
     ON_CALL(*this, new_node_address_uuid(_, _, _))
-        .WillByDefault(WithArgs<0, 1, 2>(Invoke(::new_node_address_uuid)));
+        .WillByDefault(Invoke(::new_node_address_uuid));
     ON_CALL(*this, delete_node_address(_, _))
-        .WillByDefault(WithArgs<0, 1>(Invoke(::delete_node_address)));
+        .WillByDefault(Invoke(::delete_node_address));
     ON_CALL(*this, xcom_wait_ready()).WillByDefault(Return(GCS_OK));
     ON_CALL(*this, xcom_wait_for_xcom_comms_status_change(_))
         .WillByDefault(SetArgReferee<0>(XCOM_COMMS_OK));
@@ -472,6 +480,38 @@ class mock_gcs_network_provider_operations_interface
                void(enum_transport_protocol provider_key));
 };
 
+class Mock_gcs_xcom_statistics_manager
+    : public Gcs_xcom_statistics_manager_interface {
+ public:
+  MOCK_METHOD(uint64_t, get_sum_var_value,
+              (Gcs_cumulative_statistics_enum to_get), (const, override));
+  MOCK_METHOD(void, set_sum_var_value,
+              (Gcs_cumulative_statistics_enum to_set, uint64_t to_add),
+              (override));
+
+  // COUNT VARS
+  MOCK_METHOD(uint64_t, get_count_var_value,
+              (Gcs_counter_statistics_enum to_get), (const, override));
+  MOCK_METHOD(void, set_count_var_value, (Gcs_counter_statistics_enum to_set),
+              (override));
+
+  // TIMESTAMP VALUES
+  MOCK_METHOD(unsigned long long, get_timestamp_var_value,
+              (Gcs_time_statistics_enum to_get), (const, override));
+  MOCK_METHOD(void, set_timestamp_var_value,
+              (Gcs_time_statistics_enum to_set, unsigned long long new_value),
+              (override));
+  MOCK_METHOD(void, set_sum_timestamp_var_value,
+              (Gcs_time_statistics_enum to_set, unsigned long long to_add),
+              (override));
+
+  // ALL OTHER VARS
+  MOCK_METHOD(std::vector<Gcs_node_suspicious>, get_all_suspicious, (),
+              (const, override));
+  MOCK_METHOD(void, add_suspicious_for_a_node, (std::string node_id),
+              (override));
+};
+
 class mock_gcs_xcom_control : public Gcs_xcom_control {
  public:
   mock_gcs_xcom_control(
@@ -483,11 +523,12 @@ class mock_gcs_xcom_control : public Gcs_xcom_control {
       Gcs_xcom_state_exchange_interface *state_exchange,
       Gcs_xcom_view_change_control_interface *view_control, bool boot,
       My_xp_socket_util *socket_util,
-      std::unique_ptr<Network_provider_operations_interface> network_ops)
+      std::unique_ptr<Network_provider_operations_interface> network_ops,
+      Gcs_xcom_statistics_manager_interface *stats_mgr)
       : Gcs_xcom_control(xcom_node_address, xcom_peers, group_identifier,
                          xcom_proxy, xcom_group_management, gcs_engine,
                          state_exchange, view_control, boot, socket_util,
-                         std::move(network_ops)) {}
+                         std::move(network_ops), stats_mgr) {}
 
   enum_gcs_error join() override { return join(nullptr); }
 
@@ -574,16 +615,18 @@ class XComControlTest : public GcsBaseTest {
 
     gcs_engine.initialize(nullptr);
 
-    xcom_group_mgm = new Gcs_xcom_group_management(&proxy, *group_id);
+    xcom_group_mgm = new Gcs_xcom_group_management(&proxy, *group_id, mock_vce);
 
     mock_net_ops_for_interface =
         std::make_unique<mock_gcs_network_provider_operations_interface>();
     mock_net_ops = mock_net_ops_for_interface.get();
 
+    mock_stats_mgr = new NiceMock<Mock_gcs_xcom_statistics_manager>();
+
     xcom_control_if = new NiceMock<mock_gcs_xcom_control>(
         xcom_node_address, peers, *group_id, &proxy, xcom_group_mgm,
         &gcs_engine, mock_se, mock_vce, true, mock_socket_util,
-        std::move(mock_net_ops_for_interface));
+        std::move(mock_net_ops_for_interface), mock_stats_mgr);
     extern_xcom_control_if = xcom_control_if;
   }
 
@@ -603,6 +646,8 @@ class XComControlTest : public GcsBaseTest {
 
     m_wait_called_mutex.destroy();
     m_wait_called_cond.destroy();
+
+    delete mock_stats_mgr;
   }
 
   Gcs_xcom_node_address *xcom_node_address;
@@ -620,6 +665,7 @@ class XComControlTest : public GcsBaseTest {
   mock_gcs_network_provider_operations_interface *mock_net_ops;
   std::unique_ptr<mock_gcs_network_provider_operations_interface>
       mock_net_ops_for_interface;
+  NiceMock<Mock_gcs_xcom_statistics_manager> *mock_stats_mgr;
 
   bool m_wait_called;
   My_xp_mutex_impl m_wait_called_mutex;
@@ -1249,6 +1295,7 @@ TEST_F(XComControlTest, FailedNodeRemovalTest) {
   EXPECT_CALL(proxy, delete_node_address(_, _)).Times(4);
   EXPECT_CALL(mock_ev_listener, on_view_changed(_, _)).Times(1);
   EXPECT_CALL(proxy, xcom_client_remove_node(_, _)).Times(3);
+  EXPECT_CALL(*mock_stats_mgr, add_suspicious_for_a_node(_)).Times(1);
 
   // Get suspicions manager and enable majority
   Gcs_suspicions_manager *mgr = xcom_control_if->get_suspicions_manager();
@@ -1369,7 +1416,7 @@ TEST_F(XComControlTest, FailedNodeRemovalTest) {
   free_node_set(&nodes);
 }
 
-void check_view_ok(const Gcs_view &view) {
+void check_view_ok(const Gcs_view &view, const Exchanged_data &) {
   ASSERT_EQ(view.get_error_code(), Gcs_view::OK);
 }
 
@@ -1391,7 +1438,7 @@ TEST_F(XComControlTest, FailedNodeGlobalViewTest) {
 
   EXPECT_CALL(mock_ev_listener, on_view_changed(_, _))
       .Times(1)
-      .WillOnce(WithArgs<0>(Invoke(check_view_ok)));
+      .WillOnce(Invoke(check_view_ok));
 
   Gcs_xcom_uuid uuid_1 = Gcs_xcom_uuid::create_uuid();
   blob blob_1 = {{0, static_cast<char *>(malloc(uuid_1.actual_value.size()))}};
@@ -2335,13 +2382,14 @@ TEST_F(XComControlTest, DoNotDisbandEntireGroup) {
   xcom_nodes.add_node(Gcs_xcom_node_information("127.0.0.1:12346", true));
   xcom_nodes.add_node(Gcs_xcom_node_information("127.0.0.1:12347", true));
 
-  auto suspect_is_me = [suspect = me.get()](node_list *nl) -> bool {
+  auto suspect_is_me = [suspect = me.get()](node_list *nl, uint32_t) -> bool {
     EXPECT_EQ(nl->node_list_len, 1);
     EXPECT_EQ(std::string{nl->node_list_val[0].address},
               suspect->get_member_id());
     return true;
   };
-  auto suspect_is_2 = [suspect = suspect_2.get()](node_list *nl) -> bool {
+  auto suspect_is_2 = [suspect = suspect_2.get()](node_list *nl,
+                                                  uint32_t) -> bool {
     EXPECT_EQ(nl->node_list_len, 1);
     EXPECT_EQ(std::string{nl->node_list_val[0].address},
               suspect->get_member_id());
@@ -2353,8 +2401,8 @@ TEST_F(XComControlTest, DoNotDisbandEntireGroup) {
   EXPECT_CALL(proxy, xcom_client_boot(_, _)).Times(1);
   EXPECT_CALL(proxy, xcom_client_remove_node(_, _))
       .Times(2)  // once for expulsion, once for leave
-      .WillOnce(WithArgs<0>(Invoke(suspect_is_2)))
-      .WillOnce(WithArgs<0>(Invoke(suspect_is_me)));
+      .WillOnce(Invoke(suspect_is_2))
+      .WillOnce(Invoke(suspect_is_me));
   EXPECT_CALL(proxy, delete_node_address(_, _))
       .Times(3);  // once for boot, once for expulsion, once for leave
 

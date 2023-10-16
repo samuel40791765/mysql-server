@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -23,6 +23,7 @@
 #include "plugin/group_replication/include/plugin_messages/group_action_message.h"
 #include "my_byteorder.h"
 #include "my_dbug.h"
+#include "plugin/group_replication/include/plugin_handlers/metrics_handler.h"
 
 Group_action_message::Group_action_message()
     : Plugin_gcs_message(CT_GROUP_ACTION_MESSAGE),
@@ -30,7 +31,8 @@ Group_action_message::Group_action_message()
       group_action_phase(ACTION_PHASE_END),
       return_value(0),
       primary_election_uuid(""),
-      gcs_protocol(Gcs_protocol_version::UNKNOWN) {}
+      gcs_protocol(Gcs_protocol_version::UNKNOWN),
+      m_action_initiator(ACTION_INITIATOR_UNKNOWN) {}
 
 Group_action_message::Group_action_message(enum_action_message_type type)
     : Plugin_gcs_message(CT_GROUP_ACTION_MESSAGE),
@@ -38,7 +40,8 @@ Group_action_message::Group_action_message(enum_action_message_type type)
       group_action_phase(ACTION_PHASE_END),
       return_value(0),
       primary_election_uuid(""),
-      gcs_protocol(Gcs_protocol_version::UNKNOWN) {}
+      gcs_protocol(Gcs_protocol_version::UNKNOWN),
+      m_action_initiator(ACTION_INITIATOR_UNKNOWN) {}
 
 Group_action_message::Group_action_message(
     std::string &primary_uuid, int32 &transaction_monitor_timeout_arg)
@@ -48,7 +51,8 @@ Group_action_message::Group_action_message(
       return_value(0),
       primary_election_uuid(primary_uuid),
       gcs_protocol(Gcs_protocol_version::UNKNOWN),
-      m_transaction_monitor_timeout(transaction_monitor_timeout_arg) {}
+      m_transaction_monitor_timeout(transaction_monitor_timeout_arg),
+      m_action_initiator(ACTION_INITIATOR_UNKNOWN) {}
 
 Group_action_message::Group_action_message(Gcs_protocol_version gcs_protocol)
     : Plugin_gcs_message(CT_GROUP_ACTION_MESSAGE),
@@ -56,7 +60,8 @@ Group_action_message::Group_action_message(Gcs_protocol_version gcs_protocol)
       group_action_phase(ACTION_PHASE_END),
       return_value(0),
       primary_election_uuid(""),
-      gcs_protocol(gcs_protocol) {}
+      gcs_protocol(gcs_protocol),
+      m_action_initiator(ACTION_INITIATOR_UNKNOWN) {}
 
 Group_action_message::~Group_action_message() = default;
 
@@ -97,24 +102,30 @@ void Group_action_message::decode_payload(const unsigned char *buffer,
         if (slider + payload_item_length <= end) {
           assert(ACTION_PRIMARY_ELECTION_MESSAGE == group_action_type);
           primary_election_uuid.assign(slider, slider + payload_item_length);
-          slider += payload_item_length;
         }
         break;
       case PIT_ACTION_SET_COMMUNICATION_PROTOCOL_VERSION:
         assert(ACTION_SET_COMMUNICATION_PROTOCOL_MESSAGE == group_action_type);
         if (slider + payload_item_length <= end) {
           gcs_protocol = static_cast<Gcs_protocol_version>(uint2korr(slider));
-          slider += payload_item_length;
         }
         break;
       case PIT_ACTION_TRANSACTION_MONITOR_TIMEOUT:
         assert(ACTION_PRIMARY_ELECTION_MESSAGE == group_action_type);
         if (slider + payload_item_length <= end) {
           m_transaction_monitor_timeout = static_cast<int32>(uint4korr(slider));
-          slider += payload_item_length;
+        }
+        break;
+      case PIT_ACTION_INITIATOR:
+        if (slider + payload_item_length <= end) {
+          m_action_initiator =
+              static_cast<enum_action_initiator_and_action>(uint2korr(slider));
         }
         break;
     }
+
+    // Seek to next payload item.
+    slider += payload_item_length;
   }
 }
 
@@ -150,6 +161,12 @@ void Group_action_message::encode_payload(
                              PIT_ACTION_SET_COMMUNICATION_PROTOCOL_VERSION,
                              static_cast<uint16>(gcs_protocol));
   }
+  assert(ACTION_INITIATOR_UNKNOWN != m_action_initiator);  // mandatory argument
+  encode_payload_item_int2(buffer, PIT_ACTION_INITIATOR,
+                           static_cast<int16>(m_action_initiator));
+
+  encode_payload_item_int8(buffer, PIT_SENT_TIMESTAMP,
+                           Metrics_handler::get_current_time());
 }
 
 Group_action_message::enum_action_message_type
@@ -179,4 +196,11 @@ const Gcs_protocol_version &Group_action_message::get_gcs_protocol() {
 
 int32 Group_action_message::get_transaction_monitor_timeout() {
   return m_transaction_monitor_timeout;
+}
+
+uint64_t Group_action_message::get_sent_timestamp(const unsigned char *buffer,
+                                                  size_t length) {
+  DBUG_TRACE;
+  return Plugin_gcs_message::get_sent_timestamp(buffer, length,
+                                                PIT_SENT_TIMESTAMP);
 }

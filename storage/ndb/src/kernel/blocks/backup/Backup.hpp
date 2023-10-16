@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -38,17 +38,17 @@
 #include <SignalCounter.hpp>
 #include <blocks/mutexes.hpp>
 
-#include <NdbTCP.h>
 #include <NdbTick.h>
 #include <Array.hpp>
 #include <Mutex.hpp>
 
 #include <signaldata/RedoStateRep.hpp>
-#include "../dblqh/Dblqh.hpp"
 #include <signaldata/BackupSignalData.hpp>
+#include "kernel/signaldata/FsOpenReq.hpp"
 
 #define JAM_FILE_ID 474
 
+class Dblqh;
 
 /**
  * Backup - This block manages database backup and restore
@@ -1324,7 +1324,7 @@ private:
   */
   /* Init at start of backup, timers etc... */
   void initReportStatus(Signal* signal, BackupRecordPtr ptr);
-  /* Sheck timers for reporting at certain points */
+  /* Check timers for reporting at certain points */
   void checkReportStatus(Signal* signal, BackupRecordPtr ptr);
   /* Send backup status, invoked either periodically, or explicitly */
   void reportStatus(Signal* signal, BackupRecordPtr ptr,

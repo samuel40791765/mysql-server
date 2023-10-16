@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -56,42 +56,50 @@ class XProtocolState : public ProtocolStateBase {
   std::unique_ptr<Mysqlx::Connection::Capabilities> caps_;
 };
 
-class MysqlRoutingXConnection : public MySQLRoutingConnectionBase {
- public:
-  using connector_type = Connector<std::unique_ptr<ConnectionBase>>;
-
+class MysqlRoutingXConnection
+    : public MySQLRoutingConnectionBase,
+      public std::enable_shared_from_this<MysqlRoutingXConnection> {
+ private:
+  // constructor
+  //
+  // use ::create() instead.
   MysqlRoutingXConnection(
       MySQLRoutingContext &context, RouteDestination *route_destination,
       std::unique_ptr<ConnectionBase> client_connection,
       std::unique_ptr<RoutingConnectionBase> client_routing_connection,
       std::function<void(MySQLRoutingConnectionBase *)> remove_callback)
       : MySQLRoutingConnectionBase{context, std::move(remove_callback)},
-        connector_{client_connection->io_ctx(), route_destination},
+        route_destination_{route_destination},
+        destinations_{route_destination_->destinations()},
+        connector_{client_connection->io_ctx(), route_destination,
+                   destinations_},
         socket_splicer_{std::make_unique<ProtocolSplicerBase>(
-            TlsSwitchableConnection{
-                std::move(client_connection),
-                std::move(client_routing_connection),
-                {context.source_ssl_mode(),
-                 [this]() -> SSL_CTX * {
-                   return this->context().source_ssl_ctx()->get();
-                 }},
-                std::make_unique<XProtocolState>()},
-            TlsSwitchableConnection{nullptr,
-                                    nullptr,
-                                    {context.dest_ssl_mode(),
-                                     [this]() -> SSL_CTX * {
-                                       auto make_res =
-                                           mysql_harness::make_tcp_address(
-                                               this->get_destination_id());
-                                       if (!make_res) {
-                                         return nullptr;
-                                       }
-
-                                       return this->context()
-                                           .dest_ssl_ctx(make_res->address())
-                                           ->get();
-                                     }},
+            TlsSwitchableConnection{std::move(client_connection),
+                                    std::move(client_routing_connection),
+                                    context.source_ssl_mode(),
+                                    std::make_unique<XProtocolState>()},
+            TlsSwitchableConnection{nullptr, nullptr, context.dest_ssl_mode(),
                                     std::make_unique<XProtocolState>()})} {}
+
+ public:
+  using connector_type = Connector<std::unique_ptr<ConnectionBase>>;
+
+  // create a shared_ptr<ThisClass>
+  template <typename... Args>
+  [[nodiscard]] static std::shared_ptr<MysqlRoutingXConnection> create(
+      // clang-format off
+      Args &&... args) {
+    // clang-format on
+
+    // can't use make_unique<> here as the constructor is private.
+    return std::shared_ptr<MysqlRoutingXConnection>(
+        new MysqlRoutingXConnection(std::forward<Args>(args)...));
+  }
+
+  // get a shared-ptr that refers the same 'this'
+  std::shared_ptr<MysqlRoutingXConnection> getptr() {
+    return shared_from_this();
+  }
 
   static stdx::expected<size_t, std::error_code> encode_error_packet(
       std::vector<uint8_t> &error_frame, uint16_t error_code,
@@ -114,10 +122,7 @@ class MysqlRoutingXConnection : public MySQLRoutingConnectionBase {
     return socket_splicer()->server_conn().endpoint();
   }
 
-  void disconnect() override {
-    (void)socket_splicer()->client_conn().cancel();
-    (void)socket_splicer()->server_conn().cancel();
-  }
+  void disconnect() override;
 
   enum class Function {
     kClientRecvCmd,
@@ -218,7 +223,7 @@ class MysqlRoutingXConnection : public MySQLRoutingConnectionBase {
     kServerRecvExpectOpenResponseForward,
     kServerRecvExpectOpenResponseForwardLast,
 
-    // expect::clsoe
+    // expect::close
     kClientExpectClose,
     kServerRecvExpectCloseResponse,
     kServerRecvExpectCloseResponseForward,
@@ -546,6 +551,9 @@ class MysqlRoutingXConnection : public MySQLRoutingConnectionBase {
   void wait_client_close();
   void finish();
 
+  void server_tls_shutdown();
+  void client_tls_shutdown();
+
   void done();
 
   stdx::expected<void, std::error_code> forward_tls(Channel *src_channel,
@@ -594,6 +602,8 @@ class MysqlRoutingXConnection : public MySQLRoutingConnectionBase {
   void server_recv_switch_tls_response();
   void tls_connect_init();
   void tls_connect();
+
+  void client_con_close();
 
   void client_recv_cmd();
 
@@ -743,6 +753,8 @@ class MysqlRoutingXConnection : public MySQLRoutingConnectionBase {
   connector_type &connector() { return connector_; }
   const connector_type &connector() const { return connector_; }
 
+  RouteDestination *route_destination_;
+  Destinations destinations_;
   connector_type connector_;
 
   std::unique_ptr<ProtocolSplicerBase> socket_splicer_;

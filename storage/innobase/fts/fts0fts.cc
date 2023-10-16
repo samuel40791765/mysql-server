@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -45,7 +45,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ha_prototypes.h"
 #include "lob0lob.h"
 
+#include "m_string.h"
 #include "my_dbug.h"
+#include "mysql/strings/m_ctype.h"
 
 #include "dict0dd.h"
 #include "lob0lob.h"
@@ -174,7 +176,7 @@ static const char *fts_config_table_insert_values_sql =
     "" /* Note: 0 == FTS_TABLE_STATE_RUNNING */
     "INSERT INTO $config_table VALUES ('" FTS_TABLE_STATE "', '0');\n";
 
-/** FTS tokenize parmameter for plugin parser */
+/** FTS tokenize parameter for plugin parser */
 struct fts_tokenize_param_t {
   fts_doc_t *result_doc; /*!< Result doc for tokens */
   ulint add_pos;         /*!< Added position for tokens */
@@ -534,10 +536,10 @@ fts_cache_t *fts_cache_create(
 
   cache->cache_heap = heap;
 
-  rw_lock_create(fts_cache_rw_lock_key, &cache->lock, SYNC_FTS_CACHE);
+  rw_lock_create(fts_cache_rw_lock_key, &cache->lock, LATCH_ID_FTS_CACHE);
 
   rw_lock_create(fts_cache_init_rw_lock_key, &cache->init_lock,
-                 SYNC_FTS_CACHE_INIT);
+                 LATCH_ID_FTS_CACHE_INIT);
 
   mutex_create(LATCH_ID_FTS_DELETE, &cache->deleted_lock);
 
@@ -2012,7 +2014,7 @@ static dict_table_t *fts_create_one_index_table(trx_t *trx,
                          true);
 
   /* The precise type calculation is as follows:
-  least signficiant byte: MySQL type code (not applicable for sys cols)
+  least significant byte: MySQL type code (not applicable for sys cols)
   second least : DATA_NOT_NULL | DATA_BINARY_TYPE
   third least  : the MySQL charset-collation code (DATA_MTYPE_MAX) */
 
@@ -2317,7 +2319,7 @@ FTS index on the given table. row_mysql_lock_data_dictionary must have
 been called before this.
 
 All FTS AUX Index tables have the following schema.
-CREAT TABLE $FTS_PREFIX_INDEX_[1-6](
+CREATE TABLE $FTS_PREFIX_INDEX_[1-6](
         word            VARCHAR(FTS_MAX_WORD_LEN),
         first_doc_id    INT NOT NULL,
         last_doc_id     UNSIGNED NOT NULL,
@@ -3634,7 +3636,7 @@ static ulint fts_add_doc_by_id(fts_trx_table_t *ftt, doc_id_t doc_id,
     }
 
     offsets = rec_get_offsets(clust_rec, clust_index, nullptr, ULINT_UNDEFINED,
-                              &heap);
+                              UT_LOCATION_HERE, &heap);
 
     for (ulint i = 0; i < num_idx; ++i) {
       fts_doc_t doc;
@@ -3790,7 +3792,8 @@ doc_id_t fts_get_max_doc_id(dict_table_t *table) /*!< in: user table */
       goto func_exit;
     }
 
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     data = rec_get_nth_field(nullptr, rec, offsets, 0, &len);
 
@@ -3874,7 +3877,7 @@ dberr_t fts_doc_fetch_by_doc_id(
       during recent crash.
       In the case that all fulltext indexes are dropped
       for a table, we will keep the "hidden" FTS_DOC_ID
-      column, and this scan is to retreive the largest
+      column, and this scan is to retrieve the largest
       DOC ID being used in the table to determine the
       appropriate next DOC ID.
       In the case of there exists fulltext index(es), this
@@ -4378,7 +4381,7 @@ static dberr_t fts_sync(fts_sync_t *sync, bool unlock_cache, bool wait,
 begin_sync:
   if (cache->total_size > fts_max_cache_size) {
     /* Avoid the case: sync never finish when
-    insert/update keeps comming. */
+    insert/update keeps coming. */
     ut_ad(sync->unlock_cache);
     sync->unlock_cache = false;
   }
@@ -4721,7 +4724,7 @@ int fts_tokenize_document_internal(
  Refer to 'MYSQL_FTPARSER_PARAM' for more detail.
  @return always returns 0 */
 static int fts_tokenize_add_word_for_parser(
-    MYSQL_FTPARSER_PARAM *param,               /* in: parser paramter */
+    MYSQL_FTPARSER_PARAM *param,               /* in: parser parameter */
     char *word,                                /* in: token word */
     int word_len,                              /* in: word len */
     MYSQL_FTPARSER_BOOLEAN_INFO *boolean_info) /* in: word boolean info */
@@ -4758,7 +4761,7 @@ static void fts_tokenize_by_parser(
 
   ut_a(parser);
 
-  /* Set paramters for param */
+  /* Set parameters for param */
   param.mysql_parse = fts_tokenize_document_internal;
   param.mysql_add_word = fts_tokenize_add_word_for_parser;
   param.mysql_ftparam = fts_param;
@@ -5189,7 +5192,8 @@ doc_id_t fts_get_doc_id_from_rec(dict_table_t *table, const rec_t *rec,
 
   rec_offs_init(offsets_);
 
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &my_heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &my_heap);
 
   col_no = index->get_col_pos(table->fts->doc_col);
 
@@ -5648,7 +5652,7 @@ static void fts_undo_last_stmt(
   }
 }
 
-/** Rollback to savepoint indentified by name. */
+/** Rollback to savepoint identified by name. */
 void fts_savepoint_rollback_last_stmt(trx_t *trx) /*!< in: transaction */
 {
   ib_vector_t *savepoints;
@@ -5688,7 +5692,7 @@ void fts_savepoint_rollback_last_stmt(trx_t *trx) /*!< in: transaction */
   }
 }
 
-/** Rollback to savepoint indentified by name. */
+/** Rollback to savepoint identified by name. */
 void fts_savepoint_rollback(trx_t *trx,       /*!< in: transaction */
                             const char *name) /*!< in: savepoint name */
 {
@@ -6335,7 +6339,7 @@ inline table_id_t fts_upgrade_get_5_7_table_id(table_id_t table_id) {
 /** Upgrade FTS AUX Tables. The FTS common and aux tables are
 renamed because they have table_id in their name. We move table_ids
 by DICT_MAX_DD_TABLES offset. Aux tables are registered into DD
-afer rename.
+after rename.
 @param[in]      table           InnoDB table object
 @return DB_SUCCESS or error code */
 dberr_t fts_upgrade_aux_tables(dict_table_t *table) {

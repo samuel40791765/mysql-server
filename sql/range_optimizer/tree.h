@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -975,10 +975,6 @@ class SEL_TREE {
   /* The members below are filled/used only after get_mm_tree is done */
   Key_map ror_scans_map; /* bitmask of ROR scan-able elements in keys */
   uint n_ror_scans;      /* number of set bits in ror_scans_map */
-
-  ROR_SCAN_INFO **ror_scans;     /* list of ROR key scans */
-  ROR_SCAN_INFO **ror_scans_end; /* last ROR scan */
-  /* Note that #records for each key scan is stored in table->quick_rows */
 
   /**
     Convenience function for removing an element in keys[]. The typical

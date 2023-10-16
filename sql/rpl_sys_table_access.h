@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,8 @@
 
 class Json_wrapper;
 class THD;
+
+struct CHARSET_INFO;
 struct TABLE;
 
 /**
@@ -44,7 +46,7 @@ class Rpl_sys_table_access {
   /**
     Construction.
     @param[in]  schema_name   Database where the table resides
-    @param[in]  table_name    Table to be openned
+    @param[in]  table_name    Table to be opened
     @param[in]  max_num_field Maximum number of fields
   */
   Rpl_sys_table_access(const std::string &schema_name,
@@ -280,8 +282,8 @@ class Rpl_sys_table_access {
   /* The variable determine if table is opened or closed successfully. */
   bool m_error{false};
 
-  /* TABLE_LIST object */
-  TABLE_LIST *m_table_list{nullptr};
+  /* Table_ref object */
+  Table_ref *m_table_list{nullptr};
   enum thr_lock_type m_lock_type;
 
   std::string m_schema_name;

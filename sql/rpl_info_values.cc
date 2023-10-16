@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -44,6 +44,7 @@ bool Rpl_info_values::init() {
   if (!value && !(value = new (std::nothrow) String[ninfo])) return true;
   if (bitmap_init(&is_null, nullptr, ninfo)) {
     delete[] value;
+    value = nullptr;
     return true;
   }
   bitmap_clear_all(&is_null);

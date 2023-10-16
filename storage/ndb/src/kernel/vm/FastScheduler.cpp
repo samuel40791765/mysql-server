@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -46,7 +46,7 @@
 
 FastScheduler::FastScheduler()
 {
-   // These constants work for sun only, but they should be initated from
+   // These constants work for sun only, but they should be initiated from
    // Emulator.C as soon as VMTime has been initiated.
    theJobBuffers[0].newBuffer(JBASIZE);
    theJobBuffers[1].newBuffer(JBBSIZE);

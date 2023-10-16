@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -134,14 +134,14 @@ struct File_reader : private ut::Non_copyable {
   /** File buffer bounds. */
   Bounds m_bounds{};
 
-  /** Auxilliary buffer for records that span across pages. */
+  /** Auxiliary buffer for records that span across pages. */
   byte *m_aux_buf{};
 
   /** IO buffer size in bytes. */
   size_t m_buffer_size{};
 
   /** Aligned IO buffer. */
-  Aligned_buffer m_aligned_buffer{};
+  ut::unique_ptr_aligned<byte[]> m_aligned_buffer{};
 
   /** File buffer for reading. */
   IO_buffer m_io_buffer{};

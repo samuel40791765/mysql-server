@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,7 +27,13 @@
 
 class Sql_cmd_ddl : public Sql_cmd {
  public:
-  bool is_dml() const final { return false; }
+  enum enum_sql_cmd_type sql_cmd_type() const override {
+    /*
+      Somewhat unsurprisingly, anything sub-classed to Sql_cmd_ddl
+      identifies as DDL by default.
+    */
+    return SQL_CMD_DDL;
+  }
 };
 
 #endif  // SQL_CMD_DDL_INCLUDED

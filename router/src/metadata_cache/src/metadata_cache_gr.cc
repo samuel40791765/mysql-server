@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2019, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -29,12 +29,12 @@
  * ========
  *
  * Metadata Cache plugin communicates with Metadata and Group Replication
- * exposed by the cluster to obtain its topology and availablity information.
+ * exposed by the cluster to obtain its topology and availability information.
  * The digest of this information is then exposed to Routing Plugin in form of a
  * routing table.
  * Key components:
  * - Metadata Cache API - interface through which it exposes its service
- * - Refresh Mechansim - responsible for updating routing table
+ * - Refresh Mechanism - responsible for updating routing table
  *
  *
  *
@@ -167,7 +167,7 @@
  *
  * ### Stage 2: Query GR, combine results with MD, determine availability
  *
- * Implemented in: `ClusterMetadata::update_cluster_status()`
+ * Implemented in: `ClusterMetadata::update_cluster_status_from_gr()`
  *
  * Here MDC iterates through the list of GR members obtained from MD in Stage
  * 1.2, until it finds a "trustworthy" GR node. A "trustworthy" GR node is one
@@ -195,7 +195,7 @@
  *
  * #### Stage 2.1: Connect to GR node
  *
- * Implemented in: `ClusterMetadata::update_cluster_status()`
+ * Implemented in: `ClusterMetadata::update_cluster_status_from_gr()`
  *
  * New connection to GR node is established (on failure, Stage 2 progresses to
  * next iteration).
@@ -236,8 +236,8 @@
  *
  * #### Stage 2.3: Quorum test
  *
- * Implemented in: `ClusterMetadata::update_cluster_status()` and
- *                   `ClusterMetadata::check_cluster_status()`
+ * Implemented in: `ClusterMetadata::update_cluster_status_from_gr()` and
+ *                   `ClusterMetadata::check_cluster_status_in_gr()`
  *
  * MD and GR data collected up to now are compared, to see if GR node just
  * queried belongs to an available cluster (or to an available cluster
@@ -279,7 +279,7 @@
  * MySQL Shell to reconfigure the cluster, which automatically updates both
  * GR and MD, keeping them in sync. But if for some reason the user tinkers with
  * GR directly and adds nodes without updating MD accordingly,
- * availablity/quorum calculations will be skewed. We run checks to detect such
+ * availability/quorum calculations will be skewed. We run checks to detect such
  * situation, and log a warning like so:
  *
  *     log_error("Member %s:%d (%s) found in Group Replication, yet is not
@@ -397,7 +397,7 @@
  *      also deployed on an InnoDB cluster.
  *
  * [02] It might be better to always start from the last successfully-connected
- *      server, rather than 1st on the list, to avoid unneccessary connection
+ *      server, rather than 1st on the list, to avoid unnecessary connection
  *      attempts when 1st server is dead.
  *
  *
@@ -414,17 +414,39 @@
 
 IMPORT_LOG_FUNCTIONS()
 
+namespace {
+std::string get_read_replica_info(
+    const metadata_cache::ManagedInstance &instance) {
+  return instance.type == mysqlrouter::InstanceType::ReadReplica
+             ? " Read Replica"
+             : "";
+}
+
+std::string get_ignored_info(const metadata_cache::ManagedInstance &instance) {
+  std::string result;
+  if (instance.ignore) {
+    result = instance.type == mysqlrouter::InstanceType::ReadReplica
+                 ? " [ignored]"
+                 : " [replaced by Read Replicas]";
+  }
+
+  return result;
+}
+}  // namespace
+
 bool GRMetadataCache::refresh(bool needs_writable_node) {
   bool changed{false};
   uint64_t view_id{0};
   size_t metadata_server_id{0};
   changed = false;
   std::size_t instance_id;
+
+  const bool whole_topology = fetch_whole_topology();
+
   // Fetch the metadata and store it in a temporary variable.
   const auto res = meta_data_->fetch_cluster_topology(
       terminated_, target_cluster_, router_id_, metadata_servers_,
-      needs_writable_node, cluster_type_specific_id_, clusterset_id_,
-      instance_id);
+      needs_writable_node, clusterset_id_, whole_topology, instance_id);
 
   if (!res) {
     const bool md_servers_reachable =
@@ -443,47 +465,47 @@ bool GRMetadataCache::refresh(bool needs_writable_node) {
     // Ensure that the refresh does not result in an inconsistency during
     // the lookup.
     std::lock_guard<std::mutex> lock(cache_refreshing_mutex_);
-    if (cluster_data_ != cluster_topology.cluster_data) {
-      cluster_data_ = cluster_topology.cluster_data;
+    if (cluster_topology_ != cluster_topology) {
+      cluster_topology_ = cluster_topology;
       changed = true;
     } else {
-      cluster_data_.writable_server =
-          cluster_topology.cluster_data.writable_server;
+      cluster_topology_.writable_server = cluster_topology.writable_server;
     }
   }
 
-  on_md_refresh(changed, cluster_data_.members);
+  on_md_refresh(changed, cluster_topology_);
 
   // we want to trigger those actions not only if the metadata has really
   // changed but also when something external (like unsuccessful client
   // connection) triggered the refresh so that we verified if this wasn't
   // false alarm and turn it off if it was
-  view_id = cluster_data_.view_id;
+  view_id = cluster_topology_.view_id;
   if (changed) {
     log_info(
-        "Potential changes detected in cluster '%s' after metadata refresh",
-        target_cluster_.c_str());
+        "Potential changes detected in cluster after metadata refresh "
+        "(view_id=%" PRIu64 ")",
+        view_id);
     // dump some informational/debugging information about the cluster
     log_cluster_details();
-    if (cluster_data_.empty())
-      log_error("Metadata for cluster '%s' is empty!", target_cluster_.c_str());
-    else {
-      log_info(
-          "Metadata for cluster '%s' has %zu member(s), %s: (view_id=%" PRIu64
-          ")",
-          target_cluster_.c_str(), cluster_data_.members.size(),
-          cluster_data_.single_primary_mode ? "single-primary"
-                                            : "multi-primary",
-          view_id);
-      for (const auto &mi : cluster_data_.members) {
-        log_info("    %s:%i / %i - mode=%s %s", mi.host.c_str(), mi.port,
-                 mi.xport, to_string(mi.mode).c_str(),
-                 get_hidden_info(mi).c_str());
+    for (const auto &cluster : cluster_topology_.clusters_data) {
+      if (cluster.members.empty())
+        log_error("Metadata for cluster '%s' is empty!", cluster.name.c_str());
+      else {
+        log_info(
+            "Metadata for cluster '%s' has %zu member(s), %s: ",
+            cluster.name.c_str(), cluster.members.size(),
+            cluster.single_primary_mode ? "single-primary" : "multi-primary");
+        for (const auto &mi : cluster.members) {
+          log_info(
+              "    %s:%i / %i - mode=%s%s%s%s", mi.host.c_str(), mi.port,
+              mi.xport, to_string(mi.mode).c_str(), get_hidden_info(mi).c_str(),
+              get_read_replica_info(mi).c_str(), get_ignored_info(mi).c_str());
+        }
       }
     }
 
-    on_instances_changed(/*md_servers_reachable=*/true, cluster_data_.members,
-                         cluster_topology.metadata_servers, view_id);
+    on_instances_changed(/*md_servers_reachable=*/true, cluster_topology,
+                         view_id);
     // never let the list that we iterate over become empty as we would
     // not recover from that
     if (!cluster_topology.metadata_servers.empty()) {
@@ -504,17 +526,12 @@ void GRMetadataCache::log_cluster_details() const {
   const auto cluster_type = meta_data_->get_cluster_type();
 
   if (cluster_type == mysqlrouter::ClusterType::GR_CS) {
-    const std::string cluster_role =
-        target_cluster_.is_primary() ? "primary" : "replica";
-    const std::string cluster_invalidated =
-        target_cluster_.is_invalidated()
-            ? "cluster is marked as invalid in the metadata; "
-            : "";
-
     bool has_rw_nodes{false};
-    for (const auto &mi : cluster_data_.members) {
+    const auto cluster_members = cluster_topology_.get_all_members();
+    for (const auto &mi : cluster_members) {
       if (mi.mode == metadata_cache::ServerMode::ReadWrite) {
         has_rw_nodes = true;
+        break;
       }
     }
 
@@ -522,10 +539,21 @@ void GRMetadataCache::log_cluster_details() const {
                                          ? "accepting RW connections"
                                          : "not accepting RW connections";
 
-    log_info(
-        "Target cluster '%s' is part of a ClusterSet; role of a cluster within "
-        "a ClusterSet is '%s'; %s%s",
-        target_cluster_.c_str(), cluster_role.c_str(),
-        cluster_invalidated.c_str(), accepting_rw.c_str());
+    log_info("Target cluster(s) are part of a ClusterSet: %s",
+             accepting_rw.c_str());
+
+    for (const auto &cluster : cluster_topology_.clusters_data) {
+      const std::string cluster_role =
+          cluster.is_primary ? "primary" : "replica";
+      const std::string cluster_invalidated =
+          cluster.is_invalidated
+              ? "cluster is marked as invalid in the metadata; "
+              : "";
+
+      log_info(
+          "Cluster '%s': role of a cluster within a ClusterSet is '%s'; %s",
+          cluster.name.c_str(), cluster_role.c_str(),
+          cluster_invalidated.c_str());
+    }
   }
 }

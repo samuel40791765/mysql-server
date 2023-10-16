@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -57,7 +57,7 @@ will wait for its execution to complete if it is already called by another
 thread or will do nothing if the function has already completed its execution
 earlier.
 
-This mimics pthread_once(3), but unfortunatelly pthread_once(3) does not
+This mimics pthread_once(3), but unfortunately pthread_once(3) does not
 support passing arguments to the init_routine() function. We should use
 std::call_once() when we start compiling with C++11 enabled. */
 class os_once {

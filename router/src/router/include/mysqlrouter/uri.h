@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -147,7 +147,7 @@ class ROUTER_LIB_EXPORT URI {
 
 std::ostream &operator<<(std::ostream &strm, const URI &uri);
 
-class URIParser {
+class ROUTER_LIB_EXPORT URIParser {
  public:
   static URI parse(const std::string &uri, bool allow_path_rootless = true);
   static URI parse_shorthand_uri(const std::string &uri,

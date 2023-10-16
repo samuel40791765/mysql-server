@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -20,7 +20,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-/* The hash functions used for saveing keys */
+/* The hash functions used for saving keys */
 
 #include <inttypes.h>
 #include <sys/types.h>
@@ -28,12 +28,12 @@
 #include <algorithm>
 #include <cmath>
 
-#include "m_ctype.h"
 #include "my_byteorder.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_macros.h"
+#include "mysql/strings/m_ctype.h"
 #include "storage/heap/heapdef.h"
 
 /*
@@ -360,7 +360,7 @@ uint64 hp_rec_hashnr(HP_KEYDEF *keydef, const uchar *rec) {
 
   RETURN
     0		Key is identical
-    <> 0 	Key differes
+    <> 0 	Key differs
 */
 
 int hp_rec_key_cmp(HP_KEYDEF *keydef, const uchar *rec1, const uchar *rec2) {
@@ -805,7 +805,7 @@ void heap_update_auto_increment(HP_INFO *info, const uchar *record) {
   }
 
   /*
-    The following code works becasue if s_value < 0 then value is 0
+    The following code works because if s_value < 0 then value is 0
     and if s_value == 0 then value will contain either s_value or the
     correct value.
   */

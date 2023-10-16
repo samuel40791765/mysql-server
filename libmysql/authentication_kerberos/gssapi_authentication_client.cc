@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -121,7 +121,7 @@ void Gssapi_client::set_upn_info(const std::string &upn,
   log_client_dbg("Set UPN.");
   m_user_principal_name = {upn};
   m_password = {pwd};
-  /* Kerberos core uses UPN for all other operations. UPN has changed, relases
+  /* Kerberos core uses UPN for all other operations. UPN has changed, releases
    * current object and create */
   if (m_kerberos.get()) {
     m_kerberos.release();
@@ -148,11 +148,4 @@ std::string Gssapi_client::get_user_name() {
     }
   }
   return cached_user_name;
-}
-
-I_Kerberos_client *I_Kerberos_client::create(
-    const std::string &spn, MYSQL_PLUGIN_VIO *vio, const std::string &upn,
-    const std::string &password, const std::string &kdc_host [[maybe_unused]]) {
-  Gssapi_client *client = new Gssapi_client(spn, vio, upn, password);
-  return static_cast<I_Kerberos_client *>(client);
 }

@@ -1,7 +1,7 @@
 #ifndef ITEM_JSON_FUNC_INCLUDED
 #define ITEM_JSON_FUNC_INCLUDED
 
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,23 +31,23 @@
 #include <memory>
 #include <utility>  // std::forward
 
-#include "m_ctype.h"
-
 #include "my_inttypes.h"
 #include "my_time.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysql_time.h"
-#include "prealloced_array.h"  // Prealloced_array
+#include "prealloced_array.h"      // Prealloced_array
+#include "sql-common/json_path.h"  // Json_path
 #include "sql/enum_query_type.h"
 #include "sql/field.h"
 #include "sql/item.h"
 #include "sql/item_cmpfunc.h"
 #include "sql/item_func.h"
 #include "sql/item_strfunc.h"    // Item_str_func
-#include "sql/json_path.h"       // Json_path
 #include "sql/mem_root_array.h"  // Mem_root_array
 #include "sql/parse_location.h"  // POS
+#include "sql/psi_memory_key.h"  // key_memory_JSON
 #include "sql_string.h"
 
 class Json_schema_validator;
@@ -665,7 +665,8 @@ class Item_func_json_set_replace : public Item_func_modify_json_in_path {
   template <typename... Args>
   explicit Item_func_json_set_replace(bool json_set, Args &&... parent_args)
       : Item_func_modify_json_in_path(std::forward<Args>(parent_args)...),
-        m_json_set(json_set) {}
+        m_json_set(json_set),
+        m_path(key_memory_JSON) {}
 
  public:
   bool val_json(Json_wrapper *wr) override;
@@ -879,7 +880,7 @@ class Item_func_json_quote : public Item_str_func {
      Any interior character could be replaced by a 6 character
      escape sequence. Plus we will add 2 framing quote characters.
     */
-    uint32 max_char_length = (6 * args[0]->max_char_length()) + 2;
+    const uint32 max_char_length = (6 * args[0]->max_char_length()) + 2;
     set_data_type_string(max_char_length, &my_charset_utf8mb4_bin);
     return false;
   }
@@ -892,6 +893,7 @@ class Item_func_json_quote : public Item_str_func {
 */
 class Item_func_json_unquote : public Item_str_func {
   String m_value;
+  String m_conversion_buffer;
 
  public:
   Item_func_json_unquote(const POS &pos, PT_item_list *a)
@@ -942,6 +944,8 @@ class Item_func_json_storage_size final : public Item_int_func {
 
   bool resolve_type(THD *thd) override {
     if (param_type_is_default(thd, 0, -1, MYSQL_TYPE_JSON)) return true;
+    if (Item_int_func::resolve_type(thd)) return true;
+    set_nullable(true);
     return false;
   }
 
@@ -987,6 +991,9 @@ class Item_func_array_cast final : public Item_func {
     reallocation on each row.
   */
   unique_ptr_destroy_only<Json_array> m_result_array;
+
+ protected:
+  void add_json_info(Json_object *obj) override;
 
  public:
   Item_func_array_cast(const POS &pos, Item *a, Cast_target type, uint len_arg,
@@ -1166,7 +1173,7 @@ class Item_func_json_value final : public Item_func {
 
 /**
   Turn a GEOMETRY value into a JSON value per the GeoJSON specification
-  revison 1.0. This method is implemented in item_geofunc.cc.
+  revision 1.0. This method is implemented in item_geofunc.cc.
 
   @param[in,out] wr The wrapper to be stuffed with the JSON value.
   @param[in]     swkb The source GEOMETRY value.
@@ -1236,8 +1243,9 @@ bool get_json_object_member_name(const THD *thd, Item *arg_item, String *value,
                                  size_t *safe_length);
 using Json_dom_ptr = std::unique_ptr<Json_dom>;
 
-bool parse_json(const String &res, uint arg_idx, const char *func_name,
-                Json_dom_ptr *dom, bool require_str_or_json, bool *parse_error);
+bool parse_json(const String &res, Json_dom_ptr *dom, bool require_str_or_json,
+                const JsonParseErrorHandler &error_handler,
+                const JsonDocumentDepthHandler &depth_handler);
 
 typedef Prealloced_array<size_t, 16> Sorted_index_array;
 bool sort_and_remove_dups(const Json_wrapper &orig, Sorted_index_array *v);

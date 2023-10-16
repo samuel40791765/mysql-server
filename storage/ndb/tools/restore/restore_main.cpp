@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -36,11 +36,13 @@
 #include <ndb_version.h>
 #include "my_getopt.h"
 #include "util/ndb_openssl_evp.h" // ndb_openssl_evp::library_init()
+#include "portlib/NdbTick.h"
 
 #include "../src/ndbapi/NdbDictionaryImpl.hpp"
 #include "consumer_printer.hpp"
 #include "consumer_restore.hpp"
 #include "my_alloc.h"
+#include "nulls.h"
 
 #include <NdbThread.h>
 
@@ -100,6 +102,7 @@ Vector<BaseString> g_include_databases, g_exclude_databases;
 Properties g_rewrite_databases;
 NdbRecordPrintFormat g_ndbrecord_print_format;
 unsigned int opt_no_binlog;
+static bool opt_timestamp_printouts;
 
 Ndb_cluster_connection *g_cluster_connection = NULL;
 
@@ -273,12 +276,25 @@ static ExtraRestoreInfo g_extra_restore_info;
 
 static struct my_option my_long_options[] =
 {
-  NDB_STD_OPTS("ndb_restore"),
+  NdbStdOpt::usage,
+  NdbStdOpt::help,
+  NdbStdOpt::version,
+  NdbStdOpt::ndb_connectstring,
+  NdbStdOpt::mgmd_host,
+  NdbStdOpt::connectstring,
+  NdbStdOpt::ndb_nodeid,
+  NdbStdOpt::connect_retry_delay,
+  NdbStdOpt::connect_retries,
+  NDB_STD_OPT_DEBUG
+  { "timestamp_printouts", NDB_OPT_NOSHORT,
+    "Add a timestamp to the logger messages info, error and debug",
+    (uchar**) &opt_timestamp_printouts, (uchar**) &opt_timestamp_printouts, 0,
+    GET_BOOL, NO_ARG, true, 0, 0, 0, 0, 0 },
   { "connect", 'c', "same as --connect-string",
-    (uchar**) &opt_ndb_connectstring, (uchar**) &opt_ndb_connectstring, 0,
+    &opt_ndb_connectstring, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "nodeid", 'n', "Backup files from node with id",
-    (uchar**) &ga_nodeId, (uchar**) &ga_nodeId, 0,
+    &ga_nodeId, nullptr, nullptr,
     GET_INT, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "backup-password", NDB_OPT_NOSHORT, "Encryption password for backup file",
     nullptr, nullptr, 0,
@@ -288,241 +304,206 @@ static struct my_option my_long_options[] =
     &opt_backup_password_from_stdin.opt_value, nullptr, 0,
     GET_BOOL, NO_ARG, 0, 0, 0, nullptr, 0, &opt_backup_password_from_stdin},
   { "backupid", 'b', "Backup id",
-    (uchar**) &ga_backupId, (uchar**) &ga_backupId, 0,
+    &ga_backupId, nullptr, nullptr,
     GET_INT, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "decrypt", NDB_OPT_NOSHORT, "Decrypt file",
-    (uchar**) &opt_decrypt, (uchar**) &opt_decrypt, 0,
+    &opt_decrypt, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "restore_data", 'r', 
     "Restore table data/logs into NDB Cluster using NDBAPI", 
-    (uchar**) &_restore_data, (uchar**) &_restore_data,  0,
+    &_restore_data, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "restore_meta", 'm',
     "Restore meta data into NDB Cluster using NDBAPI",
-    (uchar**) &_restore_meta, (uchar**) &_restore_meta,  0,
+    &_restore_meta, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "no-upgrade", 'u',
     "Don't upgrade array type for var attributes, which don't resize VAR data and don't change column attributes",
-    (uchar**) &ga_no_upgrade, (uchar**) &ga_no_upgrade, 0,
+    &ga_no_upgrade, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "promote-attributes", 'A',
     "Allow attributes to be promoted when restoring data from backup",
-    (uchar**) &ga_promote_attributes, (uchar**) &ga_promote_attributes, 0,
+    &ga_promote_attributes, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "lossy-conversions", 'L',
     "Allow lossy conversions for attributes (type demotions or integral"
     " signed/unsigned type changes) when restoring data from backup",
-    (uchar**) &ga_demote_attributes, (uchar**) &ga_demote_attributes, 0,
+    &ga_demote_attributes, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "preserve-trailing-spaces", 'P',
     "Allow to preserve the tailing spaces (including paddings) When char->varchar or binary->varbinary is promoted",
-    (uchar**) &_preserve_trailing_spaces, (uchar**)_preserve_trailing_spaces , 0,
+    &_preserve_trailing_spaces, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "no-restore-disk-objects", 'd',
     "Dont restore disk objects (tablespace/logfilegroups etc)",
-    (uchar**) &_no_restore_disk, (uchar**) &_no_restore_disk,  0,
+    &_no_restore_disk, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "restore_epoch", 'e', 
     "Restore epoch info into the status table. Convenient for starting MySQL "
     "Cluster replication. The row in "
     NDB_REP_DB "." NDB_APPLY_TABLE " with id 0 will be updated/inserted.", 
-    (uchar**) &ga_restore_epoch, (uchar**) &ga_restore_epoch,  0,
+    &ga_restore_epoch, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "with-apply-status", 'w',
     "Restore the " NDB_APPLY_TABLE " system table content from the backup.",
-    (uchar**) &ga_with_apply_status, (uchar**) &ga_with_apply_status,
-    0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
+    &ga_with_apply_status, nullptr, nullptr,
+    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "skip-table-check", 's', "Skip table structure check during restore of data",
-   (uchar**) &ga_skip_table_check, (uchar**) &ga_skip_table_check, 0,
+   &ga_skip_table_check, nullptr, nullptr,
    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "parallelism", 'p',
     "No of parallel transactions during restore of data."
     "(parallelism can be 1 to 1024)", 
-    (uchar**) &ga_nParallelism, (uchar**) &ga_nParallelism, 0,
+    &ga_nParallelism, nullptr, nullptr,
     GET_INT, REQUIRED_ARG, 128, 1, 1024, 0, 1, 0 },
   { "print", NDB_OPT_NOSHORT, "Print metadata, data and log to stdout",
-    (uchar**) &_print, (uchar**) &_print, 0,
+    &_print, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "print_data", NDB_OPT_NOSHORT, "Print data to stdout",
-    (uchar**) &_print_data, (uchar**) &_print_data, 0,
+    &_print_data, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "print_meta", NDB_OPT_NOSHORT, "Print meta data to stdout",
-    (uchar**) &_print_meta, (uchar**) &_print_meta,  0,
+    &_print_meta, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "print_log", NDB_OPT_NOSHORT, "Print log to stdout",
-    (uchar**) &_print_log, (uchar**) &_print_log,  0,
+    &_print_log, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "print_sql_log", NDB_OPT_NOSHORT, "Print SQL log to stdout",
-    (uchar**) &_print_sql_log, (uchar**) &_print_sql_log,  0,
+    &_print_sql_log, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "backup_path", NDB_OPT_NOSHORT, "Path to backup files",
-    (uchar**) &ga_backupPath, (uchar**) &ga_backupPath, 0,
+    &ga_backupPath, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "dont_ignore_systab_0", 'f',
     "Do not ignore system table during --print-data.", 
-    (uchar**) &ga_dont_ignore_systab_0, (uchar**) &ga_dont_ignore_systab_0, 0,
+    &ga_dont_ignore_systab_0, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "ndb-nodegroup-map", OPT_NODEGROUP_MAP,
     "Nodegroup specification. Not supported anymore, value will be ignored.",
-    nullptr,
-    nullptr,
-    0,
+    nullptr, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "fields-enclosed-by", NDB_OPT_NOSHORT,
     "Fields are enclosed by ...",
-    (uchar**) &opt_fields_enclosed_by, (uchar**) &opt_fields_enclosed_by, 0,
+    &opt_fields_enclosed_by, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "fields-terminated-by", NDB_OPT_NOSHORT,
     "Fields are terminated by ...",
-    (uchar**) &opt_fields_terminated_by,
-    (uchar**) &opt_fields_terminated_by, 0,
+    &opt_fields_terminated_by, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "fields-optionally-enclosed-by", NDB_OPT_NOSHORT,
     "Fields are optionally enclosed by ...",
-    (uchar**) &opt_fields_optionally_enclosed_by,
-    (uchar**) &opt_fields_optionally_enclosed_by, 0,
+    &opt_fields_optionally_enclosed_by, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "hex", NDB_OPT_NOSHORT, "print binary types in hex format", 
-    (uchar**) &opt_hex_format, (uchar**) &opt_hex_format, 0,
+    &opt_hex_format, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "tab", 'T', "Creates tab separated textfile for each table to "
     "given path. (creates .txt files)",
-   (uchar**) &tab_path, (uchar**) &tab_path, 0,
+   &tab_path, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   { "append", NDB_OPT_NOSHORT, "for --tab append data to file", 
-    (uchar**) &opt_append, (uchar**) &opt_append, 0,
+    &opt_append, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "lines-terminated-by", NDB_OPT_NOSHORT, "",
-    (uchar**) &opt_lines_terminated_by, (uchar**) &opt_lines_terminated_by, 0,
+    &opt_lines_terminated_by, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "progress-frequency", NDB_OPT_NOSHORT,
     "Print status uf restore periodically in given seconds", 
-    (uchar**) &opt_progress_frequency, (uchar**) &opt_progress_frequency, 0,
+    &opt_progress_frequency, nullptr, nullptr,
     GET_INT, REQUIRED_ARG, 0, 0, 65535, 0, 0, 0 },
   { "no-binlog", NDB_OPT_NOSHORT,
     "If a mysqld is connected and has binary log, do not log the restored data", 
-    (uchar**) &opt_no_binlog, (uchar**) &opt_no_binlog, 0,
+    &opt_no_binlog, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "verbose", OPT_VERBOSE,
     "verbosity", 
-    (uchar**) &opt_verbose, (uchar**) &opt_verbose, 0,
+    &opt_verbose, nullptr, nullptr,
     GET_INT, REQUIRED_ARG, 1, 0, 255, 0, 0, 0 },
   { "include-databases", OPT_INCLUDE_DATABASES,
     "Comma separated list of databases to restore. Example: db1,db3",
-    (uchar**) &opt_include_databases, (uchar**) &opt_include_databases, 0,
+    &opt_include_databases, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "exclude-databases", OPT_EXCLUDE_DATABASES,
     "Comma separated list of databases to not restore. Example: db1,db3",
-    (uchar**) &opt_exclude_databases, (uchar**) &opt_exclude_databases, 0,
+    &opt_exclude_databases, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "rewrite-database", OPT_REWRITE_DATABASE,
     "A pair 'source,dest' of database names from/into which to restore. "
     "Example: --rewrite-database=oldDb,newDb",
-    (uchar**) &opt_rewrite_database, (uchar**) &opt_rewrite_database, 0,
+    &opt_rewrite_database, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "include-tables", OPT_INCLUDE_TABLES, "Comma separated list of tables to "
     "restore. Table name should include database name. Example: db1.t1,db3.t1", 
-    (uchar**) &opt_include_tables, (uchar**) &opt_include_tables, 0,
+    &opt_include_tables, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "exclude-tables", OPT_EXCLUDE_TABLES, "Comma separated list of tables to "
     "not restore. Table name should include database name. "
     "Example: db1.t1,db3.t1",
-    (uchar**) &opt_exclude_tables, (uchar**) &opt_exclude_tables, 0,
+    &opt_exclude_tables, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
   { "restore-privilege-tables", NDB_OPT_NOSHORT,
     "Restore privilege tables (after they have been moved to ndb)",
-    (uchar**) &opt_restore_privilege_tables,
-    (uchar**) &opt_restore_privilege_tables, 0,
+    &opt_restore_privilege_tables, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "include-stored-grants", NDB_OPT_NOSHORT,
     "Restore users and grants to ndb_sql_metadata table",
-    (uchar **) &opt_include_stored_grants,
-    (uchar**) &opt_include_stored_grants, 0,
+    &opt_include_stored_grants, nullptr, nullptr,
     GET_BOOL, OPT_ARG, false, 0, 0, 0, 0, 0 },
   { "exclude-missing-columns", NDB_OPT_NOSHORT,
     "Ignore columns present in backup but not in database",
-    (uchar**) &ga_exclude_missing_columns,
-    (uchar**) &ga_exclude_missing_columns, 0,
+    &ga_exclude_missing_columns, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "exclude-missing-tables", NDB_OPT_NOSHORT,
     "Ignore tables present in backup but not in database",
-    (uchar**) &ga_exclude_missing_tables,
-    (uchar**) &ga_exclude_missing_tables, 0,
+    &ga_exclude_missing_tables, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "exclude-intermediate-sql-tables", NDB_OPT_NOSHORT,
     "Do not restore intermediate tables with #sql-prefixed names",
-    (uchar**) &opt_exclude_intermediate_sql_tables,
-    (uchar**) &opt_exclude_intermediate_sql_tables, 0,
+    &opt_exclude_intermediate_sql_tables, nullptr, nullptr,
     GET_BOOL, NO_ARG, 1, 0, 0, 0, 0, 0 },
   { "disable-indexes", NDB_OPT_NOSHORT,
     "Disable indexes and foreign keys",
-    (uchar**) &ga_disable_indexes,
-    (uchar**) &ga_disable_indexes, 0,
+    &ga_disable_indexes, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "rebuild-indexes", NDB_OPT_NOSHORT,
     "Rebuild indexes",
-    (uchar**) &ga_rebuild_indexes,
-    (uchar**) &ga_rebuild_indexes, 0,
+    &ga_rebuild_indexes, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "skip-unknown-objects", 256, "Skip unknown object when parsing backup",
-    (uchar**) &ga_skip_unknown_objects, (uchar**) &ga_skip_unknown_objects, 0,
+    &ga_skip_unknown_objects, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "skip-broken-objects", 256, "Skip broken object when parsing backup",
-    (uchar**) &ga_skip_broken_objects, (uchar**) &ga_skip_broken_objects, 0,
+    &ga_skip_broken_objects, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "show-part-id", 256, "Prefix log messages with backup part ID",
-    (uchar**) &opt_show_part_id, (uchar**) &opt_show_part_id, 0,
+    &opt_show_part_id, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
 #ifdef ERROR_INSERT
-  { "error-insert", OPT_ERROR_INSERT,
-    "Insert errors (testing option)",
-    (uchar **)&_error_insert, (uchar **)&_error_insert, 0,
+  { "error-insert", OPT_ERROR_INSERT, "Insert errors (testing option)",
+    &_error_insert, nullptr, nullptr,
     GET_INT, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
 #endif
-  { "num_slices", NDB_OPT_NOSHORT,
-    "How many slices are being applied",
-    (uchar**) &ga_num_slices,
-    (uchar**) &ga_num_slices,
-    0,
-    GET_UINT,
-    REQUIRED_ARG,
-    1, /* default */
-    1, /* min */
-    1024, /* max */
-    0,
-    0,
-    0 },
-  { "slice_id", NDB_OPT_NOSHORT,
-    "My slice id",
-    (uchar**) &ga_slice_id,
-    (uchar**) &ga_slice_id,
-    0,
-    GET_INT,
-    REQUIRED_ARG,
-    0, /* default */
-    0, /* min */
-    1023, /* max */
-    0,
-    0,
-    0 },
+  { "num_slices", NDB_OPT_NOSHORT, "How many slices are being applied",
+    &ga_num_slices, nullptr, nullptr, GET_UINT, REQUIRED_ARG,
+    1, 1, 1024, nullptr, 0, nullptr },
+  { "slice_id", NDB_OPT_NOSHORT, "My slice id",
+    &ga_slice_id, nullptr, nullptr, GET_INT, REQUIRED_ARG,
+    0, 0, 1023, nullptr, 0, nullptr },
   { "allow-pk-changes", NDB_OPT_NOSHORT,
     "Allow changes to the set of columns making up a table's primary key.",
-    (uchar**) &ga_allow_pk_changes, (uchar**) &ga_allow_pk_changes, 0,
+    &ga_allow_pk_changes, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "ignore-extended-pk-updates", NDB_OPT_NOSHORT,
     "Ignore log entries containing updates to columns now included in an "
     "extended primary key.",
-    (uchar**) &ga_ignore_extended_pk_updates,
-    (uchar**) &ga_ignore_extended_pk_updates,
-    0,
+    &ga_ignore_extended_pk_updates, nullptr, nullptr,
     GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0 },
   { "remap-column", OPT_REMAP_COLUMN, "Remap content for column while "
     "restoring, format <database>.<table>.<column>:<function>:<function_args>."
     "  <database> is remapped name, remapping applied before other conversions.",
-    (uchar**) &opt_one_remap_col_arg,
-    (uchar**) &opt_one_remap_col_arg, 0,
+    &opt_one_remap_col_arg, nullptr, nullptr,
     GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  { 0, 0, 0, 0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0}
+  NdbStdOpt::end_of_options
 };
 
 
@@ -645,7 +626,7 @@ get_one_option(int optid, const struct my_option *opt, char *argument)
     info << "Backup Id = " << ga_backupId << endl;
     break;
   case OPT_NODEGROUP_MAP:
-    // Support for mappping nodegroups during restore has been removed, just
+    // Support for mapping nodegroups during restore has been removed, just
     // print message saying the setting is ignored
     err << "NOTE! Support for --ndb-nodegroup-map=<string> has been removed"
         << endl;
@@ -785,6 +766,9 @@ readArguments(Ndb_opts & opts, char*** pargv)
     }
     exitHandler(NdbToolsProgramExitCode::WRONG_ARGS);
   }
+  if (!opt_timestamp_printouts) {
+    restoreLogger.set_print_timestamp(false);
+  }
   if (ga_nodeId == 0)
   {
     err << "Backup file node ID not specified, please provide --nodeid" << endl;
@@ -836,7 +820,7 @@ readArguments(Ndb_opts & opts, char*** pargv)
 
   if (ga_restore)
   {
-    // Exclude privilege tables unless explicitely included
+    // Exclude privilege tables unless explicitly included
     if (!opt_restore_privilege_tables)
       exclude_privilege_tables();
 
@@ -1940,6 +1924,9 @@ static void init_restore()
     if (g_cluster_connection->connect(opt_connect_retries - 1,
             opt_connect_retry_delay, 1) != 0)
     {
+      err << "Could not connect to cluster: '"
+          << g_cluster_connection->get_latest_error() << " - "
+          << g_cluster_connection->get_latest_error_msg() << "'" << endl;
       delete g_cluster_connection;
       g_cluster_connection = NULL;
       exitHandler(NdbToolsProgramExitCode::FAILED);
@@ -2087,7 +2074,6 @@ int do_restore(RestoreThreadData *thrdata)
 {
   init_progress();
 
-  char timestamp[64];
   Vector<BackupConsumer*> &g_consumers = thrdata->m_consumers;
   char threadName[15] = "";
   if (opt_show_part_id)
@@ -2111,8 +2097,7 @@ int do_restore(RestoreThreadData *thrdata)
     g_consumers[i]->error_insert(_error_insert);
   }
 #endif 
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Read meta data file header", timestamp);
+  restoreLogger.log_info("[restore_metadata] Read meta data file header");
 
   if (!metaData.readHeader())
   {
@@ -2120,53 +2105,52 @@ int do_restore(RestoreThreadData *thrdata)
     return NdbToolsProgramExitCode::FAILED;
   }
 
-  const BackupFormat::FileHeader & tmp = metaData.getFileHeader();
-  const Uint32 version = tmp.BackupVersion;
+  {
+    const BackupFormat::FileHeader & tmp = metaData.getFileHeader();
+    const Uint32 backupFileVersion = tmp.BackupVersion;
+    const Uint32 backupNdbVersion = tmp.NdbVersion;
+    const Uint32 backupMySQLVersion = tmp.MySQLVersion;
   
-  char buf[NDB_VERSION_STRING_BUF_SZ];
-  char new_buf[NDB_VERSION_STRING_BUF_SZ];
-  info.setLevel(254);
+    char buf[NDB_VERSION_STRING_BUF_SZ];
+    info.setLevel(254);
 
-  if (version >= NDBD_RAW_LCP)
-  {
-  restoreLogger.log_info("Backup version in files: %s ndb version: %s",
-           ndbGetVersionString(version, 0,
-                               ndbd_drop6(version) ? "-drop6" : 0,
-                               buf, sizeof(buf)),
-           ndbGetVersionString(tmp.NdbVersion, tmp.MySQLVersion, 0,
-                                buf, sizeof(buf)));
-  }
-  else
-  {
-    restoreLogger.log_info("Backup version in files: %s",
-           ndbGetVersionString(version, 0,
-                               ndbd_drop6(version) ? "-drop6" : 0,
-                               buf, sizeof(buf)));
-  }
+    if (backupFileVersion >= NDBD_RAW_LCP)
+    {
+      restoreLogger.log_info("Backup from version : %s file format : %x",
+                             ndbGetVersionString(backupNdbVersion, backupMySQLVersion, 0,
+                                                 buf, sizeof(buf)),
+                             backupFileVersion);
+    }
+    else
+    {
+      restoreLogger.log_info("Backup file format : %x",
+                             backupFileVersion);
+    }
 
-  /**
-   * check wheater we can restore the backup (right version).
-   */
-  // in these versions there was an error in how replica info was
-  // stored on disk
-  if (version >= MAKE_VERSION(5,1,3) && version <= MAKE_VERSION(5,1,9))
-  {
-    restoreLogger.log_error("Restore program incompatible with backup versions between %s and %s"
-        ,ndbGetVersionString(MAKE_VERSION(5,1,3), 0, 0, buf, sizeof(buf))
-        ,ndbGetVersionString(MAKE_VERSION(5,1,9), 0, 0, new_buf, sizeof(new_buf))
-       );
-    return NdbToolsProgramExitCode::FAILED;
-  }
+    /**
+     * check whether we can restore the backup (right version).
+     */
+    // in these versions there was an error in how replica info was
+    // stored on disk
+    if (backupFileVersion >= MAKE_VERSION(5,1,3) && backupFileVersion <= MAKE_VERSION(5,1,9))
+    {
+      char new_buf[NDB_VERSION_STRING_BUF_SZ];
+      restoreLogger.log_error("Restore program incompatible with backup file versions between %s and %s"
+                              ,ndbGetVersionString(MAKE_VERSION(5,1,3), 0, 0, buf, sizeof(buf))
+                              ,ndbGetVersionString(MAKE_VERSION(5,1,9), 0, 0, new_buf, sizeof(new_buf))
+                              );
+      return NdbToolsProgramExitCode::FAILED;
+    }
 
-  if (version > NDB_VERSION)
-  {
-    restoreLogger.log_error("Restore program older than backup version. Not supported. Use new restore program");
-    return NdbToolsProgramExitCode::FAILED;
+    if (backupFileVersion > NDB_VERSION)
+    {
+      restoreLogger.log_error("Restore program older than backup version. Not supported. Use new restore program");
+      return NdbToolsProgramExitCode::FAILED;
+    }
   }
 
   restoreLogger.log_debug("Load content");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Load content", timestamp);
+  restoreLogger.log_info("[restore_metadata] Load content");
 
   int res  = metaData.loadContent();
 
@@ -2179,8 +2163,7 @@ int do_restore(RestoreThreadData *thrdata)
     return NdbToolsProgramExitCode::FAILED;
   }
   restoreLogger.log_debug("Get number of Tables");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Get number of Tables", timestamp);
+  restoreLogger.log_info("[restore_metadata] Get number of Tables");
   if (metaData.getNoOfTables() == 0)
   {
     restoreLogger.log_error("The backup contains no tables");
@@ -2228,8 +2211,7 @@ int do_restore(RestoreThreadData *thrdata)
   }
 
   restoreLogger.log_debug("Validate Footer");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Validate Footer", timestamp);
+  restoreLogger.log_info("[restore_metadata] Validate Footer");
 
   if (!metaData.validateFooter())
   {
@@ -2293,8 +2275,7 @@ int do_restore(RestoreThreadData *thrdata)
     }
   }
   restoreLogger.log_debug("Restore objects (tablespaces, ..)");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Restore objects (tablespaces, ..)", timestamp);
+  restoreLogger.log_info("[restore_metadata] Restore objects (tablespaces, ..)");
   for (i = 0; i < metaData.getNoOfObjects(); i++)
   {
     for (Uint32 j = 0; j < g_consumers.size(); j++)
@@ -2327,8 +2308,7 @@ int do_restore(RestoreThreadData *thrdata)
 
   Vector<OutputStream *> table_output(metaData.getNoOfTables());
   restoreLogger.log_debug("Restoring tables");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Restoring tables", timestamp);
+  restoreLogger.log_info("[restore_metadata] Restoring tables");
 
   for(i = 0; i<metaData.getNoOfTables(); i++)
   {
@@ -2404,8 +2384,7 @@ int do_restore(RestoreThreadData *thrdata)
   }
 
   restoreLogger.log_debug("Save foreign key info");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_metadata] Save foreign key info", timestamp);
+  restoreLogger.log_info("[restore_metadata] Save foreign key info");
   for (i = 0; i < metaData.getNoOfObjects(); i++)
   {
     for (Uint32 j = 0; j < g_consumers.size(); j++)
@@ -2458,8 +2437,7 @@ int do_restore(RestoreThreadData *thrdata)
     g_consumers[i]->report_meta_data(ga_backupId, ga_nodeId);
   }
   restoreLogger.log_debug("Iterate over data");
-  Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-  restoreLogger.log_info("%s [restore_data] Start restoring table data", timestamp);
+  restoreLogger.log_info("[restore_data] Start restoring table data");
   if (ga_restore || ga_print) 
   {
     Uint32 fragmentsTotal = 0;
@@ -2529,9 +2507,8 @@ int do_restore(RestoreThreadData *thrdata)
           restoreLogger.log_error("Unable to allocate memory for RestoreDataIterator constructor");
           return NdbToolsProgramExitCode::FAILED;
       }
-      
-      Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-      restoreLogger.log_info("%s [restore_data] Read data file header", timestamp);
+
+      restoreLogger.log_info("[restore_data] Read data file header");
 
       // Read data file header
       if (!dataIter.readHeader())
@@ -2540,9 +2517,8 @@ int do_restore(RestoreThreadData *thrdata)
           "Failed to read header of data file. Exiting...");
         return NdbToolsProgramExitCode::FAILED;
       }
-      
-      Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-      restoreLogger.log_info("%s [restore_data] Restore fragments", timestamp);
+
+      restoreLogger.log_info("[restore_data] Restore fragments");
 
       Uint32 fragmentCount = 0;
       Uint32 fragmentId; 
@@ -2653,8 +2629,7 @@ int do_restore(RestoreThreadData *thrdata)
     {
       RestoreLogIterator logIter(metaData);
 
-      Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-      restoreLogger.log_info("%s [restore_log] Read log file header", timestamp);
+      restoreLogger.log_info("[restore_log] Read log file header");
 
       if (!logIter.readHeader())
       {
@@ -2665,7 +2640,7 @@ int do_restore(RestoreThreadData *thrdata)
       
       const LogEntry * logEntry = 0;
 
-      restoreLogger.log_info("%s [restore_log] Restore log entries", timestamp);
+      restoreLogger.log_info("[restore_log] Restore log entries");
 
       while ((logEntry = logIter.getNextLogEntry(res= 0)) != 0)
       {
@@ -2799,8 +2774,7 @@ int do_restore(RestoreThreadData *thrdata)
 
   if (ga_restore_epoch)
   {
-    Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-    restoreLogger.log_info("%s [restore_epoch] Restoring epoch", timestamp);
+    restoreLogger.log_info("[restore_epoch] Restoring epoch");
     RestoreLogIterator logIter(metaData);
 
     if (!logIter.readHeader())
@@ -2848,8 +2822,7 @@ int do_restore(RestoreThreadData *thrdata)
       return NdbToolsProgramExitCode::FAILED;
     }
     restoreLogger.log_debug("Rebuilding indexes");
-    Logger::format_timestamp(time(NULL), timestamp, sizeof(timestamp));
-    restoreLogger.log_info("%s [rebuild_indexes] Rebuilding indexes", timestamp);
+    restoreLogger.log_info("[rebuild_indexes] Rebuilding indexes");
 
     for(i = 0; i<metaData.getNoOfTables(); i++)
     {

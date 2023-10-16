@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -54,8 +54,6 @@ class JOIN;
 using hash_join_buffer::LoadBufferRowIntoTableBuffers;
 using hash_join_buffer::LoadImmutableStringIntoTableBuffers;
 
-constexpr size_t HashJoinIterator::kMaxChunks;
-
 // An arbitrary hash value for the empty string, to avoid the hash function
 // from doing arithmetic on nullptr, which is undefined behavior.
 static constexpr size_t kZeroKeyLengthHash = 2669509769;
@@ -74,12 +72,14 @@ HashJoinIterator::HashJoinIterator(
     : RowIterator(thd),
       m_state(State::READING_ROW_FROM_PROBE_ITERATOR),
       m_hash_table_generation(hash_table_generation),
-      m_build_input(move(build_input)),
-      m_probe_input(move(probe_input)),
+      m_build_input(std::move(build_input)),
+      m_probe_input(std::move(probe_input)),
       m_probe_input_tables(probe_input_tables, store_rowids,
-                           tables_to_get_rowid_for),
+                           tables_to_get_rowid_for,
+                           /*tables_to_store_contents_of_null_rows_for=*/0),
       m_build_input_tables(build_input_tables, store_rowids,
-                           tables_to_get_rowid_for),
+                           tables_to_get_rowid_for,
+                           /*tables_to_store_contents_of_null_rows_for=*/0),
       m_tables_to_get_rowid_for(tables_to_get_rowid_for),
       m_row_buffer(m_build_input_tables, join_conditions, max_memory_available),
       m_join_conditions(PSI_NOT_INSTRUMENTED, join_conditions.data(),
@@ -444,7 +444,6 @@ bool HashJoinIterator::BuildHashTable() {
   }
 
   const bool reject_duplicate_keys = RejectDuplicateKeys();
-  const bool store_rows_with_null_in_join_key = m_join_type == JoinType::OUTER;
 
   // If Init() is called multiple times (e.g., if hash join is inside an
   // dependent subquery), we must clear the NULL row flag, as it may have been
@@ -483,8 +482,7 @@ bool HashJoinIterator::BuildHashTable() {
     RequestRowId(m_build_input_tables.tables(), m_tables_to_get_rowid_for);
 
     const hash_join_buffer::StoreRowResult store_row_result =
-        m_row_buffer.StoreRow(thd(), reject_duplicate_keys,
-                              store_rows_with_null_in_join_key);
+        m_row_buffer.StoreRow(thd(), reject_duplicate_keys);
     switch (store_row_result) {
       case hash_join_buffer::StoreRowResult::ROW_STORED:
         break;
@@ -607,7 +605,6 @@ bool HashJoinIterator::ReadNextHashJoinChunk() {
       m_chunk_files_on_disk[m_current_chunk].build_chunk;
 
   const bool reject_duplicate_keys = RejectDuplicateKeys();
-  const bool store_rows_with_null_in_join_key = m_join_type == JoinType::OUTER;
   for (; m_build_chunk_current_row < build_chunk.num_rows();
        ++m_build_chunk_current_row) {
     // Read the next row from the chunk file, and put it in the in-memory row
@@ -620,8 +617,8 @@ bool HashJoinIterator::ReadNextHashJoinChunk() {
       return true;
     }
 
-    hash_join_buffer::StoreRowResult store_row_result = m_row_buffer.StoreRow(
-        thd(), reject_duplicate_keys, store_rows_with_null_in_join_key);
+    hash_join_buffer::StoreRowResult store_row_result =
+        m_row_buffer.StoreRow(thd(), reject_duplicate_keys);
 
     if (store_row_result == hash_join_buffer::StoreRowResult::BUFFER_FULL) {
       // The row buffer checks for OOM _after_ the row was inserted, so we
@@ -719,7 +716,7 @@ bool HashJoinIterator::ReadRowFromProbeIterator() {
     // read/processed again. We must swap the probe row saving writing and probe
     // row saving reading file _before_ calling BuildHashTable, since
     // BuildHashTable may initialize (and thus clear) the probe row saving write
-    // file, loosing any rows written to said file.
+    // file, losing any rows written to said file.
     if (InitReadingFromProbeRowSavingFile()) {
       assert(thd()->is_error());  // my_error should have been called.
       return true;
@@ -994,7 +991,7 @@ int HashJoinIterator::ReadNextJoinedRowFromHashTable() {
 
   if (res == -1) {
     // If we did not find a matching row in the hash table, antijoin and outer
-    // join should ouput the last row read from the probe input together with a
+    // join should output the last row read from the probe input together with a
     // NULL-complemented row from the build input. However, in case of on-disk
     // antijoin, a row from the probe input can match a row from the build input
     // that has already been written out to disk. So for on-disk antijoin, we
@@ -1096,7 +1093,7 @@ int HashJoinIterator::Read() {
           continue;
         }
 
-        // An error occured, so abort the join.
+        // An error occurred, so abort the join.
         assert(res == 1);
         return res;
       }

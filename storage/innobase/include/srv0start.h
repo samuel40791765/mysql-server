@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -33,7 +33,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef srv0start_h
 #define srv0start_h
 
-#include "log0types.h"
 #include "os0thread-create.h"
 #ifndef UNIV_HOTBACKUP
 #include "sync0rw.h"
@@ -106,9 +105,9 @@ dberr_t srv_undo_tablespace_fixup(const char *space_name, const char *file_name,
 any tables (including data dictionary tables) can be accessed. */
 void srv_dict_recover_on_restart();
 
-/** Start up the InnoDB service threads which are independent of DDL recovery
-@param[in]      bootstrap       True if this is in bootstrap */
-void srv_start_threads(bool bootstrap);
+/** Start up the InnoDB service threads which are independent of DDL recovery.
+ */
+void srv_start_threads();
 
 /** Start the remaining InnoDB service threads which must wait for
 complete DD recovery(post the DDL recovery) */

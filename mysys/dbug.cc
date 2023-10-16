@@ -58,7 +58,7 @@
  *
  *      Michael Widenius:
  *        DBUG_DUMP       - To dump a block of memory.
- *        PUSH_FLAG "O"   - To be used insted of "o" if we
+ *        PUSH_FLAG "O"   - To be used instead of "o" if we
  *                          want flushing after each write
  *        PUSH_FLAG "A"   - as 'O', but we will append to the out file instead
  *                          of creating a new one.
@@ -92,6 +92,7 @@
 
 #include <algorithm>
 
+#include "dig_vec.h"
 #include "m_string.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
@@ -100,6 +101,8 @@
 #include "my_macros.h"
 #include "my_sys.h"
 #include "my_thread_local.h"
+#include "mysql/strings/int2str.h"
+#include "nulls.h"
 #include "thr_mutex.h"
 #include "thr_rwlock.h"
 
@@ -283,7 +286,7 @@ static char *DbugMalloc(size_t size);
 static const char *BaseName(const char *pathname);
 static void Indent(CODE_STATE *cs, int indent);
 static void DbugFlush(CODE_STATE *);
-static void DbugExit(const char *why) MY_ATTRIBUTE((noreturn));
+[[noreturn]] static void DbugExit(const char *why);
 static const char *DbugStrTok(const char *s);
 static void DbugVfprintf(FILE *stream, const char *format, va_list args);
 
@@ -1395,8 +1398,8 @@ void _db_dump_(uint _line_, const char *keyword, const unsigned char *memory,
         fputc('\n', cs->stack->out_file);
         pos = 3;
       }
-      fputc(_dig_vec_upper[((tmp >> 4) & 15)], cs->stack->out_file);
-      fputc(_dig_vec_upper[tmp & 15], cs->stack->out_file);
+      fputc(dig_vec_upper[((tmp >> 4) & 15)], cs->stack->out_file);
+      fputc(dig_vec_upper[tmp & 15], cs->stack->out_file);
       fputc(' ', cs->stack->out_file);
     }
     (void)fputc('\n', cs->stack->out_file);
@@ -2107,7 +2110,7 @@ static bool Writable(const char *pathname) {
 }
 
 /* flush dbug-stream, free mutex lock & wait delay */
-/* This is because some systems (MSDOS!!) dosn't flush fileheader */
+/* This is because some systems (MSDOS!!) don't flush the file header */
 /* and dbug-file isn't readable after a system crash !! */
 
 static void DbugFlush(CODE_STATE *cs) {

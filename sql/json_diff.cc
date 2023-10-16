@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -33,17 +33,18 @@
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
-#include "sql/current_thd.h"  // current_thd
+#include "sql-common/json_binary.h"
+#include "sql-common/json_dom.h"   // Json_dom, Json_wrapper
+#include "sql-common/json_path.h"  // Json_path
+#include "sql/current_thd.h"       // current_thd
 #include "sql/debug_sync.h"
-#include "sql/field.h"  // Field_json
-#include "sql/json_binary.h"
-#include "sql/json_dom.h"   // Json_dom, Json_wrapper
-#include "sql/json_path.h"  // Json_path
+#include "sql/field.h"      // Field_json
 #include "sql/log_event.h"  // net_field_length_checked
 #include "sql/psi_memory_key.h"
 #include "sql/sql_const.h"
 #include "sql/table.h"
 #include "sql_string.h"  // StringBuffer
+#include "string_with_len.h"
 #include "template_utils.h"
 
 class THD;
@@ -82,7 +83,7 @@ static bool write_length_and_string(String *to, const String &from) {
     length = 1 << 30;
   });
   char length_buf[9];
-  size_t length_length =
+  const size_t length_length =
       net_store_length((uchar *)length_buf, length) - (uchar *)length_buf;
   DBUG_PRINT("info", ("write_length_and_string: length=%lu length_length=%lu",
                       (unsigned long)length, (unsigned long)length_length));
@@ -268,7 +269,7 @@ bool Json_diff_vector::write_binary(String *to) const {
       return true; /* purecov: inspected */  // OOM, error is reported
 
   // Store the length.
-  size_t length = to->length() - ENCODED_LENGTH_BYTES;
+  const size_t length = to->length() - ENCODED_LENGTH_BYTES;
   int4store(to->ptr(), (uint32)length);
 
   DBUG_PRINT("info", ("Wrote JSON diff vector length %lu=%02x %02x %02x %02x",
@@ -296,10 +297,10 @@ bool Json_diff_vector::read_binary(const char **from, const TABLE *table,
                 (uint)length));
     // Read operation
     if (length < 1) goto corrupted;
-    int operation_number = *p;
+    const int operation_number = *p;
     DBUG_PRINT("info", ("operation_number=%d", operation_number));
     if (operation_number >= JSON_DIFF_OPERATION_COUNT) goto corrupted;
-    enum_json_diff_operation operation =
+    const enum_json_diff_operation operation =
         static_cast<enum_json_diff_operation>(operation_number);
     length--;
     p++;
@@ -311,11 +312,11 @@ bool Json_diff_vector::read_binary(const char **from, const TABLE *table,
     if (length < path_length) goto corrupted;
 
     // Read path
-    Json_path path;
+    Json_path path(key_memory_JSON);
     size_t bad_index;
     DBUG_PRINT("info", ("path='%.*s'", (int)path_length, p));
     if (parse_path(path_length, pointer_cast<const char *>(p), &path,
-                   &bad_index))
+                   &bad_index, JsonDocumentDefaultDepthHandler))
       goto corrupted;
     p += path_length;
     length -= path_length;
@@ -332,11 +333,11 @@ bool Json_diff_vector::read_binary(const char **from, const TABLE *table,
       json_binary::Value value = json_binary::parse_binary(
           pointer_cast<const char *>(p), value_length);
       if (value.type() == json_binary::Value::ERROR) goto corrupted;
-      Json_wrapper wrapper(value);
-      std::unique_ptr<Json_dom> dom = wrapper.clone_dom(current_thd);
+      const Json_wrapper wrapper(value);
+      std::unique_ptr<Json_dom> dom = wrapper.clone_dom();
       if (dom == nullptr)
         return true; /* purecov: inspected */  // OOM, error is reported
-      wrapper.dbug_print();
+      wrapper.dbug_print("", JsonDocumentDefaultDepthHandler);
 
       // Store diff
       add_diff(path, operation, std::move(dom));
@@ -414,7 +415,8 @@ enum_json_diff_status apply_json_diffs(Field_json *field,
   if (field->val_json(&doc))
     return enum_json_diff_status::ERROR; /* purecov: inspected */
 
-  doc.dbug_print("apply_json_diffs: before-doc");
+  doc.dbug_print("apply_json_diffs: before-doc",
+                 JsonDocumentDefaultDepthHandler);
 
   // Should we collect logical diffs while applying them?
   const bool collect_logical_diffs =
@@ -424,8 +426,6 @@ enum_json_diff_status apply_json_diffs(Field_json *field,
   bool binary_inplace_update = field->table->is_binary_diff_enabled(field);
 
   StringBuffer<STRING_BUFFER_USUAL_SIZE> buffer;
-
-  const THD *thd = current_thd;
 
   for (const Json_diff &diff : *diffs) {
     Json_wrapper val = diff.value();
@@ -476,8 +476,8 @@ enum_json_diff_status apply_json_diffs(Field_json *field,
       field->table->disable_binary_diffs_for_current_row(field);
     }
 
-    Json_dom *dom = doc.to_dom(thd);
-    if (doc.to_dom(thd) == nullptr)
+    Json_dom *dom = doc.to_dom();
+    if (doc.to_dom() == nullptr)
       return enum_json_diff_status::ERROR; /* purecov: inspected */
 
     switch (diff.operation()) {
@@ -486,7 +486,7 @@ enum_json_diff_status apply_json_diffs(Field_json *field,
         Json_dom *old = seek_exact_path(dom, path.begin(), path.end());
         if (old == nullptr) return enum_json_diff_status::REJECTED;
         assert(old->parent() != nullptr);
-        old->parent()->replace_dom_in_container(old, val.clone_dom(thd));
+        old->parent()->replace_dom_in_container(old, val.clone_dom());
         continue;
       }
       case enum_json_diff_operation::INSERT: {
@@ -499,7 +499,7 @@ enum_json_diff_status apply_json_diffs(Field_json *field,
           auto obj = down_cast<Json_object *>(parent);
           if (obj->get(last_leg->get_member_name()) != nullptr)
             return enum_json_diff_status::REJECTED;
-          if (obj->add_alias(last_leg->get_member_name(), val.clone_dom(thd)))
+          if (obj->add_alias(last_leg->get_member_name(), val.clone_dom()))
             return enum_json_diff_status::ERROR; /* purecov: inspected */
           continue;
         }
@@ -507,7 +507,7 @@ enum_json_diff_status apply_json_diffs(Field_json *field,
             last_leg->get_type() == jpl_array_cell) {
           auto array = down_cast<Json_array *>(parent);
           Json_array_index idx = last_leg->first_array_index(array->size());
-          if (array->insert_alias(idx.position(), val.clone_dom(thd)))
+          if (array->insert_alias(idx.position(), val.clone_dom()))
             return enum_json_diff_status::ERROR; /* purecov: inspected */
           continue;
         }

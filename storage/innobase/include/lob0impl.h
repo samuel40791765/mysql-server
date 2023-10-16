@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -779,18 +779,18 @@ struct z_index_page_t {
   static const ulint LOB_PAGE_DATA = OFFSET_VERSION + 1;
 
   /** Constructor.
-  @param[in]    mtr     mini transaction context. */
+  @param[in]    mtr     mini-transaction context. */
   explicit z_index_page_t(mtr_t *mtr) : m_block(nullptr), m_mtr(mtr) {}
 
   /** Constructor.
   @param[in]    block   the buffer block.
-  @param[in]    mtr     mini transaction context.
+  @param[in]    mtr     mini-transaction context.
   @param[in]    index   the index to which the LOB belongs. */
   z_index_page_t(buf_block_t *block, mtr_t *mtr, dict_index_t *index)
       : m_block(block), m_mtr(mtr), m_index(index) {}
 
   /** Constructor.
-  @param[in]    mtr     mini transaction context.
+  @param[in]    mtr     mini-transaction context.
   @param[in]    index   the index to which the LOB belongs. */
   z_index_page_t(mtr_t *mtr, dict_index_t *index)
       : z_index_page_t(nullptr, mtr, index) {}

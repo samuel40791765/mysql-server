@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,14 +29,18 @@
 #include "channel_info.h"                // Channel_info
 #include "connection_handler_manager.h"  // Connection_handler_manager
 #include "init_net_server_extension.h"   // init_net_server_extension
+#include "m_string.h"
 #include "my_byteorder.h"
 #include "my_shm_defaults.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/strings/int2str.h"
+#include "nulls.h"
 #include "sql/log.h"
 #include "sql/mysqld.h"  // connection_events_loop_aborted
 #include "sql/psi_memory_key.h"
 #include "sql/sql_class.h"  // THD
-#include "violite.h"        // Vio
+#include "strxmov.h"
+#include "violite.h"  // Vio
 
 ///////////////////////////////////////////////////////////////////////////
 // Channel_info_shared_mem implementation
@@ -56,7 +60,7 @@ class Channel_info_shared_mem : public Channel_info {
   HANDLE m_event_conn_closed;
 
  protected:
-  virtual Vio *create_and_init_vio() const {
+  Vio *create_and_init_vio() const override {
     return vio_new_win32shared_memory(m_handle_client_file_map,
                                       m_handle_client_map, m_event_client_wrote,
                                       m_event_client_read, m_event_server_wrote,
@@ -87,7 +91,7 @@ class Channel_info_shared_mem : public Channel_info {
         m_event_client_read(event_client_read),
         m_event_conn_closed(event_conn_closed) {}
 
-  virtual THD *create_thd() {
+  THD *create_thd() override {
     THD *thd = Channel_info::create_thd();
 
     if (thd != NULL) {
@@ -97,8 +101,8 @@ class Channel_info_shared_mem : public Channel_info {
     return thd;
   }
 
-  virtual void send_error_and_close_channel(uint errorcode, int error,
-                                            bool senderror) {
+  void send_error_and_close_channel(uint errorcode, int error,
+                                    bool senderror) override {
     Channel_info::send_error_and_close_channel(errorcode, error, senderror);
 
     // Channel_info::send_error_and_close_channel will have closed
@@ -221,7 +225,7 @@ Channel_info *Shared_mem_listener::listen_for_connection_event() {
   if (connection_events_loop_aborted()) return NULL;
 
   char connect_number_char[22];
-  char *p = longlong10_to_str(m_connect_number, connect_number_char, -10);
+  longlong10_to_str(m_connect_number, connect_number_char, -10);
 
   /*
     The name of event and file-mapping events create agree next rule:
@@ -235,7 +239,7 @@ Channel_info *Shared_mem_listener::listen_for_connection_event() {
                          connect_number_char, "_", NullS);
 
   const char *errmsg = NULL;
-  ulong smem_buffer_length = shared_memory_buffer_length + 4;
+  const ulong smem_buffer_length = shared_memory_buffer_length + 4;
 
   my_stpcpy(m_suffix_pos, "DATA");
   if ((m_handle_client_file_map =

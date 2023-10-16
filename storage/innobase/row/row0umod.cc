@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -37,7 +37,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "dict0dd.h"
 #include "dict0dict.h"
 #include "ha_prototypes.h"
-#include "log0log.h"
+#include "log0chkp.h"
 #include "mach0data.h"
 #include "que0que.h"
 #include "row0log.h"
@@ -73,7 +73,7 @@ IMPORTANT NOTE: Any operation that generates redo MUST check that there
 is enough space in the redo log before for that operation. This is
 done by calling log_free_check(). The reason for checking the
 availability of the redo log space before the start of the operation is
-that we MUST not hold any synchonization objects when performing the
+that we MUST not hold any synchronization objects when performing the
 check.
 If you make a change in this module make sure that no codepath is
 introduced where a call to log_free_check() is bypassed. */
@@ -149,7 +149,9 @@ introduced where a call to log_free_check() is bypassed. */
         btr_cur, offsets, offsets_heap, heap, &dummy_big_rec, node->update,
         node->cmpl_info, thr, thr_get_trx(thr)->id, node->undo_no, mtr, pcur);
 
-    ut_a(!dummy_big_rec || node->table->has_row_versions());
+    const rec_t *rec = btr_cur_get_rec(btr_cur);
+    ut_a(!dummy_big_rec || materialize_instant_default(btr_cur->index, rec));
+
     if (dummy_big_rec) {
       ut_a(err == DB_SUCCESS);
 
@@ -206,7 +208,7 @@ introduced where a call to log_free_check() is bypassed. */
     ut_ad(trx_id_col != ULINT_UNDEFINED);
 
     offsets = rec_get_offsets(btr_cur_get_rec(btr_cur), btr_cur->index, nullptr,
-                              trx_id_col + 1, &heap);
+                              trx_id_col + 1, UT_LOCATION_HERE, &heap);
 
     /* nullptr for index as trx_id_col is physical here */
     trx_id_offset = rec_get_nth_field_offs(nullptr, offsets, trx_id_col, &len);
@@ -579,7 +581,7 @@ func_exit_no_pcur:
     dict_index_t *index, /*!< in: index */
     dtuple_t *entry,     /*!< in: index entry */
     undo_no_t undo_no)
-/*!< in: undo number upto which to rollback.*/
+/*!< in: undo number up to which to rollback.*/
 {
   btr_pcur_t pcur;
   btr_cur_t *btr_cur = pcur.get_btr_cur();
@@ -726,8 +728,9 @@ try_again:
           sizeof(upd_t) + dtuple_get_n_fields(entry) * sizeof(upd_field_t),
           UT_LOCATION_HERE);
       offsets_heap = nullptr;
-      offsets = rec_get_offsets(btr_cur_get_rec(btr_cur), index, nullptr,
-                                ULINT_UNDEFINED, &offsets_heap);
+      offsets =
+          rec_get_offsets(btr_cur_get_rec(btr_cur), index, nullptr,
+                          ULINT_UNDEFINED, UT_LOCATION_HERE, &offsets_heap);
       update = row_upd_build_sec_rec_difference_binary(
           btr_cur_get_rec(btr_cur), index, offsets, entry, heap);
       if (upd_get_n_fields(update) == 0) {

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -141,7 +141,7 @@ std::string find_full_executable_path(const std::string &argv0) {
         path_name = path.substr(begin, found - begin);
       }
 
-      if (!path_name.empty()) {  // if not only a seperator
+      if (!path_name.empty()) {  // if not only a separator
         auto abs_file_path = mysql_harness::Path(path_name).join(argv0);
 
         if (mysqlrouter::my_check_access(abs_file_path.str())) {

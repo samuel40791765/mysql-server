@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2019, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -65,14 +65,12 @@ int ndb_file::write_forward(const void* buf, ndb_file::size_t count)
     return -1;
   }
   assert(ndb_file::size_t(dwWritten) == count);
-  if (!m_synced_on_write)
-  {
-    m_write_byte_count.fetch_add(dwWritten);
-  }
+  if (do_sync_after_write(dwWritten) == -1) return -1;
   return dwWritten;
 }
 
-int ndb_file::write_pos(const void* buf, ndb_file::size_t count, ndb_file::off_t offset)
+int ndb_file::write_pos(const void* buf, ndb_file::size_t count,
+                        ndb_off_t offset)
 {
   require(check_block_size_and_alignment(buf, count, offset));
   LARGE_INTEGER li;
@@ -92,10 +90,7 @@ int ndb_file::write_pos(const void* buf, ndb_file::size_t count, ndb_file::off_t
     return -1;
   }
   assert(ndb_file::size_t(dwWritten) == count);
-  if (!m_synced_on_write)
-  {
-    m_write_byte_count.fetch_add(dwWritten);
-  }
+  if (do_sync_after_write(dwWritten) == -1) return -1;
   return dwWritten;
 }
 
@@ -170,7 +165,8 @@ int ndb_file::read_backward(void* buf, ndb_file::size_t count) const
   return dwBytesRead;
 }
 
-int ndb_file::read_pos(void* buf, ndb_file::size_t count, ndb_file::off_t offset) const
+int ndb_file::read_pos(void* buf, ndb_file::size_t count,
+                       ndb_off_t offset) const
 {
   require(check_block_size_and_alignment(buf, count, offset));
   LARGE_INTEGER li;
@@ -201,7 +197,7 @@ int ndb_file::read_pos(void* buf, ndb_file::size_t count, ndb_file::off_t offset
   return dwBytesRead;
 }
 
-ndb_file::off_t ndb_file::get_pos() const
+ndb_off_t ndb_file::get_pos() const
 {
   LARGE_INTEGER off;
   off.QuadPart = 0;
@@ -213,7 +209,7 @@ ndb_file::off_t ndb_file::get_pos() const
   return off.QuadPart;
 }
 
-int ndb_file::set_pos(off_t pos) const
+int ndb_file::set_pos(ndb_off_t pos) const
 {
   require(check_block_size_and_alignment(nullptr, 0, pos));
   LARGE_INTEGER off;
@@ -226,7 +222,7 @@ int ndb_file::set_pos(off_t pos) const
   return 0;
 }
 
-ndb_file::off_t ndb_file::get_size() const
+ndb_off_t ndb_file::get_size() const
 {
   LARGE_INTEGER size;
   BOOL ret_code = GetFileSizeEx(m_handle, &size);
@@ -237,15 +233,15 @@ ndb_file::off_t ndb_file::get_size() const
   return size.QuadPart;
 }
 
-int ndb_file::extend(off_t end, extend_flags flags) const
+int ndb_file::extend(ndb_off_t end, extend_flags flags) const
 {
   require(check_block_size_and_alignment(nullptr, end, end));
-  const off_t saved_file_pos = get_pos();
+  const ndb_off_t saved_file_pos = get_pos();
   if (saved_file_pos == -1)
   {
     return -1;
   }
-  const off_t size = get_size();
+  const ndb_off_t size = get_size();
   if (size == -1)
   {
     return -1;
@@ -292,10 +288,10 @@ int ndb_file::extend(off_t end, extend_flags flags) const
   return 0;
 }
 
-int ndb_file::truncate(off_t end) const
+int ndb_file::truncate(ndb_off_t end) const
 {
   require(check_block_size_and_alignment(nullptr, end, end));
-  const off_t size = get_size();
+  const ndb_off_t size = get_size();
   if (size == -1)
   {
     return -1;
@@ -363,20 +359,14 @@ int ndb_file::open(const char name[], unsigned flags)
 
   init();
 
-#if 0
-  const unsigned bad_flags = flags & ~(FsOpenReq::OM_APPEND |
-      FsOpenReq::OM_SYNC | FsOpenReq::OM_READ_WRITE_MASK |
-      FsOpenReq::OM_TRUNCATE);
-#else
   const unsigned bad_flags = flags & ~(FsOpenReq::OM_APPEND |
       FsOpenReq::OM_READ_WRITE_MASK );
-#endif
 
   if (bad_flags != 0) abort();
 
   m_open_flags = 0;
-  m_sync_on_write = false;
-  m_synced_on_write = false;
+  m_write_need_sync = false;
+  m_os_syncs_each_write = false;
 
   // for open.flags, see signal FSOPENREQ
   DWORD dwCreationDisposition;
@@ -394,12 +384,6 @@ int ndb_file::open(const char name[], unsigned flags)
   }
 
   // OM_APPEND not used.
-
-  if (flags & FsOpenReq::OM_SYNC)
-  {
-    m_sync_on_write = true;
-    m_synced_on_write = true;
-  }
 
   switch (flags & FsOpenReq::OM_READ_WRITE_MASK)
   {
@@ -458,7 +442,7 @@ int ndb_file::set_direct_io(bool /* assume_implicit_datasync */)
 
 int ndb_file::reopen_with_sync(const char /* name */ [])
 {
-  if (m_synced_on_write)
+  if (m_os_syncs_each_write)
   {
     /*
      * If already synced on write by for example implicit by direct I/O mode no
@@ -467,7 +451,7 @@ int ndb_file::reopen_with_sync(const char /* name */ [])
     return 0;
   }
 
-  m_sync_on_write = true;
+  m_write_need_sync = true;
 
   return 0;
 }

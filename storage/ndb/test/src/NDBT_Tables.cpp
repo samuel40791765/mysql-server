@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,7 +27,7 @@
 #include <NDBT_Table.hpp>
 #include <NDBT_Tables.hpp>
 #include <NdbEnv.h>
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 
 /* ******************************************************* */
 //    Define Ndb standard tables 
@@ -535,7 +535,7 @@ NDBT_Table T14("T14", sizeof(T14Attribs)/sizeof(NDBT_Attribute), T14Attribs);
 /*
   T15 - Dynamic attributes.
   Test many different combinations of attribute types, sizes, and NULLability.
-  Also exersize >32bit dynattr bitmap.
+  Also exercise >32bit dynattr bitmap.
 */
 static
 const

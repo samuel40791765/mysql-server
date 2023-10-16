@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,6 +25,7 @@
 #ifndef NDB_BITMASK_H
 #define NDB_BITMASK_H
 
+#include "ndb_config.h"
 #include "ndb_global.h"
 
 #if defined(HAVE__BITSCANFORWARD) || defined(HAVE__BITSCANREVERSE)
@@ -429,7 +430,7 @@ BitmaskImpl::clz(Uint32 x)
   return 31 - x;
 #elif defined HAVE__BITSCANREVERSE
   unsigned long r;
-  unsigned char res = _BitScanReverse(&r, (unsigned long)x);
+  unsigned char res [[maybe_unused]] = _BitScanReverse(&r, (unsigned long)x);
   assert(res > 0);
   return 31 - (Uint32)r;
 #else
@@ -485,7 +486,7 @@ BitmaskImpl::ffs(Uint32 x)
   return __builtin_ffs(x) - 1;
 #elif defined HAVE__BITSCANFORWARD
   unsigned long r;
-  unsigned char res = _BitScanForward(&r, (unsigned long)x);
+  unsigned char res [[maybe_unused]] = _BitScanForward(&r, (unsigned long)x);
   assert(res > 0);
   return (Uint32)r;
 #elif defined HAVE_FFS
@@ -538,7 +539,7 @@ BitmaskImpl::fls(Uint32 x)
   return 31 - __builtin_clz(x);
 #elif defined HAVE__BITSCANREVERSE
   unsigned long r;
-  unsigned char res = _BitScanReverse(&r, (unsigned long)x);
+  unsigned char res [[maybe_unused]] = _BitScanReverse(&r, (unsigned long)x);
   assert(res > 0);
   return (Uint32)r;
 #else
@@ -1628,7 +1629,7 @@ BitmaskImpl::copyField(Uint32 _dst[], unsigned dstPos,
   /* Algorithm
    * While (len > 0)
    *  - Find the longest bit length we can copy from one 32-bit word
-   *    to another (which is the miniumum of remaining length, 
+   *    to another (which is the minimum of remaining length, 
    *    space in current src word and space in current dest word)
    *  - Extract that many bits from src, and shift them to the correct
    *    position to insert into dest

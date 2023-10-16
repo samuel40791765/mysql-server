@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -502,12 +502,14 @@ dberr_t Datafile::validate_for_recovery(space_id_t space_id) {
       }
 
       err = restore_from_doublewrite(0);
+
       if (err != DB_SUCCESS) {
         return (err);
       }
 
       /* Free the previously read first page and then re-validate. */
       free_first_page();
+
       err = validate_first_page(space_id, nullptr, false);
   }
 
@@ -878,17 +880,32 @@ dberr_t Datafile::restore_from_doublewrite(page_no_t restore_page_no) {
   /* Find if double write buffer contains page_no of given space id. */
   const byte *page = recv_sys->dblwr->find(page_id);
 
+  bool found = false;
+  lsn_t reduced_lsn = LSN_MAX;
+  std::tie(found, reduced_lsn) = recv_sys->dblwr->find_entry(page_id);
+
   if (page == nullptr) {
     /* If the first page of the given user tablespace is not there
     in the doublewrite buffer, then the recovery is going to fail
     now. Hence this is treated as an error. */
 
-    ib::error(ER_IB_MSG_412)
-        << "Corrupted page " << page_id_t(m_space_id, restore_page_no)
-        << " of datafile '" << m_filepath
-        << "' could not be found in the doublewrite buffer.";
-
+    if (found && reduced_lsn != LSN_MAX && reduced_lsn != 0) {
+      ib::fatal(UT_LOCATION_HERE, ER_REDUCED_DBLWR_PAGE_FOUND, m_filepath,
+                page_id.space(), page_id.page_no());
+    } else {
+      ib::error(ER_IB_MSG_412)
+          << "Corrupted page " << page_id_t(m_space_id, restore_page_no)
+          << " of datafile '" << m_filepath
+          << "' could not be found in the doublewrite buffer.";
+    }
     return (DB_CORRUPTION);
+  }
+
+  const lsn_t dblwr_lsn = mach_read_from_8(page + FIL_PAGE_LSN);
+
+  if (found && reduced_lsn != LSN_MAX && reduced_lsn > dblwr_lsn) {
+    ib::fatal(UT_LOCATION_HERE, ER_REDUCED_DBLWR_PAGE_FOUND, m_filepath,
+              page_id.space(), page_id.page_no());
   }
 
   const uint32_t flags = fsp_header_get_field(page, FSP_SPACE_FLAGS);

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -106,7 +106,7 @@ public:
 private:
   int ndbxfrm_append(Request* request, ndbxfrm_input_iterator* in);
 
-  bool check_odirect_request(const char* buf, size_t sz, off_t offset);
+  bool check_odirect_request(const char* buf, size_t sz, ndb_off_t offset);
 
   Request *m_current_request, *m_last_request;
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -36,6 +36,7 @@
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/gcs_xcom_input_queue.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/node_connection.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/site_struct.h"
+#include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/statistics/include/statistics_storage_interface.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/xcom_common.h"
 #include "plugin/group_replication/libmysqlgcs/xdr_gen/xcom_vp.h"
 
@@ -98,7 +99,7 @@ class Gcs_xcom_proxy {
     @param group_id the identifier of the group to which the nodes should
            be added
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of adding a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the node was added to the configuration.
@@ -123,7 +124,7 @@ class Gcs_xcom_proxy {
     @param group_id The identifier of the group from which the nodes will
            be removed
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of removing a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the nodes were removed from the configuration.
@@ -148,7 +149,7 @@ class Gcs_xcom_proxy {
     @param group_id The identifier of the group from which the nodes will
            be removed
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of removing a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the nodes were removed from the configuration.
@@ -188,7 +189,7 @@ class Gcs_xcom_proxy {
     @param group_id The identifier of the group from which the nodes will
            be removed
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of setting the event horizon. Since this is
              basically an asynchronous function, one needs to busy-wait on
              @c xcom_client_get_event_horizon to validate that the event horizon
@@ -209,7 +210,7 @@ class Gcs_xcom_proxy {
     @param preferred_leaders The "host:port" of the preferred leaders
     @param max_nr_leaders Maximum number of active leaders
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of setting the leaders. Since this is
              basically an asynchronous function, one needs to busy-wait on
              @c xcom_client_get_leaders to validate that the leaders were
@@ -267,7 +268,7 @@ class Gcs_xcom_proxy {
 
     @param size The new value for the maximum size of the XCom cache.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont.
+             process our request, failure means it won't.
   */
   virtual bool xcom_client_set_cache_size(uint64_t size) = 0;
 
@@ -290,7 +291,7 @@ class Gcs_xcom_proxy {
     @param size the size of the payload
     @param data the payload
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont.
+             process our request, failure means it won't.
   */
 
   virtual bool xcom_client_send_data(unsigned long long size, char *data) = 0;
@@ -410,7 +411,7 @@ class Gcs_xcom_proxy {
     @param nl List with a single member - the one that boots the group
     @param group_id the Group identifier to which the member belongs to
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of booting. Since this is basically an
              asynchronous function, one needs to wait for XCom to signal it is
              ready to validate whether it booted.
@@ -541,7 +542,7 @@ class Gcs_xcom_proxy {
     @param group_id The identifier of the group from which the nodes will
            belong
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of forcing the configuration. Since this is
              basically an asynchronous function, one needs to wait for the
              actual view change to validate that the configuration was forced.
@@ -554,7 +555,7 @@ class Gcs_xcom_proxy {
     @param node Node information.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of booting. Since this is basically an
              asynchronous function, one needs to wait for XCom to signal it is
              ready to validate whether it booted.
@@ -568,7 +569,7 @@ class Gcs_xcom_proxy {
     @param nodes Set of nodes.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of removing a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the nodes were removed from the configuration.
@@ -584,7 +585,7 @@ class Gcs_xcom_proxy {
     @param nodes Set of nodes to remove.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of removing a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the nodes were removed from the configuration.
@@ -600,7 +601,7 @@ class Gcs_xcom_proxy {
     @param node Node information.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of removing a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the node was removed from the configuration.
@@ -616,7 +617,7 @@ class Gcs_xcom_proxy {
     @param nodes Set of nodes.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of adding a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the nodes were added to the configuration.
@@ -632,7 +633,7 @@ class Gcs_xcom_proxy {
     @param node Node information.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of adding a node. Since this is basically an
              asynchronous function, one needs to wait for the actual view change
              to validate that the node was added to the configuration.
@@ -712,7 +713,7 @@ class Gcs_xcom_proxy {
     @param nodes Set of nodes.
     @param group_id_hash Hash of group identifier.
     @returns true (false) on success (failure). Success means that XCom will
-             process our request, failure means it wont. There could be errors
+             process our request, failure means it won't. There could be errors
              later in the process of forcing the configuration. Since this is
              basically an asynchronous function, one needs to wait for the
              actual view change to validate that the configuration was forced.
@@ -781,7 +782,7 @@ class Gcs_xcom_proxy {
    * Attempts to retrieve incoming commands. (Called by XCom.)
    *
    * @pre The input channel to XCom is open, i.e. @c xcom_input_connect
-   * @retval app_data_ptr linked list of the queued comamnds if the queue is
+   * @retval app_data_ptr linked list of the queued commands if the queue is
    *                      not empty
    * @retval nullptr if the queue is empty
    */
@@ -1084,6 +1085,15 @@ class Gcs_xcom_app_cfg {
    * @param ns_mgr a reference to a Network_namespace_manager implementation
    */
   void set_network_namespace_manager(Network_namespace_manager *ns_mgr);
+
+  /**
+   * @brief Set XCom's.
+   *  statists storage implementation
+   *
+   * @param stats_storage
+   */
+  void set_statists_storage_implementation(
+      Xcom_statistics_storage_interface *stats_storage);
 
   /**
     Must be called when XCom is not engaged anymore.

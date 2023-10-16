@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -52,6 +52,7 @@
 #include "sql/dd/types/object_table.h"
 #include "sql/dd/types/weak_object.h"
 #include "sql/field.h"
+#include "string_with_len.h"
 
 using dd::tables::Index_column_usage;
 using dd::tables::Indexes;
@@ -63,7 +64,8 @@ class Sdi_wcontext;
 class Table;
 
 static const std::set<String_type> default_valid_option_keys = {
-    "block_size", "flags", "parser_name"};
+    "block_size", "flags", "parser_name",
+    "gipk" /* generated implicit primary key */};
 
 ///////////////////////////////////////////////////////////////////////////
 // Index_impl implementation.

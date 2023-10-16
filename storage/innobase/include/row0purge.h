@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -173,6 +173,10 @@ struct purge_node_t {
   Recs *recs;
 
   void init() { new (&m_lob_pages) LOB_free_set(); }
+  void deinit() {
+    mem_heap_free(heap);
+    m_lob_pages.~LOB_free_set();
+  }
 
   /** Add an LOB page to the list of pages that will be freed at the end of a
   purge batch.
@@ -198,7 +202,7 @@ struct purge_node_t {
 
   trx_rseg_t *rseg;
 #ifdef UNIV_DEBUG
-  /**   Validate the persisent cursor. The purge node has two references
+  /**   Validate the persistent cursor. The purge node has two references
      to the clustered index record - one via the ref member, and the
      other via the persistent cursor.  These two references must match
      each other if the found_clust flag is set.

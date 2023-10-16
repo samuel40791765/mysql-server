@@ -1,4 +1,4 @@
-/* Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
 
    This program is free software; you can redistribute it and/or modify
@@ -111,7 +111,7 @@ NdbOut::NdbOut(OutputStream & out, bool autoflush)
 }
 
 NdbOut::NdbOut()
-  : m_out(NULL), isHex(0)
+  : m_out(nullptr), isHex(0)
 {
    /**
     * m_out set to NULL!
@@ -129,12 +129,12 @@ NdbOut::~NdbOut()
 void
 NdbOut::print(const char * fmt, ...)
 {
-  if (fmt == NULL)
+  if (fmt == nullptr)
   {
     /*
      Function was called with fmt being NULL, this is an error
      but handle it gracefully by simpling printing nothing
-     instead of continuing down the line whith the NULL pointer.
+     instead of continuing down the line with the NULL pointer.
 
      Catch problem with an assert in debug compile.
     */
@@ -154,12 +154,12 @@ NdbOut::print(const char * fmt, ...)
 void
 NdbOut::println(const char * fmt, ...)
 {
-  if (fmt == NULL)
+  if (fmt == nullptr)
   {
     /*
      Function was called with fmt being NULL, this is an error
      but handle it gracefully by simpling printing nothing
-     instead of continuing down the line whith the NULL pointer.
+     instead of continuing down the line with the NULL pointer.
 
      Catch problem with an assert in debug compile.
     */
@@ -188,12 +188,12 @@ static
 void
 vndbout_c(const char * fmt, va_list ap)
 {
-  if (fmt == NULL)
+  if (fmt == nullptr)
   {
     /*
      Function was called with fmt being NULL, this is an error
      but handle it gracefully by simpling printing an empty newline
-     instead of continuing down the line whith the NULL pointer.
+     instead of continuing down the line with the NULL pointer.
 
      Catch problem with an assert in debug compile.
     */
@@ -259,8 +259,8 @@ FilteredNdbOut::getThreshold() const {
   return m_threshold;
 }
 
-static FileOutputStream ndbouts_fileoutputstream(0);
-static FileOutputStream ndberrs_fileoutputstream(0);
+static FileOutputStream ndbouts_fileoutputstream(nullptr);
+static FileOutputStream ndberrs_fileoutputstream(nullptr);
 
 void
 NdbOut_Init()

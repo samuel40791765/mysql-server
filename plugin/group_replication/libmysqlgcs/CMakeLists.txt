@@ -1,4 +1,4 @@
-# Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -25,9 +25,6 @@ SET(XCOM_BASEDIR
 
 SET(XCOM_INCLUDE_DIR
   ${CMAKE_CURRENT_SOURCE_DIR}/src/bindings/xcom/)
-
-SET (XCOM_INCLUDE_DIR
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/bindings/xcom/)
 
 ### DEFINITIONS ###
 
@@ -143,7 +140,9 @@ SET(GCS_SOURCES
   ${BUNDLED_LZ4_PATH}/xxhash.c # required by gcs_message_stage_split
   src/bindings/xcom/gcs_message_stage_split.cc
   src/bindings/xcom/gcs_xcom_synode.cc
-  src/bindings/xcom/gcs_xcom_expels_in_progress.cc)
+  src/bindings/xcom/gcs_xcom_expels_in_progress.cc
+  src/bindings/xcom/gcs_xcom_statistics_manager.cc
+  src/bindings/xcom/gcs_xcom_statistics_storage_impl.cc)
 
 ### Configuration ###
 
@@ -161,7 +160,19 @@ IF(MSVC)
   # Compiler warning C4018.
   IF(WIN32_CLANG)
     ADD_COMPILE_FLAGS(${XCOM_SUNRPC_SOURCES} ${XCOM_RPCGEN_SOURCES}
-      COMPILE_FLAGS "-Wno-sign-compare")
+      COMPILE_FLAGS
+      "-Wno-int-to-void-pointer-cast"
+      "-Wno-pointer-to-int-cast"
+      "-Wno-sign-compare"
+      "-Wno-unused-parameter"
+      "-Wno-unused-variable"
+      )
+    ADD_COMPILE_FLAGS(
+      src/bindings/xcom/xcom/xcom_base.cc
+      src/bindings/xcom/xcom/sock_probe.cc
+      COMPILE_FLAGS
+      "-Wno-unused-function"
+      )
   ELSE()
     ADD_COMPILE_FLAGS(${XCOM_SUNRPC_SOURCES} ${XCOM_RPCGEN_SOURCES}
       COMPILE_FLAGS "/wd4018")
@@ -192,6 +203,8 @@ ELSEIF(MY_COMPILER_IS_GNU_OR_CLANG)
   ENDIF()
 ENDIF()
 
+MSVC_CPPCHECK_DISABLE()
+
 MY_ADD_COMPILE_DEFINITIONS(
   ${XCOM_SOURCES}
   ${GCS_SOURCES}
@@ -219,6 +232,10 @@ ADD_LIBRARY(mysqlgcs STATIC ${XCOM_SOURCES} ${GCS_SOURCES})
 # Dependency on mysys from gcs_logging_system.cc
 # but pick up symbols from the server:
 # TARGET_LINK_LIBRARIES(mysqlgcs mysys)
+
+IF(LINUX AND WITH_TIRPC STREQUAL "bundled")
+  ADD_DEPENDENCIES(mysqlgcs tirpc_ext)
+ENDIF()
 
 IF(CMAKE_VERSION VERSION_GREATER "3.19" AND NOT APPLE_XCODE)
   # New in version 3.19:

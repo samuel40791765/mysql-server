@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -198,7 +198,8 @@ dberr_t Key_sort_buffer::serialize(IO_buffer io_buffer, Function &&f) noexcept {
 
     {
       const auto p = ptr + extra_size;
-      rec_serialize_dtuple(p, m_index, fields, n_fields, nullptr);
+      rec_serialize_dtuple(p, m_index, fields, n_fields, nullptr,
+                           MAX_ROW_VERSION);
     }
 
     ptr += size;

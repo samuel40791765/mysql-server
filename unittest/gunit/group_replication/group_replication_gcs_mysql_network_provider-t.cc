@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,11 +25,13 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-void handle_group_replication_incoming_connection(THD *thd, int fd,
-                                                  SSL *ssl_ctx) {
+int handle_group_replication_incoming_connection(THD *thd, int fd,
+                                                 SSL *ssl_ctx) {
   (void)thd;
   (void)fd;
   (void)ssl_ctx;
+
+  return 0;
 }
 
 // To fool the compiler

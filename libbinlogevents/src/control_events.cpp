@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -85,12 +85,11 @@ Format_description_event::Format_description_event(uint8_t binlog_ver,
       memset(server_version, 0, ST_SERVER_VER_LEN);
       snprintf(server_version, ST_SERVER_VER_LEN, "%.*s", ST_SERVER_VER_LEN - 1,
                server_ver);
-      if (binary_log_debug::debug_pretend_version_50034_in_binlog)
-        strcpy(server_version, "5.0.34");
+
       common_header_len = LOG_EVENT_HEADER_LEN;
       number_of_event_types = LOG_EVENT_TYPES;
       /**
-        This will be used to initialze the post_header_len,
+        This will be used to initialize the post_header_len,
         for binlog version 4.
       */
       static uint8_t server_event_header_length[] = {
@@ -348,6 +347,12 @@ XA_prepare_event::XA_prepare_event(const char *buf,
   BAPI_VOID_RETURN;
 }
 
+bool XA_prepare_event::is_one_phase() const { return this->one_phase; }
+
+XA_prepare_event::MY_XID const &XA_prepare_event::get_xid() const {
+  return this->my_xid;
+}
+
 Transaction_payload_event::Transaction_payload_event(const char *payload,
                                                      uint64_t payload_size,
                                                      uint16_t compression_type,
@@ -357,12 +362,6 @@ Transaction_payload_event::Transaction_payload_event(const char *payload,
       m_payload_size(payload_size),
       m_compression_type((transaction::compression::type)compression_type),
       m_uncompressed_size(uncompressed_size) {}
-
-Transaction_payload_event::Transaction_payload_event(const char *payload,
-                                                     uint64_t payload_size)
-    : Transaction_payload_event(payload, payload_size,
-                                transaction::compression::type::NONE,
-                                payload_size) {}
 
 Transaction_payload_event::~Transaction_payload_event() = default;
 
@@ -398,6 +397,11 @@ std::string Transaction_payload_event::to_string() const {
     oss << "\tuncompressed_size=" << m_uncompressed_size;
 
   return oss.str();
+}
+
+void Transaction_payload_event::set_payload(
+    Buffer_sequence_view_t *buffer_sequence_view) {
+  m_buffer_sequence_view = buffer_sequence_view;
 }
 
 #ifndef HAVE_MYSYS
@@ -441,6 +445,8 @@ Gtid_event::Gtid_event(const char *buf, const Format_description_event *fde)
     |1 to 9 bytes| transaction_length (see net_length_size())
     +------------+
     |   4/8 bytes| original/immediate_server_version (see timestamps*)
+    +------------+
+    |     8 bytes| Commit group ticket
     +------------+
 
     The 'Flags' field contains gtid flags.
@@ -552,6 +558,10 @@ Gtid_event::Gtid_event(const char *buf, const Format_description_event *fde)
                            ORIGINAL_SERVER_VERSION_LENGTH);
           } else
             original_server_version = immediate_server_version;
+
+          if (READER_CALL(can_read, COMMIT_GROUP_TICKET_LENGTH)) {
+            READER_TRY_SET(this->commit_group_ticket, read<uint64_t>);
+          }
         }
       }
     }
@@ -559,6 +569,26 @@ Gtid_event::Gtid_event(const char *buf, const Format_description_event *fde)
 
   READER_CATCH_ERROR;
   BAPI_VOID_RETURN;
+}
+
+int Gtid_event::get_commit_group_ticket_length() const {
+  if (kGroupTicketUnset != commit_group_ticket) {
+    return COMMIT_GROUP_TICKET_LENGTH;
+  }
+  return 0;
+}
+
+void Gtid_event::set_commit_group_ticket_and_update_transaction_length(
+    std::uint64_t value) {
+  /*
+    Add the commit_group_ticket length to the transaction length if
+    it was not yet considered.
+  */
+  assert(value > 0);
+  set_trx_length(transaction_length + (kGroupTicketUnset == commit_group_ticket
+                                           ? COMMIT_GROUP_TICKET_LENGTH
+                                           : 0));
+  commit_group_ticket = value;
 }
 
 Previous_gtids_event::Previous_gtids_event(const char *buffer,

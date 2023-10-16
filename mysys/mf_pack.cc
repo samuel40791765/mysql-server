@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -37,7 +37,7 @@
 #include <string.h>
 
 #ifdef _WIN32
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 #endif
 #include "m_string.h"
 #include "my_dbug.h"
@@ -46,6 +46,7 @@
 #include "my_io.h"
 #include "my_sys.h"
 #include "mysys/my_static.h"
+#include "strmake.h"
 
 static std::string expand_tilde(char **path);
 
@@ -92,7 +93,7 @@ size_t cleanup_dirname(char *to, const char *from) {
   {
     const char *dev_pos = strrchr(from_ptr, FN_DEVCHAR);
     if (dev_pos != nullptr) { /* Skip device part */
-      size_t length = (dev_pos - from_ptr) + 1;
+      const size_t length = (dev_pos - from_ptr) + 1;
       start = my_stpnmov(buff, from_ptr, length);
       from_ptr += length;
     }
@@ -100,7 +101,7 @@ size_t cleanup_dirname(char *to, const char *from) {
 #endif
 
   parent[0] = FN_LIBCHAR;
-  size_t length = my_stpcpy(parent + 1, FN_PARENTDIR) - parent;
+  const size_t length = my_stpcpy(parent + 1, FN_PARENTDIR) - parent;
   const char *end = start + FN_REFLEN;
   for (pos = start; pos < end && ((*pos = *from_ptr++) != 0); pos++) {
 #ifdef _WIN32
@@ -154,7 +155,7 @@ size_t cleanup_dirname(char *to, const char *from) {
 #ifdef FN_NETWORK_DRIVES
         if (pos - start != 1)
 #endif
-          pos--; /* Remove dupplicate '/' */
+          pos--; /* Remove duplicate '/' */
       } else if (pos - start > 1 && pos[-1] == FN_CURLIB &&
                  pos[-2] == FN_LIBCHAR)
         pos -= 2; /* Skip /./ */

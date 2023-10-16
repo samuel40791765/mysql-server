@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,8 +27,9 @@
 #include <sys/types.h>
 
 #include "client/client_priv.h"
+#include "m_string.h"
 #ifdef _WIN32
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 #endif
 #include "my_alloc.h"
 #include "my_compiler.h"
@@ -39,6 +40,7 @@
 #include "my_shm_defaults.h"
 #include "mysql/service_mysql_alloc.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "print_version.h"
 #include "typelib.h"
 #include "welcome_copyright_notice.h"  // ORACLE_WELCOME_COPYRIGHT_NOTICE
@@ -347,10 +349,10 @@ static int install_password_validation_component() {
         }
       }
       char *query, *end;
-      int tmp = sizeof("SET GLOBAL validate_password.policy = ") + 3;
-      size_t strength_length = strlen(strength);
+      const int tmp = sizeof("SET GLOBAL validate_password.policy = ") + 3;
+      const size_t strength_length = strlen(strength);
       /*
-        query string needs memory which is atleast the length of initial part
+        query string needs memory which is at least the length of initial part
         of query plus twice the size of variable being appended.
       */
       query = (char *)my_malloc(PSI_NOT_INSTRUMENTED,
@@ -381,10 +383,10 @@ static int install_password_validation_component() {
 */
 static void estimate_password_strength(char *password_string) {
   char *query, *end;
-  size_t tmp = sizeof("SELECT validate_password_strength(") + 3;
-  size_t password_length = strlen(password_string);
+  const size_t tmp = sizeof("SELECT validate_password_strength(") + 3;
+  const size_t password_length = strlen(password_string);
   /*
-    query string needs memory which is atleast the length of initial part
+    query string needs memory which is at least the length of initial part
     of query plus twice the size of variable being appended.
   */
   query = (char *)my_malloc(PSI_NOT_INSTRUMENTED,
@@ -423,7 +425,7 @@ static void estimate_password_strength(char *password_string) {
 */
 
 static bool mysql_set_password(MYSQL *mysql, char *password) {
-  size_t password_len = strlen(password);
+  const size_t password_len = strlen(password);
   char *query, *end;
   query =
       (char *)my_malloc(PSI_NOT_INSTRUMENTED, password_len + 50, MYF(MY_WME));
@@ -458,7 +460,7 @@ static bool mysql_set_password(MYSQL *mysql, char *password) {
 
 static bool mysql_expire_password(MYSQL *mysql) {
   char sql[] = "UPDATE mysql.user SET password_expired= 'Y'";
-  size_t sql_len = strlen(sql);
+  const size_t sql_len = strlen(sql);
   if (mysql_real_query(mysql, sql, (ulong)sql_len)) return false;
 
   return true;
@@ -511,13 +513,13 @@ static void set_opt_user_password(int component_set) {
                        "Yes, any other key for No) : ");
     }
 
-    size_t pass_length = strlen(password1);
+    const size_t pass_length = strlen(password1);
 
     if ((!component_set) || (reply == (int)'y' || reply == (int)'Y')) {
       char *query = nullptr, *end;
-      int tmp = sizeof("SET PASSWORD=") + 3;
+      const int tmp = sizeof("SET PASSWORD=") + 3;
       /*
-        query string needs memory which is atleast the length of initial part
+        query string needs memory which is at least the length of initial part
         of query plus twice the size of variable being appended.
       */
       query = (char *)my_malloc(PSI_NOT_INSTRUMENTED,
@@ -637,13 +639,13 @@ static void drop_users(MYSQL_RES *result) {
   while ((row = mysql_fetch_row(result))) {
     char *query, *end;
     size_t user_length, host_length;
-    int tmp = sizeof("DROP USER ") + 5;
+    const int tmp = sizeof("DROP USER ") + 5;
     user_tmp = row[0];
     host_tmp = row[1];
     user_length = strlen(user_tmp);
     host_length = strlen(host_tmp);
     /*
-      query string needs memory which is atleast the length of initial part
+      query string needs memory which is at least the length of initial part
       of query plus twice the size of variable being appended.
     */
     query = (char *)my_malloc(

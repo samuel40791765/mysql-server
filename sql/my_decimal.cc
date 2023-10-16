@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,10 +31,10 @@
 #endif
 
 #include "decimal.h"
-#include "m_ctype.h"
 #include "my_dbug.h"
 #include "my_sys.h"
-#include "my_time.h"          // TIME_to_ulonglong_date
+#include "my_time.h"  // TIME_to_ulonglong_date
+#include "mysql/strings/m_ctype.h"
 #include "mysql_time.h"       // MYSQL_TIME
 #include "mysqld_error.h"     // ER_*
 #include "sql/current_thd.h"  // current_thd
@@ -164,7 +164,7 @@ int my_decimal2string(uint mask, const my_decimal *d, uint fixed_prec,
 bool str_set_decimal(uint mask, const my_decimal *val, String *str,
                      const CHARSET_INFO *cs, uint decimals) {
   my_decimal dec_buf;
-  if (!(cs->state & MY_CS_NONASCII)) {
+  if (my_charset_is_ascii_based(cs)) {
     /* For ASCII-compatible character sets we can use my_decimal2string */
     if (static_cast<int>(decimals) < val->frac) {
       my_decimal_round(E_DEC_FATAL_ERROR, val, decimals, false, &dec_buf);
@@ -282,7 +282,7 @@ int str2my_decimal(uint mask, const char *from, size_t length,
 
   @param       lld  The lldiv_t variable to convert from.
   @param       neg  Sign flag (negative, 0 positive).
-  @param [out] dec  Decimal numbert to convert to.
+  @param [out] dec  Decimal number to convert to.
 */
 static my_decimal *lldiv_t2my_decimal(const lldiv_t *lld, bool neg,
                                       my_decimal *dec) {

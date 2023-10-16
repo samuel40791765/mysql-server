@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -901,6 +901,10 @@ struct row_prebuilt_t {
     dtuple_set_n_fields(search_tuple, 0);
     dtuple_set_n_fields(m_stop_tuple, 0);
   }
+
+  /** Inside this function perform activity that needs to be done at the
+  end of statement.  */
+  void end_stmt();
 
   /** @return true iff the operation can skip concurrency ticket. */
   bool skip_concurrency_ticket() const;

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -43,7 +43,6 @@
 #include "my_byteorder.h"
 #include "my_dbug.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_pointer_arithmetic.h"
 #include "my_psi_config.h"
@@ -53,6 +52,7 @@
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/mysql_lex_string.h"
 #include "mysql/plugin.h"
 #include "mysql/psi/mysql_file.h"
@@ -60,10 +60,14 @@
 #include "mysql/psi/mysql_table.h"
 #include "mysql/psi/psi_table.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysql_version.h"  // MYSQL_VERSION_ID
 #include "mysqld_error.h"
+#include "nulls.h"
+#include "sql-common/json_dom.h"  // Json_wrapper
+#include "sql-common/json_path.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"  // acl_getroot
 #include "sql/auth/sql_security_ctx.h"
@@ -80,14 +84,13 @@
 #include "sql/field.h"
 #include "sql/filesort.h"  // filesort_free_buffers
 #include "sql/gis/srid.h"
+#include "sql/histograms/table_histograms.h"
 #include "sql/item.h"
 #include "sql/item_cmpfunc.h"    // and_conds
 #include "sql/item_json_func.h"  // Item_func_array_cast
 #include "sql/join_optimizer/bit_utils.h"
 #include "sql/json_diff.h"  // Json_diff_vector
-#include "sql/json_dom.h"   // Json_wrapper
-#include "sql/json_path.h"
-#include "sql/key.h"  // find_ref_key
+#include "sql/key.h"        // find_ref_key
 #include "sql/log.h"
 #include "sql/my_decimal.h"
 #include "sql/mysqld.h"  // reg_ext key_file_frm ...
@@ -121,8 +124,12 @@
 #include "sql/trigger_def.h"
 #include "sql_const.h"
 #include "sql_string.h"
+#include "string_with_len.h"
+#include "strxmov.h"
+#include "strxnmov.h"
 #include "template_utils.h"  // down_cast
 #include "thr_mutex.h"
+
 /* INFORMATION_SCHEMA name */
 LEX_CSTRING INFORMATION_SCHEMA_NAME = {STRING_WITH_LEN("information_schema")};
 
@@ -159,7 +166,7 @@ LEX_CSTRING PARSE_GCOL_KEYWORD = {STRING_WITH_LEN("parse_gcol_expr")};
 
 /* Functions defined in this file */
 
-static Item *create_view_field(THD *thd, TABLE_LIST *view, Item **field_ref,
+static Item *create_view_field(THD *thd, Table_ref *view, Item **field_ref,
                                const char *name,
                                Name_resolution_context *context);
 static void open_table_error(THD *thd, TABLE_SHARE *share, int error,
@@ -227,7 +234,7 @@ View_creation_ctx *View_creation_ctx::create(THD *thd) {
 
 /*************************************************************************/
 
-View_creation_ctx *View_creation_ctx::create(THD *thd, TABLE_LIST *view) {
+View_creation_ctx *View_creation_ctx::create(THD *thd, Table_ref *view) {
   View_creation_ctx *ctx = new (thd->mem_root) View_creation_ctx(thd);
 
   /* Throw a warning if there is NULL cs name. */
@@ -286,8 +293,8 @@ GRANT_INFO::GRANT_INFO() {
 
   @todo
     It is a good idea to get rid of this function modifying the code
-    to garantee that the functions presently calling fn_rext() always
-    get arguments in the same format: either with '.frm' or without '.frm'.
+    to guarantee that the functions presently calling fn_rext() always
+    gets arguments in the same format: either with '.frm' or without '.frm'.
 
   @return
     Pointer to the '.frm' extension. If there is no extension,
@@ -547,8 +554,16 @@ void TABLE_SHARE::destroy() {
   /* The mutex is initialized only for shares that are part of the TDC */
   if (tmp_table == NO_TMP_TABLE) mysql_mutex_destroy(&LOCK_ha_data);
 
-  delete m_histograms;
-  m_histograms = nullptr;
+  /*
+    The Table_histograms_collection pointed to by m_histograms is allocated on
+    the TABLE_SHARE MEM_ROOT but owns objects that manage their own MEM_ROOT.
+    When destroying the share we have to manually invoke the destructor of
+    Table_histograms_collection to ensure that these objects are freed.
+  */
+  if (m_histograms != nullptr) {
+    m_histograms->~Table_histograms_collection();
+    m_histograms = nullptr;
+  }
 
   plugin_unlock(nullptr, db_plugin);
   db_plugin = nullptr;
@@ -698,7 +713,7 @@ void KEY_PART_INFO::init_from_field(Field *fld) {
   }
   init_flags();
 
-  ha_base_keytype key_type = field->key_type();
+  const ha_base_keytype key_type = field->key_type();
   type = (uint8)key_type;
   bin_cmp = key_type != HA_KEYTYPE_TEXT && key_type != HA_KEYTYPE_VARTEXT1 &&
             key_type != HA_KEYTYPE_VARTEXT2;
@@ -978,6 +993,19 @@ static int read_string(File file, uchar **to, size_t length) {
   return 0;
 } /* read_string */
 
+namespace {
+
+/**
+  convert a hex digit into number.
+*/
+
+inline int hexchar_to_int(char c) {
+  if (c <= '9' && c >= '0') return c - '0';
+  c |= 32;
+  if (c <= 'f' && c >= 'a') return c - 'a' + 10;
+  return -1;
+}
+
 /**
   Un-hex all elements in a typelib.
 
@@ -987,7 +1015,7 @@ static int read_string(File file, uchar **to, size_t length) {
   not be used any where else in the code. This function will be removed later.
 */
 
-static void unhex_type2(TYPELIB *interval) {
+void unhex_type2(TYPELIB *interval) {
   for (uint pos = 0; pos < interval->count; pos++) {
     char *from, *to;
     for (from = to = const_cast<char *>(interval->type_names[pos]); *from;) {
@@ -1005,6 +1033,8 @@ static void unhex_type2(TYPELIB *interval) {
     interval->type_lengths[pos] /= 2;
   }
 }
+
+}  // namespace
 
 /**
  Search after a field with given start & length
@@ -1036,7 +1066,7 @@ static uint find_field(Field **fields, uchar *record, uint start, uint length) {
 
 /**
   fix a str_type to a array type
-  typeparts separated with some char. differents types are separated
+  typeparts separated with some char. different types are separated
   with a '\0'
 
   @note This function is added to read .frm file in upgrade scenario. It
@@ -1194,7 +1224,7 @@ static int make_field_from_frm(THD *thd, TABLE_SHARE *share,
     pack_flag = uint2korr(strpos + 8);
     unireg_type = (uint)strpos[10];
     interval_nr = (uint)strpos[12];
-    uint comment_length = uint2korr(strpos + 15);
+    const uint comment_length = uint2korr(strpos + 15);
     field_type = (enum_field_types)(uint)strpos[13];
 
     /* charset and geometry_type share the same byte in frm */
@@ -1202,7 +1232,7 @@ static int make_field_from_frm(THD *thd, TABLE_SHARE *share,
       geom_type = (Field::geometry_type)strpos[14];
       charset = &my_charset_bin;
     } else {
-      uint csid = strpos[14] + (((uint)strpos[11]) << 8);
+      const uint csid = strpos[14] + (((uint)strpos[11]) << 8);
       if (!csid)
         charset = &my_charset_bin;
       else if (!(charset = get_charset(csid, MYF(0)))) {
@@ -1285,7 +1315,7 @@ static int make_field_from_frm(THD *thd, TABLE_SHARE *share,
       The difference is that in the old version we stored precision
       in the .frm table while we now store the display_length
     */
-    uint decimals = f_decimals(pack_flag);
+    const uint decimals = f_decimals(pack_flag);
     field_length = my_decimal_precision_to_length(field_length, decimals,
                                                   f_is_dec(pack_flag) == 0);
     LogErr(ERROR_LEVEL, ER_TABLE_INCOMPATIBLE_DECIMAL_FIELD,
@@ -1309,7 +1339,8 @@ static int make_field_from_frm(THD *thd, TABLE_SHARE *share,
     share->crashed = true;
   }
 
-  FRM_context::utype unireg = (FRM_context::utype)MTYP_TYPENR(unireg_type);
+  const FRM_context::utype unireg =
+      (FRM_context::utype)MTYP_TYPENR(unireg_type);
   // Construct auto_flag
   uchar auto_flags = Field::NONE;
 
@@ -1514,7 +1545,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
 
   uint total_key_parts;
   if (use_extended_sk) {
-    uint primary_key_parts =
+    const uint primary_key_parts =
         keys ? (new_frm_ver >= 3) ? (uint)strpos[4] : (uint)strpos[3] : 0;
     total_key_parts = key_parts + primary_key_parts * (keys - 1);
   } else
@@ -1645,7 +1676,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
     next_chunk += share->connect_string.length + 2;
     buff_end = extra_segment_buff + n_length;
     if (next_chunk + 2 < buff_end) {
-      uint str_db_type_length = uint2korr(next_chunk);
+      const uint str_db_type_length = uint2korr(next_chunk);
       LEX_CSTRING name;
       name.str = (char *)next_chunk + 2;
       name.length = str_db_type_length;
@@ -1689,6 +1720,21 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
         my_error(ER_NO_SUCH_TABLE, MYF(0), share->db.str,
                  share->table_name.str);
         goto err;
+      } else if (!tmp_plugin && name.length == 7 &&
+                 !strncmp(name.str, "ndbinfo", name.length)) {
+        /*
+          When upgrading from MySQL Cluster 7.5 or 7.6, both MySQL 5.7 based,
+          there may be FRM files for ndbinfo tables. If server is not compiled
+          with ndbinfo storage engine or it is not enabled the table can not be
+          created.  This is not a critical failure since ndbinfo tables are
+          read only tables returning rows on demand about the current state of
+          Ndb cluster and not row data is kept on file.  If ndbinfo engine
+          later is enabled it will create its tables again.
+        */
+        DBUG_PRINT("info", ("ignoring ndbinfo table '%s.%s'", share->db.str,
+                            share->table_name.str));
+        error = 9;
+        goto err;
       } else if (!tmp_plugin) {
         /* purecov: begin inspected */
         error = 8;
@@ -1700,7 +1746,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
       next_chunk += str_db_type_length + 2;
     }
     if (next_chunk + 5 < buff_end) {
-      uint32 partition_info_str_len = uint4korr(next_chunk);
+      const uint32 partition_info_str_len = uint4korr(next_chunk);
       if ((share->partition_info_str_len = partition_info_str_len)) {
         if (!(share->partition_info_str =
                   (char *)memdup_root(&share->mem_root, next_chunk + 4,
@@ -1723,7 +1769,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
                      ("fulltext key uses parser that is not defined in .frm"));
           goto err;
         }
-        LEX_CSTRING parser_name = {
+        const LEX_CSTRING parser_name = {
             reinterpret_cast<char *>(next_chunk),
             strlen(reinterpret_cast<char *>(next_chunk))};
         next_chunk += parser_name.length + 1;
@@ -1788,7 +1834,8 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
       if (tablespace_length) {
         Tablespace_name_error_handler error_handler;
         thd->push_internal_handler(&error_handler);
-        bool name_check_error = validate_tablespace_name_length(tablespace);
+        const bool name_check_error =
+            validate_tablespace_name_length(tablespace);
         thd->pop_internal_handler();
         if (!name_check_error &&
             !(share->tablespace = strmake_root(&share->mem_root, tablespace,
@@ -2011,7 +2058,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
         find_type(primary_key_name, &share->keynames, FIND_TYPE_NO_PREFIX);
     uint primary_key = (pk_off > 0 ? pk_off - 1 : MAX_KEY);
 
-    longlong ha_option = handler_file->ha_table_flags();
+    const longlong ha_option = handler_file->ha_table_flags();
     keyinfo = share->key_info;
     key_part = keyinfo->key_part;
 
@@ -2043,7 +2090,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
 
           /*
             If the key column is of NOT NULL BLOB type, then it
-            will definitly have key prefix. And if key part prefix size
+            will definitely have key prefix. And if key part prefix size
             is equal to the BLOB column max size, then we can promote
             it to primary key.
           */
@@ -2184,7 +2231,7 @@ static int open_binary_frm(THD *thd, TABLE_SHARE *share,
   disk_buff = nullptr;
   if (new_field_pack_flag <= 1) {
     /* Old file format with default as not null */
-    uint null_length = (share->null_fields + 7) / 8;
+    const uint null_length = (share->null_fields + 7) / 8;
     memset(share->default_values + (null_flags - record), 255, null_length);
   }
 
@@ -2255,7 +2302,7 @@ err:
   @param source       Source of value generator(a generated column, a regular
                       column with generated default value or
                       a check constraint).
-  @param source_name  Name of the source (generated column, a reguler column
+  @param source_name  Name of the source (generated column, a regular column
                       with generated default value or a check constraint).
   @param column_index The column order.
 
@@ -2271,7 +2318,7 @@ static bool validate_value_generator_expr(Item *expr,
 
   // Map to get actual error code from error_type for the source.
   enum error_type { ER_NAME_FUNCTION, ER_FUNCTION, ER_VARIABLES, MAX_ERROR };
-  uint error_code_map[][MAX_ERROR] = {
+  const uint error_code_map[][MAX_ERROR] = {
       // Generated column errors.
       {ER_GENERATED_COLUMN_NAMED_FUNCTION_IS_NOT_ALLOWED,
        ER_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED,
@@ -2351,13 +2398,13 @@ static bool validate_value_generator_expr(Item *expr,
   @param source          Source of value generator(a generated column, a regular
                          column with generated default value or
                          a check constraint).
-  @param source_name     Name of the source (generated column, a reguler column
+  @param source_name     Name of the source (generated column, a regular column
                          with generated default value or a check constraint).
   @param field           Field to which the val_generator is attached to for
                          generated columns and default expression.
 
   @retval true An error occurred, something was wrong with the function.
-  @retval false Ok, generated expression is fixed sucessfully
+  @retval false Ok, generated expression is fixed successfully
  */
 static bool fix_value_generator_fields(THD *thd, TABLE *table,
                                        Value_generator *val_generator,
@@ -2378,8 +2425,8 @@ static bool fix_value_generator_fields(THD *thd, TABLE *table,
         std::unique_ptr<Functional_index_error_handler>(
             new Functional_index_error_handler(field, thd));
 
-  // Set up a TABLE_LIST object for the table.
-  TABLE_LIST tables;
+  // Set up a Table_ref object for the table.
+  Table_ref tables;
   // Set alias and real name to table name
   tables.alias = table->s->table_name.str;
   tables.table_name = table->s->table_name.str;
@@ -2394,16 +2441,16 @@ static bool fix_value_generator_fields(THD *thd, TABLE *table,
 
   // Save the name resolution context and use_only_table_context
   Name_resolution_context *context = thd->lex->current_context();
-  TABLE_LIST *save_table_list = context->table_list;
-  TABLE_LIST *save_first_table = context->first_name_resolution_table;
-  TABLE_LIST *save_last_table = context->last_name_resolution_table;
+  Table_ref *save_table_list = context->table_list;
+  Table_ref *save_first_table = context->first_name_resolution_table;
+  Table_ref *save_last_table = context->last_name_resolution_table;
   context->table_list = &tables;
   context->first_name_resolution_table = &tables;
   context->last_name_resolution_table = nullptr;
   Item_ident::Change_context ctx(context);
   val_generator_expr->walk(&Item::change_context_processor, enum_walk::POSTFIX,
                            (uchar *)&ctx);
-  bool save_use_only_table_context = thd->lex->use_only_table_context;
+  const bool save_use_only_table_context = thd->lex->use_only_table_context;
   thd->lex->use_only_table_context = true;
 
   const char *save_where = thd->where;
@@ -2437,10 +2484,7 @@ static bool fix_value_generator_fields(THD *thd, TABLE *table,
 
   // Fix the fields for the value generator expression
   Item *new_func = val_generator_expr;
-  int fix_fields_error = val_generator_expr->fix_fields(thd, &new_func);
-
-  // Virtual columns expressions that substitute themselves are invalid
-  assert(new_func == val_generator_expr);
+  const int fix_fields_error = val_generator_expr->fix_fields(thd, &new_func);
 
   // Restore the current connection character set and collation.
   if (charset_switched)
@@ -2531,7 +2575,7 @@ void Value_generator::dup_expr_str(MEM_ROOT *root, const char *src,
 
 void Value_generator::print_expr(THD *thd, String *out) {
   out->length(0);
-  Sql_mode_parse_guard parse_guard(thd);
+  const Sql_mode_parse_guard parse_guard(thd);
   // Printing db and table name is useless
   auto flags = enum_query_type(QT_NO_DB | QT_NO_TABLE | QT_FORCE_INTRODUCERS);
   expr_item->print(thd, out, flags);
@@ -3009,7 +3053,8 @@ int open_table_from_share(THD *thd, TABLE_SHARE *share, const char *alias,
   */
 
   bitmap_size = share->column_bitmap_size;
-  if (!(bitmaps = root->ArrayAlloc<uchar>(bitmap_size * 7))) goto err;
+  bitmaps = root->ArrayAlloc<uchar>(bitmap_size * 8);
+  if (bitmaps == nullptr) goto err;
   bitmap_init(&outparam->def_read_set, (my_bitmap_map *)bitmaps, share->fields);
   bitmap_init(&outparam->def_write_set,
               (my_bitmap_map *)(bitmaps + bitmap_size), share->fields);
@@ -3023,6 +3068,9 @@ int open_table_from_share(THD *thd, TABLE_SHARE *share, const char *alias,
               (my_bitmap_map *)(bitmaps + bitmap_size * 5), share->fields);
   bitmap_init(&outparam->pack_row_tmp_set,
               (my_bitmap_map *)(bitmaps + bitmap_size * 6), share->fields);
+  bitmap_init(&outparam->read_set_internal,
+              pointer_cast<my_bitmap_map *>(bitmaps + bitmap_size * 7),
+              share->fields);
   outparam->default_column_bitmaps();
 
   /*
@@ -3128,11 +3176,24 @@ int open_table_from_share(THD *thd, TABLE_SHARE *share, const char *alias,
     }
   }
 
+  /*
+    Acquire histogram statistics for the TABLE from TABLE_SHARE. We must
+    remember to release the pointer back to the share in case we fail to open
+    the table. If the share represents a temporary table there are no histograms
+    to acquire and share->m_histograms is set to nullptr, so we skip this step.
+  */
+  if (share->m_histograms != nullptr) {
+    mysql_mutex_lock(&LOCK_open);
+    outparam->histograms = share->m_histograms->acquire();
+    mysql_mutex_unlock(&LOCK_open);
+  }
+
   /* The table struct is now initialized;  Open the table */
   error = 2;
   if (db_stat) {
     const dd::Table *table_def = table_def_param;
-    dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+    const dd::cache::Dictionary_client::Auto_releaser releaser(
+        thd->dd_client());
 
     if (!table_def) {
       if (thd->dd_client()->acquire(share->db.str, share->table_name.str,
@@ -3213,7 +3274,7 @@ int open_table_from_share(THD *thd, TABLE_SHARE *share, const char *alias,
       (share->table_category == TABLE_CATEGORY_GTID)) {
     outparam->no_replicate = true;
   } else if (outparam->file) {
-    handler::Table_flags flags = outparam->file->ha_table_flags();
+    const handler::Table_flags flags = outparam->file->ha_table_flags();
     outparam->no_replicate =
         !(flags & (HA_BINLOG_STMT_CAPABLE | HA_BINLOG_ROW_CAPABLE)) ||
         (flags & HA_HAS_OWN_BINLOGGING);
@@ -3227,6 +3288,13 @@ int open_table_from_share(THD *thd, TABLE_SHARE *share, const char *alias,
   return 0;
 
 err:
+  // Release histograms if acquired while opening the table.
+  if (outparam->histograms) {
+    mysql_mutex_lock(&LOCK_open);
+    share->m_histograms->release(outparam->histograms);
+    mysql_mutex_unlock(&LOCK_open);
+    outparam->histograms = nullptr;
+  }
   if (!error_reported) open_table_error(thd, share, error, my_errno());
   destroy(outparam->file);
   if (outparam->part_info) free_items(outparam->part_info->item_list);
@@ -3332,7 +3400,7 @@ void free_blob_buffers_and_reset(TABLE *table, uint32 size) {
   }
 }
 
-/* error message when opening a table defintion */
+/* error message when opening a table definition */
 
 static void open_table_error(THD *thd, TABLE_SHARE *share, int error,
                              int db_errno) {
@@ -3398,6 +3466,14 @@ static void open_table_error(THD *thd, TABLE_SHARE *share, int error,
       strxmov(buff, share->normalized_path.str, reg_ext, NullS);
       my_error(ER_NOT_FORM_FILE, MYF(0), buff);
       LogErr(ERROR_LEVEL, ER_SERVER_NOT_FORM_FILE, buff);
+      break;
+    case 9:
+      /*
+        Report no error. No harm not creating the table. Used when ndbinfo
+        plugin is not available when migrating FRM files from 5.7. These
+        tables are unusable without plugin, and will be recreated without loss
+        if plugin is later enabled.
+      */
       break;
   }
 } /* open_table_error */
@@ -3590,7 +3666,7 @@ Ident_name_check check_db_name(const char *name, size_t length) {
 Ident_name_check check_and_convert_db_name(LEX_STRING *org_name,
                                            bool preserve_lettercase) {
   char *name = org_name->str;
-  size_t name_length = org_name->length;
+  const size_t name_length = org_name->length;
   Ident_name_check ident_check_status;
 
   if (!name_length || name_length > NAME_LEN) {
@@ -3623,7 +3699,7 @@ Ident_name_check check_and_convert_db_name(LEX_STRING *org_name,
                                        greater than 64 characters
                                        (ER_TOO_LONG_IDENT)
 
-  @note Reporting error to the user is the responsiblity of the caller.
+  @note Reporting error to the user is the responsibility of the caller.
 */
 
 Ident_name_check check_table_name(const char *name, size_t length) {
@@ -3636,7 +3712,7 @@ Ident_name_check check_table_name(const char *name, size_t length) {
   while (name != end) {
     last_char_is_space = my_isspace(system_charset_info, *name);
     if (use_mb(system_charset_info)) {
-      int len = my_ismbchar(system_charset_info, name, end);
+      const int len = my_ismbchar(system_charset_info, name, end);
       if (len) {
         name += len;
         name_length++;
@@ -3661,8 +3737,8 @@ bool check_column_name(const char *name) {
   while (*name) {
     last_char_is_space = my_isspace(system_charset_info, *name);
     if (use_mb(system_charset_info)) {
-      int len = my_ismbchar(system_charset_info, name,
-                            name + system_charset_info->mbmaxlen);
+      const int len = my_ismbchar(system_charset_info, name,
+                                  name + system_charset_info->mbmaxlen);
       if (len) {
         name += len;
         name_length++;
@@ -3895,16 +3971,6 @@ end:
   return result;
 }
 
-const histograms::Histogram *TABLE_SHARE::find_histogram(
-    uint field_index) const {
-  if (m_histograms == nullptr) return nullptr;
-
-  const auto found = m_histograms->find(field_index);
-  if (found == m_histograms->end()) return nullptr;
-
-  return found->second;
-}
-
 /**
   Wait until the subject share is removed from the table
   definition cache and make sure it's destroyed.
@@ -4029,14 +4095,14 @@ Blob_mem_storage::~Blob_mem_storage() { storage.Clear(); }
   Initialize TABLE instance (newly created, or coming either from table
   cache or THD::temporary_tables list) and prepare it for further use
   during statement execution. Set the 'alias' attribute from the specified
-  TABLE_LIST element. Remember the TABLE_LIST element in the
+  Table_ref element. Remember the Table_ref element in the
   TABLE::pos_in_table_list member.
 
   @param thd  Thread context.
-  @param tl   TABLE_LIST element.
+  @param tl   Table_ref element.
 */
 
-void TABLE::init(THD *thd, TABLE_LIST *tl) {
+void TABLE::init(THD *thd, Table_ref *tl) {
 #ifndef NDEBUG
   if (s->tmp_table == NO_TMP_TABLE) {
     mysql_mutex_lock(&LOCK_open);
@@ -4053,7 +4119,7 @@ void TABLE::init(THD *thd, TABLE_LIST *tl) {
 
   /* Fix alias if table name changes. */
   if (strcmp(alias, tl->alias)) {
-    size_t length = strlen(tl->alias) + 1;
+    const size_t length = strlen(tl->alias) + 1;
     alias = static_cast<char *>(my_realloc(
         key_memory_TABLE, const_cast<char *>(alias), length, MYF(MY_WME)));
     memcpy(const_cast<char *>(alias), tl->alias, length);
@@ -4121,6 +4187,7 @@ void TABLE::reset() {
   set_keyread(false);
   no_keyread = false;
   all_partitions_pruned_away = false;
+  reginfo.join_tab = nullptr;
   reginfo.not_exists_optimize = false;
   reginfo.impossible_range = false;
   m_record_buffer = Record_buffer{0, 0, nullptr};
@@ -4165,7 +4232,7 @@ bool TABLE::init_tmp_table(THD *thd, TABLE_SHARE *share, MEM_ROOT *m_root,
 
     init_tmp_table_share(thd, share, "", 0, name, name, m_root);
   } else {
-    LEX_CSTRING empty_name = {STRING_WITH_LEN("")};
+    const LEX_CSTRING empty_name = {STRING_WITH_LEN("")};
     share->db = empty_name;
     share->table_name = empty_name;
   }
@@ -4272,29 +4339,7 @@ bool TABLE::fill_item_list(mem_root_deque<Item *> *item_list) const {
 }
 
 /**
-  Reset an existing list of Item_field items to point to the
-  Fields of this table.
-
-  SYNPOSIS
-    TABLE::reset_item_list()
-      item_list          a non-empty list with Item_fields
-
-    This is a counterpart of fill_item_list used to redirect
-    Item_fields to the fields of a newly created table.
-*/
-
-void TABLE::reset_item_list(const mem_root_deque<Item *> &item_list) const {
-  auto it = item_list.begin();
-  uint i = 0;
-  for (Field **ptr = visible_field_ptr(); *ptr; ptr++, i++) {
-    Item_field *item_field = down_cast<Item_field *>(*it++);
-    assert(item_field != nullptr);
-    item_field->reset_field(*ptr);
-  }
-}
-
-/**
-  Create a TABLE_LIST object representing a nested join
+  Create a Table_ref object representing a nested join
 
   @param allocator  Mem root allocator that object is created from.
   @param alias      Name of nested join object
@@ -4305,12 +4350,13 @@ void TABLE::reset_item_list(const mem_root_deque<Item *> &item_list) const {
   @returns Pointer to created join nest object, or NULL if error.
 */
 
-TABLE_LIST *TABLE_LIST::new_nested_join(
-    MEM_ROOT *allocator, const char *alias, TABLE_LIST *embedding,
-    mem_root_deque<TABLE_LIST *> *belongs_to, Query_block *select) {
+Table_ref *Table_ref::new_nested_join(MEM_ROOT *allocator, const char *alias,
+                                      Table_ref *embedding,
+                                      mem_root_deque<Table_ref *> *belongs_to,
+                                      Query_block *select) {
   assert(belongs_to && select);
 
-  TABLE_LIST *const join_nest = new (allocator) TABLE_LIST;
+  Table_ref *const join_nest = new (allocator) Table_ref;
   if (join_nest == nullptr) return nullptr;
 
   join_nest->nested_join = new (allocator) NESTED_JOIN;
@@ -4327,7 +4373,7 @@ TABLE_LIST *TABLE_LIST::new_nested_join(
   join_nest->query_block = select;
   join_nest->nested_join->first_nested = NO_PLAN_IDX;
 
-  join_nest->nested_join->join_list.clear();
+  join_nest->nested_join->m_tables.clear();
 
   return join_nest;
 }
@@ -4340,13 +4386,13 @@ TABLE_LIST *TABLE_LIST::new_nested_join(
   @return false if success, true if error
 */
 
-bool TABLE_LIST::merge_underlying_tables(Query_block *select) {
-  assert(nested_join->join_list.empty());
+bool Table_ref::merge_underlying_tables(Query_block *select) {
+  assert(nested_join->m_tables.empty());
 
-  for (TABLE_LIST *tl : select->top_join_list) {
+  for (Table_ref *tl : select->m_table_nest) {
     tl->embedding = this;
-    tl->join_list = &nested_join->join_list;
-    nested_join->join_list.push_back(tl);
+    tl->join_list = &nested_join->m_tables;
+    nested_join->m_tables.push_back(tl);
   }
 
   return false;
@@ -4355,7 +4401,7 @@ bool TABLE_LIST::merge_underlying_tables(Query_block *select) {
 /**
    Reset a table reference after preparation or execution, before (re-)execution
 */
-void TABLE_LIST::reset() {
+void Table_ref::reset() {
   // Reset connection to TABLE
   if (is_base_table()) table = nullptr;
 
@@ -4380,33 +4426,35 @@ void TABLE_LIST::reset() {
   }
 }
 
+/// Save the contents of the "from" bitmap in "to".
+static bool save_bitmap(MEM_ROOT *mem_root, const MY_BITMAP &from,
+                        MY_BITMAP *to) {
+  my_bitmap_map *buffer = static_cast<my_bitmap_map *>(
+      mem_root->Alloc(bitmap_buffer_size(from.n_bits)));
+  if (buffer == nullptr) return true;
+  if (bitmap_init(to, buffer, from.n_bits)) return true;
+  bitmap_copy(to, &from);
+  return false;
+}
+
 /**
-  Save persistent properties from TABLE into TABLE_LIST.
+  Save persistent properties from TABLE into Table_ref.
   Required because some properties about a table are calculated inside TABLE
   but should last for the duration of the statement. Since the TABLEs are
   released after execution of a statement and rebound at start of next
-  execution, those properties must be saved in TABLE_LIST after a statement is
-  prepared.
+  execution, those properties must be saved in Table_ref after a statement
+  is prepared.
 
   @returns false if success, true if error
 */
-bool TABLE_LIST::save_properties() {
-  size_t size = bitmap_buffer_size(table->s->fields);
-  my_bitmap_map *read_map, *write_map;
-  if (table->s->fields <= 64) {
-    read_map = read_set_small;
-    write_map = write_set_small;
-  } else {
-    read_map = static_cast<my_bitmap_map *>(current_thd->mem_root->Alloc(size));
-    if (read_map == nullptr) return true;
-    write_map =
-        static_cast<my_bitmap_map *>(current_thd->mem_root->Alloc(size));
-    if (write_map == nullptr) return true;
+bool Table_ref::save_properties() {
+  MEM_ROOT *const mem_root = *THR_MALLOC;
+  if (save_bitmap(mem_root, *table->read_set, &read_set_saved) ||
+      save_bitmap(mem_root, *table->write_set, &write_set_saved) ||
+      save_bitmap(mem_root, table->read_set_internal,
+                  &read_set_internal_saved)) {
+    return true;
   }
-  bitmap_init(&read_set_saved, read_map, table->s->fields);
-  bitmap_init(&write_set_saved, write_map, table->s->fields);
-  bitmap_copy(&read_set_saved, table->read_set);
-  bitmap_copy(&write_set_saved, table->write_set);
   covering_keys_saved = table->covering_keys;
   merge_keys_saved = table->merge_keys;
   keys_in_use_for_query_saved = table->keys_in_use_for_query;
@@ -4418,28 +4466,25 @@ bool TABLE_LIST::save_properties() {
   force_index_group_saved = table->force_index_group;
   partition_info *const part = table->part_info;
   if (part != nullptr) {
-    const uint part_count = part->read_partitions.n_bits;
-    size = bitmap_buffer_size(part_count);
-    my_bitmap_map *lock_part_map =
-        static_cast<my_bitmap_map *>(current_thd->mem_root->Alloc(size));
-    if (lock_part_map == nullptr) return true;
-    bitmap_init(&lock_partitions_saved, lock_part_map, part_count);
-    bitmap_copy(&lock_partitions_saved, &part->lock_partitions);
+    if (save_bitmap(mem_root, part->lock_partitions, &lock_partitions_saved)) {
+      return true;
+    }
   }
   return false;
 }
 
 /**
-  Restore persistent properties into TABLE from TABLE_LIST.
+  Restore persistent properties into TABLE from Table_ref.
   Required after a TABLE object has been rebound to a statement at start
   of execution of a prepared statement.
 */
-void TABLE_LIST::restore_properties() {
+void Table_ref::restore_properties() {
   assert(is_base_table());
   // CREATE VIEW will not have bitmap filled in
   if (read_set_saved.bitmap == nullptr) return;
   bitmap_copy(table->read_set, &read_set_saved);
   bitmap_copy(table->write_set, &write_set_saved);
+  bitmap_copy(&table->read_set_internal, &read_set_internal_saved);
   table->covering_keys = covering_keys_saved;
   table->merge_keys = merge_keys_saved;
   table->keys_in_use_for_query = keys_in_use_for_query_saved;
@@ -4469,7 +4514,7 @@ void TABLE_LIST::restore_properties() {
   @return false if success, true if error
 */
 
-bool TABLE_LIST::merge_where(THD *thd) {
+bool Table_ref::merge_where(THD *thd) {
   DBUG_TRACE;
 
   assert(is_merged());
@@ -4486,7 +4531,7 @@ bool TABLE_LIST::merge_where(THD *thd) {
   */
   derived_where_cond = condition;
 
-  Prepared_stmt_arena_holder ps_arena_holder(thd);
+  const Prepared_stmt_arena_holder ps_arena_holder(thd);
 
   /*
     Merge WHERE condition with the join condition of the outer join nest
@@ -4506,7 +4551,7 @@ bool TABLE_LIST::merge_where(THD *thd) {
   @return false if success, true if error.
 */
 
-bool TABLE_LIST::create_field_translation(THD *thd) {
+bool Table_ref::create_field_translation(THD *thd) {
   Query_block *select = derived->first_query_block();
   uint field_count = 0;
 
@@ -4514,7 +4559,7 @@ bool TABLE_LIST::create_field_translation(THD *thd) {
 
   assert(!field_translation);
 
-  Prepared_stmt_arena_holder ps_arena_holder(thd);
+  const Prepared_stmt_arena_holder ps_arena_holder(thd);
 
   // Create view fields translation table
   Field_translator *transl = (Field_translator *)thd->stmt_arena->alloc(
@@ -4528,7 +4573,7 @@ bool TABLE_LIST::create_field_translation(THD *thd) {
       If the view is used on the inner side of an outer join, these
       objects will reflect the correct nullability of the selected
       expressions.
-      The name is either explicitely specified in a list of column
+      The name is either explicitly specified in a list of column
       names, or is derived from the name of the expression in the SELECT
       list.
     */
@@ -4555,7 +4600,7 @@ bool TABLE_LIST::create_field_translation(THD *thd) {
   @returns  false for success, true for error
 */
 
-static bool merge_join_conditions(THD *thd, TABLE_LIST *table, Item **pcond) {
+static bool merge_join_conditions(THD *thd, Table_ref *table, Item **pcond) {
   DBUG_TRACE;
 
   *pcond = nullptr;
@@ -4565,7 +4610,7 @@ static bool merge_join_conditions(THD *thd, TABLE_LIST *table, Item **pcond) {
       return true; /* purecov: inspected */
   }
   if (!table->nested_join) return false;
-  for (TABLE_LIST *tbl : table->nested_join->join_list) {
+  for (Table_ref *tbl : table->nested_join->m_tables) {
     if (tbl->is_view()) continue;
     Item *cond;
     if (merge_join_conditions(thd, tbl, &cond))
@@ -4603,7 +4648,7 @@ static bool merge_join_conditions(THD *thd, TABLE_LIST *table, Item **pcond) {
   @returns false if success, true if error
 */
 
-bool TABLE_LIST::prepare_check_option(THD *thd, bool is_cascaded) {
+bool Table_ref::prepare_check_option(THD *thd, bool is_cascaded) {
   DBUG_TRACE;
   assert(is_view());
 
@@ -4613,18 +4658,18 @@ bool TABLE_LIST::prepare_check_option(THD *thd, bool is_cascaded) {
   */
   is_cascaded |= (with_check == VIEW_CHECK_CASCADED);
 
-  for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
+  for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
     if (tbl->is_view() && tbl->prepare_check_option(thd, is_cascaded))
       return true; /* purecov: inspected */
   }
 
   if (!check_option_processed) {
-    Prepared_stmt_arena_holder ps_arena_holder(thd);
+    const Prepared_stmt_arena_holder ps_arena_holder(thd);
     if ((with_check || is_cascaded) &&
         merge_join_conditions(thd, this, &check_option))
       return true; /* purecov: inspected */
 
-    for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
+    for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
       if (tbl->check_option &&
           !(check_option = and_conds(check_option, tbl->check_option)))
         return true; /* purecov: inspected */
@@ -4662,19 +4707,19 @@ bool TABLE_LIST::prepare_check_option(THD *thd, bool is_cascaded) {
   @returns false if success, true if error
 */
 
-bool TABLE_LIST::prepare_replace_filter(THD *thd) {
+bool Table_ref::prepare_replace_filter(THD *thd) {
   DBUG_TRACE;
 
-  for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
+  for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
     if (tbl->is_view() && tbl->prepare_replace_filter(thd)) return true;
   }
 
   if (!replace_filter_processed) {
-    Prepared_stmt_arena_holder ps_arena_holder(thd);
+    const Prepared_stmt_arena_holder ps_arena_holder(thd);
 
     if (merge_join_conditions(thd, this, &replace_filter))
       return true; /* purecov: inspected */
-    for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
+    for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
       if (tbl->replace_filter) {
         if (!(replace_filter = and_conds(replace_filter, tbl->replace_filter)))
           return true;
@@ -4696,18 +4741,6 @@ bool TABLE_LIST::prepare_replace_filter(THD *thd) {
 }
 
 /**
-  Cleanup items belonged to view fields translation table
-*/
-
-void TABLE_LIST::cleanup_items() {
-  if (!field_translation) return;
-
-  for (Field_translator *transl = field_translation;
-       transl < field_translation_end; transl++)
-    transl->item->walk(&Item::cleanup_processor, enum_walk::POSTFIX, nullptr);
-}
-
-/**
   Check CHECK OPTION condition
 
   @param thd       thread handler
@@ -4717,9 +4750,9 @@ void TABLE_LIST::cleanup_items() {
   @retval VIEW_CHECK_SKIP   FAILED, but continue
 */
 
-int TABLE_LIST::view_check_option(THD *thd) const {
+int Table_ref::view_check_option(THD *thd) const {
   if (check_option && check_option->val_int() == 0) {
-    const TABLE_LIST *main_view = top_table();
+    const Table_ref *main_view = top_table();
     my_error(ER_VIEW_CHECK_FAILED, MYF(0), main_view->db,
              main_view->table_name);
     if (thd->lex->is_ignore()) return (VIEW_CHECK_SKIP);
@@ -4740,8 +4773,8 @@ int TABLE_LIST::view_check_option(THD *thd) const {
   @retval true  found several tables
 */
 
-bool TABLE_LIST::check_single_table(TABLE_LIST **table_ref, table_map map) {
-  for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
+bool Table_ref::check_single_table(Table_ref **table_ref, table_map map) {
+  for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local) {
     if (tbl->is_view_or_derived() && tbl->is_merged()) {
       if (tbl->check_single_table(table_ref, map)) return true;
     } else if (tbl->map() & map) {
@@ -4761,7 +4794,7 @@ bool TABLE_LIST::check_single_table(TABLE_LIST **table_ref, table_map map) {
   @returns false if success, true if error (out of memory)
 */
 
-bool TABLE_LIST::set_insert_values(MEM_ROOT *mem_root) {
+bool Table_ref::set_insert_values(MEM_ROOT *mem_root) {
   if (table) {
     assert(table->insert_values == nullptr);
     if (!table->insert_values &&
@@ -4770,7 +4803,7 @@ bool TABLE_LIST::set_insert_values(MEM_ROOT *mem_root) {
       return true; /* purecov: inspected */
   } else {
     assert(view && merge_underlying_list);
-    for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local)
+    for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local)
       if (tbl->set_insert_values(mem_root))
         return true; /* purecov: inspected */
   }
@@ -4789,7 +4822,7 @@ bool TABLE_LIST::set_insert_values(MEM_ROOT *mem_root) {
 
   @retval true if a leaf, false otherwise.
 */
-bool TABLE_LIST::is_leaf_for_name_resolution() const {
+bool Table_ref::is_leaf_for_name_resolution() const {
   return (is_view_or_derived() || is_natural_join || is_join_columns_complete ||
           !nested_join);
 }
@@ -4812,8 +4845,8 @@ bool TABLE_LIST::is_leaf_for_name_resolution() const {
     else return 'this'
 */
 
-TABLE_LIST *TABLE_LIST::first_leaf_for_name_resolution() {
-  TABLE_LIST *cur_table_ref = nullptr;
+Table_ref *Table_ref::first_leaf_for_name_resolution() {
+  Table_ref *cur_table_ref = nullptr;
   NESTED_JOIN *cur_nested_join;
 
   if (is_leaf_for_name_resolution()) return this;
@@ -4822,14 +4855,14 @@ TABLE_LIST *TABLE_LIST::first_leaf_for_name_resolution() {
   for (cur_nested_join = nested_join; cur_nested_join;
        cur_nested_join = cur_table_ref->nested_join) {
     // The first operand is in the end of the list of join operands
-    cur_table_ref = cur_nested_join->join_list.back();
+    cur_table_ref = cur_nested_join->m_tables.back();
     if (cur_table_ref->is_leaf_for_name_resolution()) break;
   }
   return cur_table_ref;
 }
 
-TABLE_LIST *TABLE_LIST::last_leaf_for_name_resolution() {
-  TABLE_LIST *cur_table_ref = this;
+Table_ref *Table_ref::last_leaf_for_name_resolution() {
+  Table_ref *cur_table_ref = this;
   NESTED_JOIN *cur_nested_join;
 
   if (is_leaf_for_name_resolution()) return this;
@@ -4837,7 +4870,7 @@ TABLE_LIST *TABLE_LIST::last_leaf_for_name_resolution() {
 
   for (cur_nested_join = nested_join; cur_nested_join;
        cur_nested_join = cur_table_ref->nested_join) {
-    cur_table_ref = cur_nested_join->join_list.front();
+    cur_table_ref = cur_nested_join->m_tables.front();
     if (cur_table_ref->is_leaf_for_name_resolution()) break;
   }
   return cur_table_ref;
@@ -4852,7 +4885,7 @@ TABLE_LIST *TABLE_LIST::last_leaf_for_name_resolution() {
   @retval true Error
 */
 
-bool TABLE_LIST::prepare_view_security_context(THD *thd) {
+bool Table_ref::prepare_view_security_context(THD *thd) {
   DBUG_TRACE;
   DBUG_PRINT("enter", ("table: %s", alias));
 
@@ -4897,9 +4930,9 @@ bool TABLE_LIST::prepare_view_security_context(THD *thd) {
 
 */
 
-Security_context *TABLE_LIST::find_view_security_context(THD *thd) {
+Security_context *Table_ref::find_view_security_context(THD *thd) {
   Security_context *sctx;
-  TABLE_LIST *upper_view = this;
+  Table_ref *upper_view = this;
   DBUG_TRACE;
 
   assert(view);
@@ -4920,7 +4953,7 @@ Security_context *TABLE_LIST::find_view_security_context(THD *thd) {
 }
 
 /**
-  Prepare security context and load underlying tables priveleges for view
+  Prepare security context and load underlying tables privileges for view
 
   @param thd                  thread handler
 
@@ -4928,7 +4961,7 @@ Security_context *TABLE_LIST::find_view_security_context(THD *thd) {
   @retval true Error
 */
 
-bool TABLE_LIST::prepare_security(THD *thd) {
+bool Table_ref::prepare_security(THD *thd) {
   DBUG_TRACE;
   Security_context *save_security_ctx = thd->security_context();
 
@@ -4937,7 +4970,7 @@ bool TABLE_LIST::prepare_security(THD *thd) {
   /* Acl_map was previously checked out by get_aclroot */
   thd->set_security_context(find_view_security_context(thd));
   opt_trace_disable_if_no_security_context_access(thd);
-  for (TABLE_LIST *tbl : *view_tables) {
+  for (Table_ref *tbl : *view_tables) {
     assert(tbl->referencing_view);
     if (tbl->is_derived()) {
       /* Initialize privileges for derived tables */
@@ -4952,7 +4985,7 @@ bool TABLE_LIST::prepare_security(THD *thd) {
 }
 
 Natural_join_column::Natural_join_column(Field_translator *field_param,
-                                         TABLE_LIST *tab) {
+                                         Table_ref *tab) {
   assert(tab->field_translation);
   view_field = field_param;
   table_field = nullptr;
@@ -4961,7 +4994,7 @@ Natural_join_column::Natural_join_column(Field_translator *field_param,
 }
 
 Natural_join_column::Natural_join_column(Item_field *field_param,
-                                         TABLE_LIST *tab) {
+                                         Table_ref *tab) {
   assert(tab->table == field_param->field->table);
   table_field = field_param;
   /*
@@ -5008,7 +5041,7 @@ const char *Natural_join_column::table_name() {
 
 const char *Natural_join_column::db_name() {
   /*
-    Test that TABLE_LIST::db is the same as TABLE_SHARE::db to
+    Test that Table_ref::db is the same as TABLE_SHARE::db to
     ensure consistency. An exception are I_S schema tables, which
     are inconsistent in this respect.
   */
@@ -5022,7 +5055,7 @@ const char *Natural_join_column::db_name() {
 
 GRANT_INFO *Natural_join_column::grant() { return &table_ref->grant; }
 
-void Field_iterator_view::set(TABLE_LIST *table) {
+void Field_iterator_view::set(Table_ref *table) {
   assert(table->field_translation);
   view = table;
   ptr = table->field_translation;
@@ -5032,7 +5065,7 @@ void Field_iterator_view::set(TABLE_LIST *table) {
 const char *Field_iterator_table::name() { return (*ptr)->field_name; }
 
 Item *Field_iterator_table::create_item(THD *thd) {
-  TABLE_LIST *tr = (*ptr)->table->pos_in_table_list;
+  Table_ref *tr = (*ptr)->table->pos_in_table_list;
   Item_field *item = new Item_field(thd, &tr->query_block->context, tr, *ptr);
   if (item == nullptr) return nullptr;
   /*
@@ -5054,7 +5087,7 @@ Item *Field_iterator_view::create_item(THD *thd) {
   return create_view_field(thd, view, &ptr->item, ptr->name, &select->context);
 }
 
-static Item *create_view_field(THD *, TABLE_LIST *view, Item **field_ref,
+static Item *create_view_field(THD *, Table_ref *view, Item **field_ref,
                                const char *name,
                                Name_resolution_context *context) {
   DBUG_TRACE;
@@ -5106,7 +5139,7 @@ static Item *create_view_field(THD *, TABLE_LIST *view, Item **field_ref,
   return item;
 }
 
-void Field_iterator_natural_join::set(TABLE_LIST *table_ref) {
+void Field_iterator_natural_join::set(Table_ref *table_ref) {
   assert(table_ref->join_columns);
   column_ref_it.init(*(table_ref->join_columns));
   cur_column_ref = column_ref_it++;
@@ -5123,13 +5156,13 @@ void Field_iterator_table_ref::set_field_iterator() {
   DBUG_TRACE;
   /*
     If the table reference we are iterating over is a natural join, or it is
-    an operand of a natural join, and TABLE_LIST::join_columns contains all
+    an operand of a natural join, and Table_ref::join_columns contains all
     the columns of the join operand, then we pick the columns from
-    TABLE_LIST::join_columns, instead of the  orginial container of the
+    Table_ref::join_columns, instead of the original container of the
     columns of the join operator.
   */
   if (table_ref->is_join_columns_complete) {
-    /* Necesary, but insufficient conditions. */
+    /* Necessary, but insufficient conditions. */
     assert(
         table_ref->is_natural_join || table_ref->nested_join ||
         (table_ref->join_columns &&
@@ -5162,7 +5195,7 @@ void Field_iterator_table_ref::set_field_iterator() {
   field_it->set(table_ref);
 }
 
-void Field_iterator_table_ref::set(TABLE_LIST *table) {
+void Field_iterator_table_ref::set(Table_ref *table) {
   assert(table);
   first_leaf = table->first_leaf_for_name_resolution();
   last_leaf = table->last_leaf_for_name_resolution();
@@ -5197,7 +5230,7 @@ const char *Field_iterator_table_ref::get_db_name() {
     return natural_join_it.column_ref()->db_name();
 
   /*
-    Test that TABLE_LIST::db is the same as TABLE_SHARE::db to
+    Test that Table_ref::db is the same as TABLE_SHARE::db to
     ensure consistency. An exception are I_S schema tables, which
     are inconsistent in this respect and any_db (used in the handler
     interface to manage aliases).
@@ -5232,7 +5265,7 @@ GRANT_INFO *Field_iterator_table_ref::grant() {
     created natural join column. The former happens for base tables or
     views, and the latter for natural/using joins. If a new field is
     created, then the field is added to 'parent_table_ref' if it is
-    given, or to the original table referene of the field if
+    given, or to the original table reference of the field if
     parent_table_ref == NULL.
 
   @note
@@ -5254,11 +5287,11 @@ GRANT_INFO *Field_iterator_table_ref::grant() {
 */
 
 Natural_join_column *Field_iterator_table_ref::get_or_create_column_ref(
-    THD *thd, TABLE_LIST *parent_table_ref) {
+    THD *thd, Table_ref *parent_table_ref) {
   Natural_join_column *nj_col;
   bool is_created = true;
   uint field_count = 0;
-  TABLE_LIST *add_table_ref = parent_table_ref ? parent_table_ref : table_ref;
+  Table_ref *add_table_ref = parent_table_ref ? parent_table_ref : table_ref;
 
   if (field_it == &table_field_it) {
     /* The field belongs to a stored table. */
@@ -5369,6 +5402,7 @@ void TABLE::clear_column_bitmaps() {
 
   bitmap_clear_all(&tmp_set);
   bitmap_clear_all(&cond_set);
+  bitmap_clear_all(&read_set_internal);
 
   if (m_partial_update_columns != nullptr)
     bitmap_clear_all(m_partial_update_columns);
@@ -5422,6 +5456,7 @@ void TABLE::mark_column_used(Field *field, enum enum_mark_columns mark) {
     case MARK_COLUMNS_READ: {
       Key_map part_of_key = field->part_of_key;
       bitmap_set_bit(read_set, field->field_index());
+      bitmap_set_bit(&read_set_internal, field->field_index());
 
       part_of_key.merge(field->part_of_prefixkey);
       covering_keys.intersect(part_of_key);
@@ -5529,7 +5564,7 @@ void TABLE::mark_auto_increment_column() {
 /*
   Mark columns needed for doing an delete of a row
 
-  DESCRIPTON
+  DESCRIPTION
     Some table engines don't have a cursor on the retrieve rows
     so they need either to use the primary key or all columns to
     be able to delete a row.
@@ -5559,13 +5594,13 @@ void TABLE::mark_columns_needed_for_delete(THD *thd) {
   }
   if (file->ha_table_flags() & HA_PRIMARY_KEY_REQUIRED_FOR_DELETE) {
     /*
-      If the handler has no cursor capabilites we have to read
+      If the handler has no cursor capabilities we have to read
       either the primary key, the hidden primary key or all columns to
       be able to do an delete
     */
     if (s->primary_key == MAX_KEY) {
       /*
-        If in RBR, we have alreay marked the full before image
+        If in RBR, we have already marked the full before image
         in mark_columns_per_binlog_row_image, if not, then use
         the hidden primary key
       */
@@ -5597,7 +5632,7 @@ void TABLE::mark_columns_needed_for_delete(THD *thd) {
     updated columns to be read.
 
     If this is not the case, we do like in the delete case and mark
-    if neeed, either the primary key column or all columns to be read.
+    if needed, either the primary key column or all columns to be read.
     (see mark_columns_needed_for_delete() for details)
 
     If the engine has HA_REQUIRES_KEY_COLUMNS_FOR_DELETE, we will
@@ -5628,7 +5663,7 @@ void TABLE::mark_columns_needed_for_update(THD *thd, bool mark_binlog_columns) {
     /* Mark all used key columns for read */
     Field **reg_field;
     for (reg_field = field; *reg_field; reg_field++) {
-      /* Merge keys is all keys that had a column refered to in the query */
+      /* Merge keys is all keys that had a column referred to in the query */
       if (merge_keys.is_overlapping((*reg_field)->part_of_key))
         bitmap_set_bit(read_set, (*reg_field)->field_index());
     }
@@ -5637,13 +5672,13 @@ void TABLE::mark_columns_needed_for_update(THD *thd, bool mark_binlog_columns) {
 
   if (file->ha_table_flags() & HA_PRIMARY_KEY_REQUIRED_FOR_DELETE) {
     /*
-      If the handler has no cursor capabilites we have to read either
+      If the handler has no cursor capabilities we have to read either
       the primary key, the hidden primary key or all columns to be
       able to do an update
     */
     if (s->primary_key == MAX_KEY) {
       /*
-        If in RBR, we have alreay marked the full before image
+        If in RBR, we have already marked the full before image
         in mark_columns_per_binlog_row_image, if not, then use
         the hidden primary key
       */
@@ -6275,12 +6310,12 @@ void TABLE::mark_check_constraint_columns(bool is_update) {
   if (bitmap_updated) file->column_bitmaps_signal();
 }
 
-uint TABLE_LIST::query_block_id() const {
+uint Table_ref::query_block_id() const {
   if (!derived) return 0;
   return derived->first_query_block()->select_number;
 }
 
-uint TABLE_LIST::query_block_id_for_explain() const {
+uint Table_ref::query_block_id_for_explain() const {
   if (!derived) return 0;
   if (!m_common_table_expr || !m_common_table_expr->tmp_tables.size())
     return derived->first_query_block()->select_number;
@@ -6297,7 +6332,7 @@ uint TABLE_LIST::query_block_id_for_explain() const {
   @param tbl the TABLE to operate on.
 
     The parser collects the index hints for each table in a "tagged list"
-    (TABLE_LIST::index_hints). Using the information in this tagged list
+    (Table_ref::index_hints). Using the information in this tagged list
     this function sets the members st_table::keys_in_use_for_query,
     st_table::keys_in_use_for_group_by, st_table::keys_in_use_for_order_by,
     st_table::force_index, st_table::force_index_order,
@@ -6335,7 +6370,7 @@ uint TABLE_LIST::query_block_id_for_explain() const {
   @retval false No errors found.
   @retval true Found and reported an error.
 */
-bool TABLE_LIST::process_index_hints(const THD *thd, TABLE *tbl) {
+bool Table_ref::process_index_hints(const THD *thd, TABLE *tbl) {
   /* initialize the result variables */
   tbl->keys_in_use_for_query = tbl->keys_in_use_for_group_by =
       tbl->keys_in_use_for_order_by = tbl->s->usable_indexes(thd);
@@ -6455,7 +6490,7 @@ bool TABLE_LIST::process_index_hints(const THD *thd, TABLE *tbl) {
    objects for all elements of table list.
 */
 
-void init_mdl_requests(TABLE_LIST *table_list) {
+void init_mdl_requests(Table_ref *table_list) {
   for (; table_list; table_list = table_list->next_global)
     MDL_REQUEST_INIT(&table_list->mdl_request, MDL_key::TABLE, table_list->db,
                      table_list->table_name,
@@ -6467,7 +6502,7 @@ void init_mdl_requests(TABLE_LIST *table_list) {
   @returns true if view or derived table is mergeable, based on
   technical constraints.
 */
-bool TABLE_LIST::is_mergeable() const {
+bool Table_ref::is_mergeable() const {
   if (!is_view_or_derived() || algorithm == VIEW_ALGORITHM_TEMPTABLE)
     return false;
   /*
@@ -6481,7 +6516,7 @@ bool TABLE_LIST::is_mergeable() const {
   return derived->is_mergeable();
 }
 
-bool TABLE_LIST::materializable_is_const() const {
+bool Table_ref::materializable_is_const() const {
   assert(uses_materialization());
   const Query_expression *unit = derived_query_expression();
   return unit->query_result()->estimated_rowcount <= 1 &&
@@ -6493,14 +6528,14 @@ bool TABLE_LIST::materializable_is_const() const {
   Return the number of leaf tables for a merged view.
 */
 
-uint TABLE_LIST::leaf_tables_count() const {
+uint Table_ref::leaf_tables_count() const {
   // Join nests are not permissible, except as merged views
   assert(nested_join == nullptr || is_merged());
   if (!is_merged())  // Base table or materialized view
     return 1;
 
   uint count = 0;
-  for (TABLE_LIST *tbl = merge_underlying_list; tbl; tbl = tbl->next_local)
+  for (Table_ref *tbl = merge_underlying_list; tbl; tbl = tbl->next_local)
     count += tbl->leaf_tables_count();
 
   return count;
@@ -6511,21 +6546,25 @@ uint TABLE_LIST::leaf_tables_count() const {
   Retrieve number of rows in the table
 
   @details
-  Retrieve number of rows in the table referred by this TABLE_LIST and
-  store it in the table's stats.records variable. If this TABLE_LIST refers
+  Retrieve number of rows in the table referred by this Table_ref and
+  store it in the table's stats.records variable. If this Table_ref refers
   to a materialized derived table/view, then the estimated number of rows of
   the derived table/view is used instead.
+
+  @param fallback_estimate A fallback row estimate to use if the storage engine
+  doesn't provide one for us. The old optimizer uses
+  PLACEHOLDER_TABLE_ROW_ESTIMATE, which is 2. The hypergraph optimizer uses a
+  more pessimistic estimate of 1000 rows.
 
   @return 0          ok
   @return non zero   error
 */
 
-int TABLE_LIST::fetch_number_of_rows() {
-  int error = 0;
+int Table_ref::fetch_number_of_rows(ha_rows fallback_estimate) {
   if (is_table_function()) {
     // FIXME: open question - there's no estimate for table function.
     // return arbitrary, non-zero number;
-    table->file->stats.records = PLACEHOLDER_TABLE_ROW_ESTIMATE;
+    table->file->stats.records = fallback_estimate;
   } else if (uses_materialization()) {
     /*
       @todo: CostModel: This updates the stats.record value to the
@@ -6547,10 +6586,23 @@ int TABLE_LIST::fetch_number_of_rows() {
                      ->query_result()
                      ->estimated_rowcount,
                  // Recursive reference is never a const table
-                 (ha_rows)PLACEHOLDER_TABLE_ROW_ESTIMATE);
-  } else
-    error = table->file->info(HA_STATUS_VARIABLE | HA_STATUS_NO_LOCK);
-  return error;
+                 fallback_estimate);
+  } else {
+    int error = table->file->info(HA_STATUS_VARIABLE | HA_STATUS_NO_LOCK);
+    DBUG_EXECUTE_IF("bug35208539_raise_error", error = HA_ERR_GENERIC;);
+    if (error) {
+      return error;
+    }
+    // Some information schema tables have zero as estimate, which can lead
+    // to completely wild plans. Add a placeholder to make sure we have
+    // _something_ to work with.
+    if (schema_table != nullptr && schema_table->fill_table != nullptr &&
+        table->file->stats.records == 0) {
+      table->file->stats.records = fallback_estimate;
+    }
+  }
+
+  return 0;
 }
 
 /**
@@ -6615,7 +6667,7 @@ int TABLE_LIST::fetch_number_of_rows() {
   3. drop unused keys from the table.
 
   The above procedure is implemented in 4 functions:
-  1. TABLE_LIST::update_derived_keys()
+  1. Table_ref::update_derived_keys()
                           Create/extend list of possible keys for one derived
                           table/view based on given field/used tables info.
                           (Step one)
@@ -6624,9 +6676,9 @@ int TABLE_LIST::fetch_number_of_rows() {
                           when all possible info on keys is gathered and it's
                           safe to add keys - no keys or key parts would be
                           missed.  Walk over list of derived tables/views and
-                          call to TABLE_LIST::generate_keys to actually
+                          call to Table_ref::generate_keys to actually
                           generate keys. (Step two)
-  3. TABLE_LIST::generate_keys()
+  3. Table_ref::generate_keys()
                           Walks over list of possible keys for this derived
                           table/view to add keys to the result table.
                           Calls to TABLE::add_tmp_key() to actually add
@@ -6829,8 +6881,8 @@ static bool add_derived_key(THD *thd, List<Derived_key> &derived_key_list,
   @returns false if success, true if error
 */
 
-bool TABLE_LIST::update_derived_keys(THD *thd, Field *field, Item **values,
-                                     uint num_values, bool *allocated) {
+bool Table_ref::update_derived_keys(THD *thd, Field *field, Item **values,
+                                    uint num_values, bool *allocated) {
   *allocated = false;
   /*
     Don't bother with keys for CREATE VIEW, BLOB fields and fields with
@@ -6849,7 +6901,7 @@ bool TABLE_LIST::update_derived_keys(THD *thd, Field *field, Item **values,
   if (derived_key_list.elements == 0) table->keys_in_use_for_query.set_all();
 
   for (uint i = 0; i < num_values; i++) {
-    table_map tables = values[i]->used_tables() & ~PSEUDO_TABLE_BITS;
+    const table_map tables = values[i]->used_tables() & ~PSEUDO_TABLE_BITS;
     if (!tables || values[i]->real_item()->type() != Item::FIELD_ITEM) continue;
     for (table_map tbl = 1; tables >= tbl; tbl <<= 1) {
       if (!(tables & tbl)) continue;
@@ -6865,7 +6917,7 @@ bool TABLE_LIST::update_derived_keys(THD *thd, Field *field, Item **values,
 
 /*
   Comparison function for Derived_key entries.
-  See TABLE_LIST::generate_keys.
+  See Table_ref::generate_keys.
 */
 
 static int Derived_key_comp(Derived_key *e1, Derived_key *e2) {
@@ -6889,7 +6941,7 @@ static int Derived_key_comp(Derived_key *e1, Derived_key *e2) {
   @return false all keys were successfully added.
 */
 
-bool TABLE_LIST::generate_keys() {
+bool Table_ref::generate_keys() {
   assert(uses_materialization());
 
   if (!derived_key_list.elements) return false;
@@ -7046,7 +7098,7 @@ bool is_simple_order(ORDER *order) {
 
 void repoint_field_to_record(TABLE *table, uchar *old_rec, uchar *new_rec) {
   Field **fields = table->field;
-  ptrdiff_t ptrdiff = new_rec - old_rec;
+  const ptrdiff_t ptrdiff = new_rec - old_rec;
   for (uint i = 0; i < table->s->fields; i++)
     fields[i]->move_field_offset(ptrdiff);
 }
@@ -7094,7 +7146,7 @@ static bool update_generated_columns(TABLE *table, const MY_BITMAP *columns,
       blob->set_keep_old_value(true);
     }
 
-    type_conversion_status status =
+    const type_conversion_status status =
         field->gcol_info->expr_item->save_in_field(field, false);
 
     // Give up on error, but keep going if we just got a warning.
@@ -7243,21 +7295,40 @@ void TABLE::column_bitmaps_set(MY_BITMAP *read_set_arg,
   if (file && created) file->column_bitmaps_signal();
 }
 
-bool TABLE_LIST::set_recursive_reference() {
+handler *TABLE::get_primary_handler() const {
+  if (s->is_primary_engine()) {
+    return file;
+  }
+  return file->ha_get_primary_handler();
+}
+
+bool Table_ref::set_recursive_reference() {
   if (query_block->recursive_reference != nullptr) return true;
   query_block->recursive_reference = this;
   m_is_recursive_reference = true;
   return false;
 }
 
-bool TABLE_LIST::is_derived_unfinished_materialization() const {
+bool Table_ref::is_derived_unfinished_materialization() const {
   return (is_view_or_derived() &&
           derived_query_expression()->unfinished_materialization());
 }
 
-uint TABLE_LIST::get_hidden_field_count_for_derived() const {
+uint Table_ref::get_hidden_field_count_for_derived() const {
   assert(is_view_or_derived());
   return derived_result->get_hidden_field_count();
+}
+
+bool Table_ref::is_external() const {
+  if (m_table_ref_type == TABLE_REF_BASE_TABLE && table != nullptr &&
+      table->file != nullptr) {
+    handler *primary_handler = table->get_primary_handler();
+    return primary_handler != nullptr &&
+           Overlaps(primary_handler->ht->flags,
+                    HTON_SUPPORTS_EXTERNAL_SOURCE) &&
+           primary_handler->get_table_share()->has_secondary_engine();
+  }
+  return false;
 }
 
 void LEX_MFA::copy(LEX_MFA *m, MEM_ROOT *alloc) {
@@ -7316,8 +7387,8 @@ LEX_USER *LEX_USER::alloc(THD *thd, LEX_STRING *user_arg,
   return LEX_USER::init(ret, thd, user_arg, host_arg);
 }
 
-LEX_USER *LEX_USER::init(LEX_USER *ret, THD *thd, LEX_STRING *user_arg,
-                         LEX_STRING *host_arg) {
+LEX_USER *LEX_USER::init(LEX_USER *ret, THD *thd [[maybe_unused]],
+                         LEX_STRING *user_arg, LEX_STRING *host_arg) {
   ret->init();
   /*
     Trim whitespace as the values will go to a CHAR field
@@ -7486,7 +7557,7 @@ bool TABLE::setup_partial_update(bool logical_diffs) {
 
   Opt_trace_context *trace = &thd->opt_trace;
   if (trace->is_started()) {
-    Opt_trace_object trace_wrapper(trace);
+    const Opt_trace_object trace_wrapper(trace);
     Opt_trace_object trace_partial_update(trace, "json_partial_update");
     trace_partial_update.add_utf8_table(pos_in_table_list);
     Opt_trace_array columns(trace, "eligible_columns");
@@ -7505,7 +7576,7 @@ bool TABLE::setup_partial_update(bool logical_diffs) {
 bool TABLE::setup_partial_update() {
   THD *thd = current_thd;
 
-  bool logical_diffs =
+  const bool logical_diffs =
       (thd->variables.binlog_row_value_options & PARTIAL_JSON_UPDATES) != 0 &&
       mysql_bin_log.is_open() &&
       (thd->variables.option_bits & OPTION_BIN_LOG) != 0 &&
@@ -7653,7 +7724,7 @@ void TABLE::add_logical_diff(const Field_json *field,
   if (new_value == nullptr)
     diffs->add_diff(path, operation);
   else
-    diffs->add_diff(path, operation, new_value->clone_dom(current_thd));
+    diffs->add_diff(path, operation, new_value->clone_dom());
 
 #ifndef NDEBUG
   StringBuffer<STRING_BUFFER_USUAL_SIZE> path_str;
@@ -7663,7 +7734,8 @@ void TABLE::add_logical_diff(const Field_json *field,
   if (new_value == nullptr || new_value->type() == enum_json_type::J_ERROR)
     value_str.set_ascii("<none>", 6);
   else {
-    if (new_value->to_string(&value_str, false, "add_logical_diff"))
+    if (new_value->to_string(&value_str, false, "add_logical_diff",
+                             JsonDocumentDefaultDepthHandler))
       value_str.length(0); /* purecov: inspected */
   }
   DBUG_PRINT("info", ("add_logical_diff(operation=%d, path=%.*s, value=%.*s)",
@@ -7686,7 +7758,7 @@ bool TABLE::is_binary_diff_enabled(const Field *field) const {
 
 bool TABLE::is_logical_diff_enabled(const Field *field) const {
   DBUG_TRACE;
-  bool ret =
+  const bool ret =
       m_partial_update_info != nullptr &&
       bitmap_is_set(&m_partial_update_info->m_enabled_logical_diff_columns,
                     field->field_index());
@@ -7718,6 +7790,11 @@ void TABLE::disable_logical_diffs_for_current_row(const Field *field) const {
                    field->field_index());
 }
 
+const histograms::Histogram *TABLE::find_histogram(uint field_index) const {
+  if (histograms == nullptr) return nullptr;
+  return histograms->find_histogram(field_index);
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 /*
@@ -7747,21 +7824,26 @@ void TABLE::disable_logical_diffs_for_current_row(const Field *field) const {
 
   @retval  true   Error
   @retval  false  Success
+
+  @retval  0      Sucess
+  @retval  -1     Error
+  @retval  -2     Less severe error, file can safely be ignored (used for
+                  ndbinfo tables when ndbinfo storage engine is not enabled)
 */
-static bool read_frm_file(THD *thd, TABLE_SHARE *share,
-                          FRM_context *frm_context, const std::string &table,
-                          bool is_fix_view_cols_and_deps) {
+static int read_frm_file(THD *thd, TABLE_SHARE *share, FRM_context *frm_context,
+                         const std::string &table,
+                         bool is_fix_view_cols_and_deps) {
   File file;
   uchar head[64];
   char path[FN_REFLEN + 1];
   MEM_ROOT **root_ptr, *old_root;
 
   strxnmov(path, sizeof(path) - 1, share->normalized_path.str, reg_ext, NullS);
-  LEX_STRING pathstr = {path, strlen(path)};
+  const LEX_STRING pathstr = {path, strlen(path)};
 
   if ((file = mysql_file_open(key_file_frm, path, O_RDONLY, MYF(0))) < 0) {
     LogErr(ERROR_LEVEL, ER_CANT_OPEN_FRM_FILE, path);
-    return true;
+    return -1;
   }
 
   if (mysql_file_read(file, head, 64, MYF(MY_NABP))) {
@@ -7783,7 +7865,7 @@ static bool read_frm_file(THD *thd, TABLE_SHARE *share,
       */
       if (is_fix_view_cols_and_deps) {
         mysql_file_close(file, MYF(MY_WME));
-        return false;
+        return 0;
       }
       int error;
       root_ptr = THR_MALLOC;
@@ -7793,6 +7875,9 @@ static bool read_frm_file(THD *thd, TABLE_SHARE *share,
       error = open_binary_frm(thd, share, frm_context, head, file);
 
       *root_ptr = old_root;
+      if (error == 9) {
+        goto ignore_file;
+      }
       if (error) {
         LogErr(ERROR_LEVEL, ER_CANT_READ_FRM_FILE, path);
         goto err;
@@ -7828,18 +7913,21 @@ static bool read_frm_file(THD *thd, TABLE_SHARE *share,
 
   // Close file and return
   mysql_file_close(file, MYF(MY_WME));
-  return false;
+  return 0;
 
 err:
   mysql_file_close(file, MYF(MY_WME));
-  return true;
+  return -1;
+
+ignore_file:
+  mysql_file_close(file, MYF(MY_WME));
+  return -2;
 }
 
-bool create_table_share_for_upgrade(THD *thd, const char *path,
-                                    TABLE_SHARE *share,
-                                    FRM_context *frm_context,
-                                    const char *db_name, const char *table_name,
-                                    bool is_fix_view_cols_and_deps) {
+int create_table_share_for_upgrade(THD *thd, const char *path,
+                                   TABLE_SHARE *share, FRM_context *frm_context,
+                                   const char *db_name, const char *table_name,
+                                   bool is_fix_view_cols_and_deps) {
   DBUG_TRACE;
 
   init_tmp_table_share(thd, share, db_name, 0, table_name, path, nullptr);
@@ -7850,12 +7938,13 @@ bool create_table_share_for_upgrade(THD *thd, const char *path,
   mysql_mutex_init(key_TABLE_SHARE_LOCK_ha_data, &share->LOCK_ha_data,
                    MY_MUTEX_INIT_FAST);
 
-  if (read_frm_file(thd, share, frm_context, table_name,
-                    is_fix_view_cols_and_deps)) {
+  const int r = read_frm_file(thd, share, frm_context, table_name,
+                              is_fix_view_cols_and_deps);
+  if (r != 0) {
     free_table_share(share);
-    return true;
+    return r;
   }
-  return false;
+  return 0;
 }
 
 void TABLE::blobs_need_not_keep_old_value() {
@@ -7898,7 +7987,8 @@ void TABLE::update_covering_prefix_keys(Field *field, uint16 key_read_length,
                          *part_end = part + actual_key_parts(key_info);
            part != part_end; ++part)
         if ((part->key_part_flag & HA_PART_KEY_SEG) && field->eq(part->field)) {
-          uint16 key_part_length = part->length / field->charset()->mbmaxlen;
+          const uint16 key_part_length =
+              part->length / field->charset()->mbmaxlen;
           if (key_part_length < key_read_length) covering_keys.clear_bit(keyno);
         }
     }
@@ -7946,4 +8036,5 @@ bool assert_invalid_stats_is_locked(const TABLE *table) {
   return true;
 }
 #endif
+
 //////////////////////////////////////////////////////////////////////////

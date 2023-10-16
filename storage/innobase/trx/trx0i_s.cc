@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2022, Oracle and/or its affiliates.
+Copyright (c) 2007, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -91,47 +91,6 @@ subsequent is N/2 where N is the number of rows we have allocated till
 now, then 39th chunk would accommodate 1677416425 rows and all chunks
 would accommodate 3354832851 rows. */
 constexpr uint32_t MEM_CHUNKS_IN_TABLE_CACHE = 39;
-
-/** The following are some testing auxiliary macros. Do not enable them
-in a production environment. */
-/** @{ */
-
-#if 0
-/** If this is enabled then lock folds will always be different
-resulting in equal rows being put in a different cells of the hash
-table. Checking for duplicates will be flawed because different
-fold will be calculated when a row is searched in the hash table. */
-#define TEST_LOCK_FOLD_ALWAYS_DIFFERENT
-#endif
-
-#if 0
-/** This effectively kills the search-for-duplicate-before-adding-a-row
-function, but searching in the hash is still performed. It will always
-be assumed that lock is not present and insertion will be performed in
-the hash table. */
-#define TEST_NO_LOCKS_ROW_IS_EVER_EQUAL_TO_LOCK_T
-#endif
-
-#if 0
-/** This aggressively repeats adding each row many times. Depending on
-the above settings this may be noop or may result in lots of rows being
-added. */
-#define TEST_ADD_EACH_LOCKS_ROW_MANY_TIMES
-#endif
-
-#if 0
-/** Very similar to TEST_NO_LOCKS_ROW_IS_EVER_EQUAL_TO_LOCK_T but hash
-table search is not performed at all. */
-#define TEST_DO_NOT_CHECK_FOR_DUPLICATE_ROWS
-#endif
-
-#if 0
-/** Do not insert each row into the hash table, duplicates may appear
-if this is enabled, also if this is enabled searching into the hash is
-noop because it will be empty. */
-#define TEST_DO_NOT_INSERT_INTO_THE_HASH_TABLE
-#endif
-/** @} */
 
 /** Memory limit passed to ha_storage_put_memlim().
 @param cache hash storage
@@ -1000,7 +959,8 @@ void trx_i_s_cache_init(trx_i_s_cache_t *cache) /*!< out: cache to init */
   cache->rw_lock = static_cast<rw_lock_t *>(
       ut::malloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*cache->rw_lock)));
 
-  rw_lock_create(trx_i_s_cache_lock_key, cache->rw_lock, SYNC_TRX_I_S_RWLOCK);
+  rw_lock_create(trx_i_s_cache_lock_key, cache->rw_lock,
+                 LATCH_ID_TRX_I_S_CACHE);
 
   cache->last_read = std::chrono::steady_clock::time_point{};
 

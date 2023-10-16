@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2011, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1167,7 +1167,7 @@ NegativeTest::runSetBoundTest() const
       return NDBT_FAILED;
     }
 
-    // Set correct string lengh.
+    // Set correct string length.
     boundRow.len = nt2StrLen;
     bound.range_no = 1;
     if (query->setBound(ordIdxRecord, &bound) == 0 ||

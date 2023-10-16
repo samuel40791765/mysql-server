@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -38,8 +38,9 @@
 #include <NdbMutex.h>
 #include <NdbThread.h>
 
-#include "ndb_socket.h"
-
+#include "portlib/ndb_sockaddr.h"
+#include "portlib/ndb_socket.h"
+#include "util/NdbSocket.h"
 
 #define DISCONNECT_ERRNO(e, sz) ( \
                 (sz == 0) || \
@@ -127,15 +128,19 @@ public:
    *    Use isConnected() to check status
    */
   virtual bool connect_client();
-  bool connect_client(NDB_SOCKET_TYPE sockfd);
-  bool connect_server(NDB_SOCKET_TYPE socket, BaseString& errormsg);
+  bool connect_client(NdbSocket &);
+  bool connect_client(ndb_socket_t fd) {
+    NdbSocket socket(fd, NdbSocket::From::Existing);
+    return connect_client(socket);
+  }
+  bool connect_server(NdbSocket & socket, BaseString& errormsg);
 
   /**
    * Returns socket used (sockets are used for all transporters to ensure
    * we can wake up also shared memory transporters and other types of
    * transporters in consistent manner.
    */
-  NDB_SOCKET_TYPE getSocket() const;
+  ndb_socket_t getSocket() const;
 
   /**
    * Blocking
@@ -239,11 +244,11 @@ protected:
 
   /**
    * Blocking, for max timeOut milli seconds
-   *   Returns true if connect succeded
+   *   Returns true if connect succeeded
    */
-  virtual bool connect_server_impl(NDB_SOCKET_TYPE sockfd) = 0;
-  virtual bool connect_client_impl(NDB_SOCKET_TYPE sockfd) = 0;
-  virtual int pre_connect_options(NDB_SOCKET_TYPE sockfd) { return 0;}
+  virtual bool connect_server_impl(NdbSocket &) = 0;
+  virtual bool connect_client_impl(NdbSocket &) = 0;
+  virtual int pre_connect_options(ndb_socket_t) { return 0;}
   
   /**
    * Blocking
@@ -287,10 +292,10 @@ protected:
   Uint32 m_slowdown_count;
 
   // Sending/Receiving socket used by both client and server
-  NDB_SOCKET_TYPE theSocket;
+  NdbSocket theSocket;
 private:
   SocketClient *m_socket_client;
-  struct in6_addr m_connect_address;
+  ndb_sockaddr m_connect_address;
 
   virtual bool send_is_possible(int timeout_millisec) const = 0;
   virtual bool send_limit_reached(int bufsize) = 0;
@@ -324,13 +329,13 @@ protected:
 
   TransporterRegistry &m_transporter_registry;
   TransporterCallback *get_callback_obj() { return m_transporter_registry.callbackObj; }
-  void report_error(enum TransporterError err, const char *info = 0)
+  void report_error(enum TransporterError err, const char *info = nullptr)
     { m_transporter_registry.report_error(remoteNodeId, err, info); }
 
   Uint32 fetch_send_iovec_data(struct iovec dst[], Uint32 cnt);
   void iovec_data_sent(int nBytesSent);
 
-  void set_get(NDB_SOCKET_TYPE fd,
+  void set_get(ndb_socket_t fd,
                int level,
                int optval,
                const char *optname, 
@@ -368,9 +373,9 @@ protected:
 };
 
 inline
-NDB_SOCKET_TYPE
+ndb_socket_t
 Transporter::getSocket() const {
-  return theSocket;
+  return theSocket.ndb_socket();
 }
 
 inline

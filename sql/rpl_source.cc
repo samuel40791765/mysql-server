@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,15 +30,12 @@
 #include <unordered_map>
 #include <utility>
 
-#include "m_ctype.h"
-#include "m_string.h"  // strmake
 #include "map_helpers.h"
 #include "mutex_lock.h"  // Mutex_lock
 #include "my_byteorder.h"
 #include "my_command.h"
 #include "my_dbug.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_psi_config.h"
 #include "my_sys.h"
@@ -46,9 +43,11 @@
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/bits/psi_mutex_bits.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_file.h"
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysqld_error.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"  // check_global_access
@@ -74,6 +73,7 @@
 #include "sql/sql_list.h"
 #include "sql/system_variables.h"
 #include "sql_string.h"
+#include "strmake.h"
 #include "thr_mutex.h"
 #include "typelib.h"
 
@@ -82,6 +82,12 @@ bool opt_sporadic_binlog_dump_fail = false;
 
 malloc_unordered_map<uint32, unique_ptr_my_free<REPLICA_INFO>> slave_list{
     key_memory_REPLICA_INFO};
+
+resource_blocker::Resource &get_dump_thread_resource() {
+  static resource_blocker::Resource dump_thread_resource;
+  return dump_thread_resource;
+}
+
 extern TYPELIB binlog_checksum_typelib;
 
 #define get_object(p, obj, msg)                  \
@@ -99,6 +105,29 @@ extern TYPELIB binlog_checksum_typelib;
     strmake(obj, (char *)p, len);                \
     p += len;                                    \
   }
+
+// returns true if user successfully acquired a resource and false otherwise.
+// In case of failure to use a resource, it concatenates all blocking reeasons
+// and reports all as my_message.
+static bool check_and_report_dump_thread_blocked(
+    resource_blocker::User &rpl_user) {
+  if (rpl_user) {
+    return true;
+  }
+  const auto reasons = rpl_user.block_reasons();
+  std::string all_msgs;
+  bool first = true;
+  for (const auto &reason : reasons) {
+    if (first) {
+      first = false;
+    } else {
+      all_msgs.append(" ");
+    }
+    all_msgs.append(reason);
+  }
+  my_message(ER_SOURCE_FATAL_ERROR_READING_BINLOG, all_msgs.c_str(), MYF(0));
+  return false;
+}
 
 /**
   Register slave in 'slave_list' hash table.
@@ -120,6 +149,14 @@ int register_replica(THD *thd, uchar *packet, size_t packet_length) {
   if (check_access(thd, REPL_SLAVE_ACL, any_db, nullptr, nullptr, false, false))
     return 1;
 
+  thd->rpl_thd_ctx.dump_thread_user =
+      resource_blocker::User(get_dump_thread_resource());
+  // failed to create a user, resource is blocked
+  if (!check_and_report_dump_thread_blocked(
+          thd->rpl_thd_ctx.dump_thread_user)) {
+    return 1;
+  }
+
   unique_ptr_my_free<REPLICA_INFO> si((REPLICA_INFO *)my_malloc(
       key_memory_REPLICA_INFO, sizeof(REPLICA_INFO), MYF(MY_WME)));
   if (si == nullptr) return 1;
@@ -132,10 +169,10 @@ int register_replica(THD *thd, uchar *packet, size_t packet_length) {
 
   thd->server_id = si->server_id = uint4korr(p);
   p += 4;
-  get_object(p, si->host, "Failed to register slave: too long 'report-host'");
-  get_object(p, si->user, "Failed to register slave: too long 'report-user'");
+  get_object(p, si->host, "Failed to register replica: too long 'report-host'");
+  get_object(p, si->user, "Failed to register replica: too long 'report-user'");
   get_object(p, si->password,
-             "Failed to register slave; too long 'report-password'");
+             "Failed to register replica; too long 'report-password'");
   if (p + 10 > p_end) goto err;
   si->port = uint2korr(p);
   p += 2;
@@ -333,7 +370,7 @@ bool show_replicas(THD *thd) {
   <tr><td>@ref sect_protocol_basic_dt_string_fix "string[50]"</td>
     <td>mysql-server version</td>
     <td>version of the MySQL Server that created the binlog.
-      The string is evaluted to apply work-arounds in the slave. </td></tr>
+      The string is evaluated to apply workarounds on the slave. </td></tr>
   <tr><td>@ref a_protocol_type_int4 "int&lt;4&gt;"</td>
       <td>create-timestamp</td>
       <td>seconds since Unix epoch when the binlog was created</td></tr>
@@ -358,7 +395,7 @@ bool show_replicas(THD *thd) {
   <tr><td>@ref sect_protocol_basic_dt_string_fix "string[50]"</td>
     <td>mysql-server version</td>
     <td>version of the MySQL Server that created the binlog.
-      The string is evaluted to apply work-arounds in the slave. </td></tr>
+      The string is evaluated to apply workarounds on the slave. </td></tr>
   <tr><td>@ref a_protocol_type_int4 "int&lt;4&gt;"</td>
       <td>create-timestamp</td>
       <td>seconds since Unix epoch when the binlog was created</td></tr>
@@ -523,7 +560,7 @@ bool show_replicas(THD *thd) {
 
   @subsection sect_protocol_replication_event_heartbeat HEARTBEAT_EVENT
 
-  An artificial event genereted by the master. It isn't written to the relay
+  An artificial event generated by the master. It isn't written to the relay
   logs.
 
   It is added by the master after the replication connection was idle for
@@ -593,7 +630,7 @@ bool show_replicas(THD *thd) {
     <td>2</td></tr>
   <tr><td>0x09</td><td>@ref sect_protocol_replication_event_query_09 "Q_TABLE_MAP_FOR_UPDATE_CODE"</td>
     <td>8</td></tr>
-  <tr><td>0x0a</td><td>@ref sect_protocol_replication_event_query_0a "Q_MASTER_DATA_WRITTEN_CODE"</td>
+  <tr><td>0x0a</td><td>@ref sect_protocol_replication_event_query_0a "Q_SOURCE_DATA_WRITTEN_CODE"</td>
     <td>4</td></tr>
   <tr><td>0x0b</td><td>@ref sect_protocol_replication_event_query_0b "Q_INVOKERS"</td>
     <td>1 + n + 1 + n</td></tr>
@@ -673,7 +710,7 @@ bool show_replicas(THD *thd) {
 
   1 byte length + &lt;length&gt; chars of the cataiog + &lsquo;0&lsquo;-char
 
-  @note Oly written if length > 0
+  @note Only written if length > 0
 
 
   @anchor sect_protocol_replication_event_query_04 <b>Q_CHARSET_CODE</b>
@@ -905,6 +942,17 @@ bool com_binlog_dump(THD *thd, char *packet, size_t packet_length) {
   thd->enable_slow_log = opt_log_slow_admin_statements;
   if (check_global_access(thd, REPL_SLAVE_ACL)) return false;
 
+  // if we first registered a replica, user will already be initialized and
+  // using a resource
+  if (!thd->rpl_thd_ctx.dump_thread_user) {
+    thd->rpl_thd_ctx.dump_thread_user =
+        resource_blocker::User(get_dump_thread_resource());
+    // failed to create a user, resource is blocked
+    if (!check_and_report_dump_thread_blocked(
+            thd->rpl_thd_ctx.dump_thread_user)) {
+      return false;
+    }
+  }
   /*
     4 bytes is too little, but changing the protocol would break
     compatibility.  This has been fixed in the new protocol. @see
@@ -956,6 +1004,18 @@ bool com_binlog_dump_gtid(THD *thd, char *packet, size_t packet_length) {
   thd->enable_slow_log = opt_log_slow_admin_statements;
   if (check_global_access(thd, REPL_SLAVE_ACL)) return false;
 
+  // if we first registered a replica, user will already be initialized and
+  // using a resource
+  if (!thd->rpl_thd_ctx.dump_thread_user) {
+    thd->rpl_thd_ctx.dump_thread_user =
+        resource_blocker::User(get_dump_thread_resource());
+    // failed to create a user, resource is blocked
+    if (!check_and_report_dump_thread_blocked(
+            thd->rpl_thd_ctx.dump_thread_user)) {
+      return false;
+    }
+  }
+
   READ_INT(flags, 2);
   READ_INT(thd->server_id, 4);
   READ_INT(name_size, 4);
@@ -969,10 +1029,10 @@ bool com_binlog_dump_gtid(THD *thd, char *packet, size_t packet_length) {
       RETURN_STATUS_OK)
     return true;
   slave_gtid_executed.to_string(&gtid_string);
-  DBUG_PRINT("info",
-             ("Slave %d requested to read %s at position %" PRIu64 " gtid set "
-              "'%s'.",
-              thd->server_id, name, pos, gtid_string));
+  DBUG_PRINT("info", ("Replica %d requested to read %s at position %" PRIu64
+                      " gtid set "
+                      "'%s'.",
+                      thd->server_id, name, pos, gtid_string));
 
   kill_zombie_dump_threads(thd);
   query_logger.general_log_print(thd, thd->get_command(),
@@ -1127,7 +1187,7 @@ void kill_zombie_dump_threads(THD *thd) {
 
   @param thd Pointer to THD object of the client thread executing the
   statement.
-  @param unlock_global_read_lock Unlock the global read lock aquired
+  @param unlock_global_read_lock Unlock the global read lock acquired
   by RESET MASTER.
   @retval false success
   @retval true error
@@ -1150,7 +1210,7 @@ bool reset_master(THD *thd, bool unlock_global_read_lock) {
     unless executed during a clone operation as part of the process.
   */
   if (is_group_replication_running() && !is_group_replication_cloning()) {
-    my_error(ER_CANT_RESET_MASTER, MYF(0), "Group Replication is running");
+    my_error(ER_CANT_RESET_SOURCE, MYF(0), "Group Replication is running");
     ret = true;
     goto end;
   }
@@ -1176,7 +1236,7 @@ bool reset_master(THD *thd, bool unlock_global_read_lock) {
 
 end:
   /*
-    Unlock the global read lock (which was aquired by this
+    Unlock the global read lock (which was acquired by this
     session as part of RESET MASTER) before running the hook
     which informs plugins.
   */

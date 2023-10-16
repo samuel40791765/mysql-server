@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -27,6 +27,8 @@
 
 #include "mysqlrouter/metadata_cache_export.h"
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -38,8 +40,6 @@ namespace metadata_cache {
 
 enum class metadata_errc {
   ok,
-  no_rw_node_found,
-  no_rw_node_needed,
   no_metadata_server_reached,
   no_metadata_read_successful,
   metadata_refresh_terminated,
@@ -64,10 +64,6 @@ inline const std::error_category &metadata_cache_category() noexcept {
       switch (static_cast<metadata_errc>(ev)) {
         case metadata_errc::ok:
           return "ok";
-        case metadata_errc::no_rw_node_found:
-          return "no RW node found";
-        case metadata_errc::no_rw_node_needed:
-          return "RW node not requested";
         case metadata_errc::no_metadata_server_reached:
           return "no metadata server accessible";
         case metadata_errc::no_metadata_read_successful:
@@ -94,10 +90,8 @@ inline std::error_code make_error_code(metadata_errc e) noexcept {
   return std::error_code(static_cast<int>(e), metadata_cache_category());
 }
 
-constexpr const bool kNodeTagHiddenDefault{false};
-constexpr const bool kNodeTagDisconnectWhenHiddenDefault{true};
-
 enum class ServerMode { ReadWrite, ReadOnly, Unavailable };
+enum class ServerRole { Primary, Secondary, Unavailable };
 
 /** @class ManagedInstance
  *
@@ -105,32 +99,43 @@ enum class ServerMode { ReadWrite, ReadOnly, Unavailable };
  */
 class METADATA_CACHE_EXPORT ManagedInstance {
  public:
-  ManagedInstance() = default;
-  ManagedInstance(const std::string &p_mysql_server_uuid,
-                  const ServerMode p_mode, const std::string &p_host,
-                  const uint16_t p_port, const uint16_t p_xport);
+  ManagedInstance(mysqlrouter::InstanceType p_type,
+                  const std::string &p_mysql_server_uuid,
+                  const ServerMode p_mode, const ServerRole p_role,
+                  const std::string &p_host, const uint16_t p_port,
+                  const uint16_t p_xport);
 
   using TCPAddress = mysql_harness::TCPAddress;
-  explicit ManagedInstance(const TCPAddress &addr);
+  explicit ManagedInstance(mysqlrouter::InstanceType p_type);
+  explicit ManagedInstance(mysqlrouter::InstanceType p_type,
+                           const TCPAddress &addr);
   operator TCPAddress() const;
   bool operator==(const ManagedInstance &other) const;
 
+  /** @brief Instance type */
+  mysqlrouter::InstanceType type;
   /** @brief The uuid of the MySQL server */
   std::string mysql_server_uuid;
   /** @brief The mode of the server */
-  ServerMode mode;
+  ServerMode mode{ServerMode::Unavailable};
+  /** @brief The role of the server */
+  ServerRole role{ServerRole::Unavailable};
   /** @brief The host name on which the server is running */
   std::string host;
   /** The port number in which the server is running */
-  uint16_t port;
+  uint16_t port{0};
   /** The X protocol port number in which the server is running */
-  uint16_t xport;
+  uint16_t xport{0};
+  /** Node atributes as a json string from metadata */
+  std::string attributes;
   /** Should the node be hidden from the application to use it */
-  bool hidden{kNodeTagHiddenDefault};
+  bool hidden;
   /** Should the Router disconnect existing client sessions to the node when it
    * is hidden */
-  bool disconnect_existing_sessions_when_hidden{
-      kNodeTagDisconnectWhenHiddenDefault};
+  bool disconnect_existing_sessions_when_hidden;
+  /** Should the node be ignored for new and existing connections (for example
+   * due to the read_only_targets option) */
+  bool ignore{false};
 };
 
 using cluster_nodes_list_t = std::vector<ManagedInstance>;
@@ -144,23 +149,25 @@ using metadata_servers_list_t = std::vector<metadata_server_t>;
  */
 class METADATA_CACHE_EXPORT ManagedCluster {
  public:
+  /** @brief UUID in the metadata */
+  std::string id;
+  /** @brief Name of the cluster */
+  std::string name;
   /** @brief List of the members that belong to the cluster */
   cluster_nodes_list_t members;
   /** @brief Whether the cluster is in single_primary_mode (from PFS in case of
    * GR) */
   bool single_primary_mode;
-  /** @brief Id of the view this metadata represents (only used for AR now)*/
-  uint64_t view_id{0};
+
   /** @brief Metadata for the cluster is not consistent (only applicable for
    * the GR cluster when the data in the GR metadata is not consistent with the
    * cluster metadata)*/
   bool md_discrepancy{false};
 
-  // address of the writable metadata server that can be used for updating the
-  // metadata (router version, last_check_in), error code if not found
-  stdx::expected<metadata_cache::metadata_server_t, std::error_code>
-      writable_server{stdx::make_unexpected(
-          make_error_code(metadata_cache::metadata_errc::no_rw_node_found))};
+  /** @brief Is this a PRIMARY Cluster in case of ClusterSet */
+  bool is_primary{true};
+  /** @brief Is the Cluster marked as invalid in the metadata */
+  bool is_invalidated{false};
 
   bool empty() const noexcept { return members.empty(); }
 
@@ -171,8 +178,40 @@ class METADATA_CACHE_EXPORT ManagedCluster {
  * Represents a cluster (a GR group or AR members) and its metadata servers
  */
 struct METADATA_CACHE_EXPORT ClusterTopology {
-  ManagedCluster cluster_data;
+  using clusters_list_t = std::vector<ManagedCluster>;
+
+  clusters_list_t clusters_data;
+  // index of the target cluster in the clusters_data vector
+  std::optional<size_t> target_cluster_pos{};
   metadata_servers_list_t metadata_servers;
+
+  /** @brief Id of the view this metadata represents (used for AR and
+   * ClusterSets)*/
+  uint64_t view_id{0};
+
+  /** @brief name of the ClusterSet or empty in case of standalone Cluster */
+  std::string name{};
+
+  // address of the writable metadata server that can be used for updating the
+  // metadata (router version, last_check_in), nullptr_t if not found
+  std::optional<metadata_cache::metadata_server_t> writable_server{};
+
+  cluster_nodes_list_t get_all_members() const {
+    cluster_nodes_list_t result;
+
+    for (const auto &cluster : clusters_data) {
+      result.insert(result.end(), cluster.members.begin(),
+                    cluster.members.end());
+    }
+
+    return result;
+  }
+
+  void clear_all_members() {
+    for (auto &cluster : clusters_data) {
+      cluster.members.clear();
+    }
+  }
 };
 
 /**

@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,7 +34,6 @@
 #include <unordered_map>
 #include <utility>
 
-#include "m_ctype.h"
 #include "m_string.h"  // my_stpcpy
 #include "map_helpers.h"
 #include "my_alloc.h"
@@ -43,7 +42,6 @@
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_psi_config.h"
 #include "my_sharedlib.h"
@@ -56,11 +54,14 @@
 #include "mysql/components/services/bits/psi_rwlock_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_memory.h"
 #include "mysql/psi/mysql_rwlock.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"  // ER_*
-#include "sql/derror.h"    // ER_THD
+#include "nulls.h"
+#include "sql/derror.h"  // ER_THD
 #include "sql/field.h"
 #include "sql/handler.h"
 #include "sql/iterators/row_iterator.h"
@@ -74,10 +75,12 @@
 #include "sql/sql_plugin.h"              // check_valid_path
 #include "sql/sql_system_table_check.h"  // System_table_intact
 #include "sql/sql_table.h"               // write_bin_log
-#include "sql/table.h"                   // TABLE_LIST
+#include "sql/table.h"                   // Table_ref
 #include "sql/thd_raii.h"
 #include "sql/thr_malloc.h"
 #include "sql/transaction.h"  // trans_*
+#include "string_with_len.h"
+#include "strxnmov.h"
 #include "thr_lock.h"
 #include "udf_registration_imp.h"
 
@@ -190,7 +193,7 @@ static void init_udf_psi_keys(void) {
 /**
   Initialize the UDF global structures.
   This is done as a separate step so that the UDF registration
-  service can work when initalizing plugins, which happens
+  service can work when initializing plugins, which happens
   before reading the UDF table.
 */
 void udf_init_globals() {
@@ -242,7 +245,7 @@ void udf_read_functions_table() {
     new_thd->set_db(db_lex_cstr);
   }
 
-  TABLE_LIST tables(db, "func", TL_READ, MDL_SHARED_READ_ONLY);
+  Table_ref tables(db, "func", TL_READ, MDL_SHARED_READ_ONLY);
 
   if (open_trans_system_tables_for_read(new_thd, &tables)) {
     DBUG_PRINT("error", ("Can't open udf table"));
@@ -315,7 +318,7 @@ void udf_read_functions_table() {
         // Print warning to log
         LogErr(ERROR_LEVEL, ER_FAILED_TO_OPEN_SHARED_LIBRARY, tmp->dl,
                error_number, errmsg);
-        // Keep the udf in the hash so that we can remove it later
+        udf_hash_delete(tmp);
         continue;
       }
       new_dl = true;
@@ -341,9 +344,9 @@ end:
 }
 
 /**
-   Deintialize the UDF subsystem.
+   Deinitialize the UDF subsystem.
 
-   This function closes the shared libaries.
+   This function closes the shared libraries.
 */
 void udf_unload_udfs() {
   DBUG_TRACE;
@@ -365,7 +368,7 @@ void udf_unload_udfs() {
 }
 
 /**
-   Deintialize the UDF subsystem.
+   Deinitialize the UDF subsystem.
 
    This function does the following:
    1. Free the UDF hash.
@@ -411,7 +414,7 @@ static void udf_hash_delete(udf_func *udf) {
   } else {
     /*
       The functions is in use ; Rename the functions instead of removing it.
-      The functions will be automaticly removed when the least threads
+      The functions will be automatically removed when the least threads
       doesn't use it anymore
     */
     udf_hash->erase(it);
@@ -472,7 +475,7 @@ static void *find_udf_dl(const char *dl) {
 
   if (!dl) return nullptr;
   /*
-    Because only the function name is hashed, we have to search trough
+    Because only the function name is hashed, we have to search through
     all rows to find the dl.
   */
   for (const auto &key_and_value : *udf_hash) {
@@ -645,7 +648,7 @@ bool mysql_create_function(THD *thd, udf_func *udf, bool if_not_exists) {
     Acquire MDL SNRW for TL_WRITE type so that deadlock and
     timeout errors are avoided from the Storage Engine.
   */
-  TABLE_LIST tables("mysql", "func", TL_WRITE, MDL_SHARED_NO_READ_WRITE);
+  Table_ref tables("mysql", "func", TL_WRITE, MDL_SHARED_NO_READ_WRITE);
 
   if (open_and_lock_tables(thd, &tables, MYSQL_LOCK_IGNORE_TIMEOUT))
     return error;
@@ -782,7 +785,7 @@ bool mysql_drop_function(THD *thd, const LEX_STRING *udf_name) {
     return error;
   }
 
-  TABLE_LIST tables("mysql", "func", TL_WRITE, MDL_SHARED_NO_READ_WRITE);
+  Table_ref tables("mysql", "func", TL_WRITE, MDL_SHARED_NO_READ_WRITE);
 
   if (open_and_lock_tables(thd, &tables, MYSQL_LOCK_IGNORE_TIMEOUT))
     return error;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -244,7 +244,7 @@
  * executing REDO log from the GCI_last_completed + 1 until the GCI we want to
  * restore, then we have restored the data consistently.
  *
- * In order to be able to write the UNDO log continously we need to cut the
+ * In order to be able to write the UNDO log continuously we need to cut the
  * log tail every now and then. We enable cutting of the log tail for both
  * REDO and UNDO logs by running checkpoints. We call our checkpoints, LCPs.
  * At start of a new LCP we can cut away the log tail back until we reach the
@@ -263,7 +263,7 @@
  * We need to retain UNDO log entries for the running LCP and for the last
  * completed LCP. We could theoretically move the UNDO log tail forward
  * as soon as a fragment LCP is restorable since we only now need 1 LCP
- * per fragment and we continously move forward. (TODO).
+ * per fragment and we continuously move forward. (TODO).
  *
  * So in short LGMAN receives log entries from DBTUP, before PGMAN can write
  * any page it ensures that all log entries of the page have been flushed to
@@ -759,6 +759,12 @@ Lgman::execREAD_CONFIG_REQ(Signal* signal)
                            &disk_data_format);
   g_v2 = (disk_data_format == 1);
 #endif
+
+  Uint32 encrypted_filesystem = 0;
+  ndb_mgm_get_int_parameter(
+    p, CFG_DB_ENCRYPTED_FILE_SYSTEM, &encrypted_filesystem);
+  c_encrypted_filesystem = encrypted_filesystem;
+
   Pool_context pc;
   pc.m_block = this;
   m_log_waiter_pool.wo_pool_init(RT_LGMAN_LOG_WAITER, pc);
@@ -1631,9 +1637,14 @@ Lgman::open_file(Signal* signal,
   if ((req->fileFlags & FsOpenReq::OM_ENCRYPT_CIPHER_MASK) != 0)
   {
     ndbrequire(handle->m_cnt == 1);
+
+    EncryptionKeyMaterial nmk;
+    nmk.length = globalData.nodeMasterKeyLength;
+    memcpy(&nmk.data, globalData.nodeMasterKey, globalData.nodeMasterKeyLength);
+
     ndbrequire(import(handle->m_ptr[FsOpenReq::ENCRYPT_KEY_MATERIAL],
-                      (const Uint32*)&FsOpenReq::DUMMY_KEY,
-                      FsOpenReq::DUMMY_KEY.get_needed_words()));
+                      (const Uint32*)&nmk,
+                      nmk.get_needed_words()));
     handle->m_cnt++;
     req->fileFlags |= FsOpenReq::OM_ENCRYPT_KEY;
   }
@@ -1804,7 +1815,6 @@ Lgman::execFSOPENREF(Signal* signal)
 void
 Lgman::execFSOPENCONF(Signal* signal)
 {
-  LOCAL_SIGNAL(signal);
   jamEntry();
   Ptr<Undofile> file_ptr;
 
@@ -3754,7 +3764,7 @@ Lgman::execSUB_GCP_COMPLETE_REP(Signal* signal)
   m_logfile_group_list.first(ptr);
 
   /**
-   * Filter all logfile groups in parallell
+   * Filter all log file groups in parallel
    */
   return; // NOT IMPLEMENTED YET
   
@@ -4148,7 +4158,7 @@ Lgman::find_log_head(Signal* signal, Ptr<Logfile_group> lg_ptr)
     jam();
     /**
      * All files have read first page
-     *   and m_files is sorted acording to lsn
+     *   and m_files is sorted according to lsn
      */
     Local_undofile_list read_files(m_file_pool, lg_ptr.p->m_files);
     read_files.last(file_ptr);

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -46,7 +46,7 @@
 void SHM_Transporter::make_error_info(char info[], int sz)
 {
   snprintf(info,sz,"Shm key=%d sz=%d id=%d",
-	   shmKey, shmSize, shmId);
+           static_cast<int>(shmKey), shmSize, shmId);
 }
 
 bool
@@ -107,8 +107,8 @@ SHM_Transporter::ndb_shm_get()
 bool
 SHM_Transporter::ndb_shm_attach()
 {
-  assert(shmBuf == 0);
-  shmBuf = (char *)shmat(shmId, 0, 0);
+  assert(shmBuf == nullptr);
+  shmBuf = (char *)shmat(shmId, nullptr, 0);
   if (shmBuf == (char*)-1)
   {
     DEBUG_FPRINTF((stderr,
@@ -121,7 +121,7 @@ SHM_Transporter::ndb_shm_attach()
             errno,
             strerror(errno)));
     if (isServer)
-      shmctl(shmId, IPC_RMID, 0);
+      shmctl(shmId, IPC_RMID, nullptr);
     _shmSegCreated = false;
     return false;
   }
@@ -140,7 +140,7 @@ SHM_Transporter::ndb_shm_destroy()
    * Otherwise the shared memory segment will be
    * left after a crash.
    */
-  const int res = shmctl(shmId, IPC_RMID, 0);
+  const int res = shmctl(shmId, IPC_RMID, nullptr);
   if(res == -1)
   {
     DEBUG_FPRINTF((stderr, "(%u)shmctl(IPC_RMID)(%u) failed LINE:%d, shmId:%d,"
@@ -214,7 +214,7 @@ SHM_Transporter::detach_shm(bool rep_error)
         {
           * clientUpFlag = 0;
         }
-        bool last = (*serverUpFlag == 0 && clientUpFlag == 0);
+        bool last = (*serverUpFlag == 0 && clientUpFlag == nullptr);
         NdbMutex_Unlock(serverMutex);
         if (last)
         {
@@ -247,7 +247,7 @@ SHM_Transporter::detach_shm(bool rep_error)
      * Normally should not happen.
      */
     assert(!rep_error);
-    const int res = shmctl(shmId, IPC_RMID, 0);
+    const int res = shmctl(shmId, IPC_RMID, nullptr);
     if(res == -1)
     {
       DEBUG_FPRINTF((stderr, "(%u)shmctl(IPC_RMID)(%u) failed LINE:%d,"
@@ -265,15 +265,15 @@ SHM_Transporter::detach_shm(bool rep_error)
                    localNodeId, remoteNodeId));
   }
   _shmSegCreated = false;
-  if (reader != 0)
+  if (reader != nullptr)
   {
     DEBUG_FPRINTF((stderr, "(%u)detach_shm(%u) LINE:%d",
                    localNodeId, __LINE__, remoteNodeId));
     reader->~SHM_Reader();
     writer->~SHM_Writer();
-    shmBuf = 0;
-    reader = 0;
-    writer = 0;
+    shmBuf = nullptr;
+    reader = nullptr;
+    writer = nullptr;
   }
   else
   {

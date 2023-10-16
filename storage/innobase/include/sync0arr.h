@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -79,7 +79,7 @@ void sync_array_free_cell(sync_array_t *arr,   /*!< in: wait array */
 /** Note that one of the wait objects was signalled. */
 void sync_array_object_signalled();
 
-/** If the wakeup algorithm does not work perfectly at semaphore relases,
+/** If the wakeup algorithm does not work perfectly at semaphore releases,
  this function will do the waking (see the comment in mutex_exit). This
  function should be called about every 1 second in the server. */
 void sync_arr_wake_threads_if_sema_free();

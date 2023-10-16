@@ -1,4 +1,4 @@
-# Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -20,6 +20,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
+MSVC_CPPCHECK_DISABLE()
 
 SET(GROUP_REPLICATION_SOURCES
   src/applier.cc
@@ -66,8 +67,8 @@ SET(GROUP_REPLICATION_SOURCES
   src/plugin_handlers/group_partition_handling.cc
   src/plugin_handlers/member_actions_handler.cc
   src/plugin_handlers/member_actions_handler_configuration.cc
+  src/plugin_handlers/metrics_handler.cc
   src/plugin_handlers/offline_mode_handler.cc
-  src/plugin_handlers/persistent_variables_handler.cc
   src/plugin_handlers/primary_election_invocation_handler.cc
   src/plugin_handlers/primary_election_primary_process.cc
   src/plugin_handlers/primary_election_secondary_process.cc
@@ -91,17 +92,20 @@ SET(GROUP_REPLICATION_SOURCES
   src/plugin_observers/group_transaction_observation_manager.cc
   src/plugin_variables/recovery_endpoints.cc
   src/plugin_psi.cc
+  src/plugin_status_variables.cc
   src/plugin_utils.cc
   src/ps_information.cc
   src/recovery.cc
   src/recovery_channel_state_observer.cc
   src/recovery_state_transfer.cc
   src/replication_threads_api.cc
-  src/services/get_system_variable/get_system_variable.cc
   src/services/message_service/message_service.cc
   src/services/notification/notification.cc
   src/services/status_service/status_service.cc
+  src/services/system_variable/get_system_variable.cc
+  src/services/system_variable/set_system_variable.cc
   src/services/registry.cc
+  src/services/server_services_references.cc
   src/sql_service/sql_command_test.cc
   src/sql_service/sql_resultset.cc
   src/sql_service/sql_service_command.cc
@@ -163,6 +167,8 @@ IF ((NOT (DEFINED WITHOUT_GROUP_REPLICATION AND WITHOUT_GROUP_REPLICATION)) AND
     SET_TARGET_PROPERTIES(gr_unit_test_resource
       PROPERTIES COMPILE_DEFINITIONS "DISABLE_PSI_MUTEX"
       )
+    TARGET_LINK_LIBRARIES(gr_unit_test_resource extra::rapidjson)
+    TARGET_LINK_LIBRARIES(gr_unit_test_resource ext::zlib)
     ADD_DEPENDENCIES(gr_unit_test_resource GenError)
   ENDIF()
 
@@ -178,17 +184,20 @@ IF ((NOT (DEFINED WITHOUT_GROUP_REPLICATION AND WITHOUT_GROUP_REPLICATION)) AND
 ENDIF()
 
 
+ADD_DEFINITIONS(-DLOG_COMPONENT_TAG="group_replication")
 
 # declare the plugin itself
 MYSQL_ADD_PLUGIN(group_replication
   ${GROUP_REPLICATION_SOURCES}
   ${GMS_LISTENER_SERVICE_TEST_SOURCES}
   LINK_LIBRARIES
-  ${LZ4_LIBRARY}
+  ext::lz4
+  ext::zlib
   ${SSL_LIBRARIES}
   ${PROTOBUF_LITE_LIBRARY}
   ${GR_PROTOBUF_LITE_LIB}
   mysqlgcs
+  extra::rapidjson
   MODULE_ONLY
   MODULE_OUTPUT_NAME "group_replication"
   )

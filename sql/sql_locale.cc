@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,14 +27,15 @@
 #include <assert.h>
 #include <stddef.h>
 
-#include "m_ctype.h"
 #include "m_string.h"
 
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/my_loglevel.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "sql/derror.h"  // MY_LOCALE_ERRMSGS
 #include "sql/log.h"
 #include "sql/sql_error.h"

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <stddef.h>
 
 #include <mysql/components/service.h>
+#include <nulls.h>
 
 #include <mysql/components/services/bits/system_variables_bits.h>
 
@@ -52,7 +53,7 @@ struct SYS_VAR;
   It needs to extract the value supplied from the value API pointer.
   Note that extracting this value can be expensive (e.g. a scalar subquery)
   hence it should be done only once. This is why the result of this should
-  be stored into the save output parameter so that it can be futher reused by
+  be stored into the save output parameter so that it can be further reused by
   update() etc.
   For a multi-variable SET statement the server will first call all of the
   check functions and only if they all return success it will start calling the

@@ -1,4 +1,4 @@
-/* Copyright (c) 2006, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -117,7 +117,7 @@ void copy_integer(uchar *to, size_t to_length, const uchar *from,
 
 // Returns whether a sort involving this table would necessarily be on row ID,
 // even if not forced by other means.
-bool SortWillBeOnRowId(TABLE *table);
+bool SortWillBeOnRowId(const TABLE *table);
 
 static inline void copy_native_longlong(uchar *to, size_t to_length,
                                         longlong val, bool is_unsigned) {

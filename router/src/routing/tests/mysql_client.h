@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -22,15 +22,21 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+#ifndef ROUTER_HELPER_MYSQL_CLIENT_H
+#define ROUTER_HELPER_MYSQL_CLIENT_H
+
+#include <iterator>
 #include <string>
 #include <string_view>
 
 #include <mysql.h>
 
 #include "mysql/harness/stdx/expected.h"
+#include "mysql/harness/stdx/span.h"
 
 class MysqlError {
  public:
+  MysqlError() = default;
   MysqlError(unsigned int code, std::string message, std::string sql_state)
       : code_{code},
         message_{std::move(message)},
@@ -43,20 +49,25 @@ class MysqlError {
   unsigned int value() const { return code_; }
 
  private:
-  unsigned int code_;
+  unsigned int code_{0};
   std::string message_;
   std::string sql_state_;
 };
 
-static MysqlError make_mysql_error_code(unsigned int e) {
+inline bool operator==(const MysqlError &a, const MysqlError &b) {
+  return a.value() == b.value() && a.sql_state() == b.sql_state() &&
+         a.message() == b.message();
+}
+
+static inline MysqlError make_mysql_error_code(unsigned int e) {
   return {e, ER_CLIENT(e), "HY000"};
 }
 
-static MysqlError make_mysql_error_code(MYSQL *m) {
+static inline MysqlError make_mysql_error_code(MYSQL *m) {
   return {mysql_errno(m), mysql_error(m), mysql_sqlstate(m)};
 }
 
-static MysqlError make_mysql_error_code(MYSQL_STMT *st) {
+static inline MysqlError make_mysql_error_code(MYSQL_STMT *st) {
   return {mysql_stmt_errno(st), mysql_stmt_error(st), mysql_stmt_sqlstate(st)};
 }
 
@@ -194,7 +205,7 @@ IntegerParam<T> make_integer_param(T *v) {
 
 namespace impl {
 /**
- * gettable, settable option for mysql_option's.
+ * gettable, settable option for mysql_option().
  *
  * adapts scalar types like int/bool/... mysql_option's to
  * mysql_options()/mysql_get_option().
@@ -206,6 +217,8 @@ template <mysql_option Opt, class ValueType>
 class Option {
  public:
   using value_type = ValueType;
+
+  static constexpr const int num_of_args{1};
 
   constexpr Option() = default;
   constexpr explicit Option(value_type v) : v_{std::move(v)} {}
@@ -230,6 +243,53 @@ class Option {
 };
 
 /**
+ * gettable, settable option for mysql_option4().
+ */
+template <mysql_option Opt, class FirstType, class SecondType>
+class PairOption {
+ public:
+  using first_type = FirstType;
+  using second_type = SecondType;
+
+  static constexpr const int num_of_args{2};
+
+  constexpr PairOption() = default;
+  constexpr explicit PairOption(first_type first, second_type second)
+      : first_{std::move(first)}, second_{std::move(second)} {}
+
+  // get the option id
+  constexpr mysql_option option() const noexcept { return Opt; }
+
+  // get address of the storage.
+  constexpr const void *first_data() const { return first_; }
+
+  // get address of the storage.
+  constexpr void *first_data() { return first_; }
+
+  // get address of the storage.
+  constexpr const void *second_data() const { return second_; }
+
+  // get address of the storage.
+  constexpr void *second_data() { return second_; }
+
+  // set the value of the option
+  constexpr void first(first_type v) { first_ = v; }
+
+  // get the value of the first option
+  constexpr first_type first() const { return first_; }
+
+  // set the value of the option
+  constexpr void second(second_type v) { second_ = v; }
+
+  // get the value of the first option
+  constexpr second_type second() const { return second_; }
+
+ private:
+  first_type first_{};
+  second_type second_{};
+};
+
+/**
  * gettable, settable option for 'const char *' based mysql_option's.
  *
  * adapts 'const char *' based mysql_option to
@@ -242,6 +302,8 @@ template <mysql_option Opt>
 class Option<Opt, const char *> {
  public:
   using value_type = const char *;
+
+  static constexpr const int num_of_args{1};
 
   Option() = default;
   constexpr explicit Option(value_type v) : v_{std::move(v)} {}
@@ -264,6 +326,8 @@ template <mysql_option Opt>
 class Option<Opt, std::nullptr_t> {
  public:
   using value_type = std::nullptr_t;
+
+  static constexpr const int num_of_args{1};
 
   Option() = default;
   // accept a void *, but ignore it.
@@ -302,6 +366,9 @@ class MysqlClient {
   template <mysql_option Opt>
   using ConstCharOption = impl::Option<Opt, const char *>;
 
+  template <mysql_option Opt>
+  using ConstCharPairOption = impl::PairOption<Opt, const char *, const char *>;
+
   using DefaultAuthentication = ConstCharOption<MYSQL_DEFAULT_AUTH>;
   using EnableCleartextPlugin = BooleanOption<MYSQL_ENABLE_CLEARTEXT_PLUGIN>;
   using InitCommand = ConstCharOption<MYSQL_INIT_COMMAND>;
@@ -313,6 +380,8 @@ class MysqlClient {
       ConstCharOption<MYSQL_OPT_COMPRESSION_ALGORITHMS>;
   using ConnectAttributeReset = BooleanOption<MYSQL_OPT_CONNECT_ATTR_RESET>;
   using ConnectAttributeDelete = BooleanOption<MYSQL_OPT_CONNECT_ATTR_DELETE>;
+  using ConnectAttributeAdd = ConstCharPairOption<MYSQL_OPT_CONNECT_ATTR_ADD>;
+
   using ConnectTimeout = IntegerOption<MYSQL_OPT_CONNECT_TIMEOUT>;
   using GetServerPublicKey = BooleanOption<MYSQL_OPT_GET_SERVER_PUBLIC_KEY>;
   using LoadDataLocalDir = ConstCharOption<MYSQL_OPT_LOAD_DATA_LOCAL_DIR>;
@@ -351,15 +420,33 @@ class MysqlClient {
   using SharedMemoryBasename = ConstCharOption<MYSQL_SHARED_MEMORY_BASE_NAME>;
 
   void username(std::string name) { username_ = std::move(name); }
+  std::string username() const { return username_; }
+
   void password(std::string pass) { password_ = std::move(pass); }
 
   void flags(unsigned long f) { flags_ = f; }
 
-  stdx::expected<void, MysqlError> connect(std::string hostname,
+  // tag class for unix-socket connections
+  struct unix_socket_t {};
+
+  stdx::expected<void, MysqlError> connect(const std::string &hostname,
                                            uint16_t port = 3306) {
-    const auto r =
-        mysql_real_connect(m_.get(), hostname.c_str(), username_.c_str(),
-                           password_.c_str(), nullptr, port, nullptr, flags_);
+    const auto r = mysql_real_connect(
+        m_.get(), hostname.c_str(), username_.c_str(), password_.c_str(),
+        initial_schema_.c_str(), port, nullptr /* socket */, flags_);
+
+    if (r == nullptr) {
+      return stdx::make_unexpected(make_mysql_error_code(m_.get()));
+    }
+
+    return {};
+  }
+
+  stdx::expected<void, MysqlError> connect(unix_socket_t,
+                                           const std::string &path) {
+    const auto r = mysql_real_connect(
+        m_.get(), "localhost", username_.c_str(), password_.c_str(),
+        initial_schema_.c_str(), 0, path.c_str(), flags_);
 
     if (r == nullptr) {
       return stdx::make_unexpected(make_mysql_error_code(m_.get()));
@@ -401,8 +488,8 @@ class MysqlClient {
     return {};
   }
 
-  stdx::expected<void, MysqlError> refresh() {
-    const auto r = mysql_refresh(m_.get(), 0);
+  stdx::expected<void, MysqlError> refresh(unsigned int options = 0) {
+    const auto r = mysql_refresh(m_.get(), options);
 
     if (r != 0) {
       return stdx::make_unexpected(make_mysql_error_code(m_.get()));
@@ -451,6 +538,19 @@ class MysqlClient {
     return {r};
   }
 
+  stdx::expected<unsigned int, MysqlError> warning_count() {
+    return mysql_warning_count(m_.get());
+  }
+
+  stdx::expected<unsigned int, MysqlError> server_status() {
+    return m_->server_status;
+  }
+
+  /**
+   * close a connection explicitly.
+   */
+  void close() { m_.reset(); }
+
   /**
    * set a mysql option.
    *
@@ -468,8 +568,16 @@ class MysqlClient {
   template <class SettableMysqlOption>
   stdx::expected<void, MysqlError> set_option(const SettableMysqlOption &opt) {
     auto m = m_.get();
-    if (0 != mysql_options(m, opt.option(), opt.data())) {
-      return stdx::make_unexpected(make_mysql_error_code(m));
+
+    if constexpr (SettableMysqlOption::num_of_args == 1) {
+      if (0 != mysql_options(m, opt.option(), opt.data())) {
+        return stdx::make_unexpected(make_mysql_error_code(m));
+      }
+    } else {
+      if (0 != mysql_options4(m, opt.option(), opt.first_data(),
+                              opt.second_data())) {
+        return stdx::make_unexpected(make_mysql_error_code(m));
+      }
     }
 
     return {};
@@ -500,45 +608,53 @@ class MysqlClient {
     return true;
   }
 
+  /**
+   * set a server mysql option.
+   *
+   * @code
+   * auto res = set_server_option(MYSQL_OPTION_MULTI_STATEMENT_ON);
+   * @endcode
+   *
+   * @note on error the MysqlError may not always contain the right
+   * error-code.
+   *
+   * @param [in] opt option to set.
+   * @returns a MysqlError on error
+   * @retval true on success
+   */
+  stdx::expected<void, MysqlError> set_server_option(
+      enum_mysql_set_option opt) {
+    auto m = m_.get();
+
+    if (0 != mysql_set_server_option(m, opt)) {
+      return stdx::make_unexpected(make_mysql_error_code(m));
+    }
+
+    return {};
+  }
+
   class Statement {
    public:
     Statement(MYSQL *m) : m_{m} {}
 
     class Rows {
      public:
-      Rows(MYSQL *m) : res_{mysql_use_result(m)} {}
       Rows(MYSQL_RES *res) : res_{res} {}
 
-      Rows(const Rows &) = delete;
-      Rows(Rows &&other) : res_{std::exchange(other.res_, nullptr)} {}
-      Rows &operator=(const Rows &) = delete;
-      Rows &operator=(Rows &&other) {
-        res_ = std::exchange(other.res_, nullptr);
-
-        return *this;
-      }
-
-      ~Rows() {
-        if (res_) {
-          // drain the rows that may still be in flight.
-          while (mysql_fetch_row(res_))
-            ;
-          mysql_free_result(res_);
-        }
-      }
-
+      // iterator over rows
       class Iterator {
        public:
         using value_type = MYSQL_ROW;
+        using reference = value_type &;
 
-        Iterator(MYSQL_RES *res) : res_{res} {
-          if (res_ == nullptr) return;
-
-          current_row_ = mysql_fetch_row(res_);
+        Iterator(MYSQL_RES *res)
+            : res_{res},
+              current_row_{res_ != nullptr ? mysql_fetch_row(res_) : nullptr} {
           if (current_row_ == nullptr) {
             res_ = nullptr;
           }
         }
+
         Iterator &operator++() {
           current_row_ = mysql_fetch_row(res_);
           if (current_row_ == nullptr) {
@@ -547,9 +663,16 @@ class MysqlClient {
 
           return *this;
         }
-        bool operator!=(const Iterator &other) { return res_ != other.res_; }
 
-        value_type operator*() { return current_row_; }
+        bool operator==(const Iterator &other) const {
+          return res_ == other.res_;
+        }
+
+        bool operator!=(const Iterator &other) const {
+          return !(*this == other);
+        }
+
+        reference operator*() { return current_row_; }
 
        private:
         MYSQL_RES *res_;
@@ -558,8 +681,12 @@ class MysqlClient {
       };
 
       using iterator = Iterator;
+      using const_iterator = Iterator;
+
       iterator begin() { return {res_}; }
+      const_iterator begin() const { return {res_}; }
       iterator end() { return {nullptr}; }
+      const_iterator end() const { return {nullptr}; }
 
      private:
       MYSQL_RES *res_;
@@ -567,75 +694,140 @@ class MysqlClient {
 
     class ResultSet {
      public:
-      ResultSet(MYSQL *m) : m_{m} {}
+      // construct a ResultSet from a resultset.
+      //
+      // takes ownership of the MYSQL_RES
+      //
+      ResultSet(MYSQL *m, MYSQL_RES *res) : m_{m}, res_{res} {}
 
-      Rows rows() const { return m_; }
+      // construct a ResultSet of the current connection.
+      //
+      // assumes that the query has been executed.
+      ResultSet(MYSQL *m)
+          : ResultSet(m, m != nullptr ? mysql_use_result(m) : nullptr) {}
+
+      ResultSet(const ResultSet &) = delete;
+      ResultSet(ResultSet &&other)
+          : m_{std::exchange(other.m_, nullptr)},
+            res_{std::exchange(other.res_, nullptr)} {}
+      ResultSet &operator=(const ResultSet &) = delete;
+      ResultSet &operator=(ResultSet &&other) {
+        m_ = std::exchange(other.m_, nullptr);
+        res_ = std::exchange(other.res_, nullptr);
+
+        return *this;
+      }
+
+      ~ResultSet() { clear(); }
+
+      Rows rows() const { return res_; }
 
       unsigned int field_count() const { return mysql_field_count(m_); }
 
       uint64_t affected_rows() const { return mysql_affected_rows(m_); }
       uint64_t insert_id() const { return mysql_insert_id(m_); }
 
+      void clear() {
+        if (!res_) return;
+
+        // drain the rows that may still be in flight.
+        while (mysql_fetch_row(res_))
+          ;
+        mysql_free_result(res_);
+
+        res_ = nullptr;
+      }
+
+      stdx::expected<bool, MysqlError> next() {
+        clear();  // drain all rows and free the current resultset.
+
+        auto next_res = mysql_next_result(m_);
+        if (-1 == next_res) {
+          return {false};
+        } else if (next_res > 0) {
+          return stdx::make_unexpected(make_mysql_error_code(m_));
+        } else {
+          res_ = mysql_use_result(m_);
+
+          return {true};
+        }
+      }
+
      private:
       MYSQL *m_;
+      MYSQL_RES *res_;
     };
 
     class Result {
      public:
       class Iterator {
        public:
-        using reference = ResultSet;
+        using value_type = ResultSet;
+        using pointer = value_type *;
+        using reference = value_type &;
 
         Iterator(MYSQL *m) : m_{m} {}
         Iterator &operator++() {
-          if (0 != mysql_next_result(m_)) {
+          const auto next_res = res_.next();
+          if (!next_res || !*next_res) {
+            // some error || no more results
             m_ = nullptr;
           }
 
           return *this;
         }
-        bool operator!=(const Iterator &other) { return m_ != other.m_; }
 
-        reference operator*() { return {m_}; }
+        bool operator==(const Iterator &other) const { return m_ == other.m_; }
+        bool operator!=(const Iterator &other) const {
+          return !(*this == other);
+        }
+
+        reference operator*() { return res_; }
+        pointer operator->() { return &res_; }
 
        private:
         MYSQL *m_;
+
+        value_type res_{m_};
       };
 
       using iterator = Iterator;
+      using const_iterator = Iterator;
 
       Result(MYSQL *m) : m_{m} {}
 
       iterator begin() { return {m_}; }
+      const_iterator begin() const { return {m_}; }
       iterator end() { return {nullptr}; }
+      const_iterator end() const { return {nullptr}; }
 
      private:
       MYSQL *m_;
     };
 
-    template <class T, class N>
-    typename std::enable_if<
-        std::conjunction<std::is_same<typename T::value_type, MYSQL_BIND>,
-                         std::is_same<decltype(std::declval<T>().data()),
-                                      typename T::value_type *>,
-                         std::is_same<typename N::value_type, const char *>,
-                         std::is_same<decltype(std::declval<N>().data()),
-                                      typename N::value_type *>>::value,
-        stdx::expected<void, MysqlError>>::type
-    bind_params(const T &params, const N &names) {
-      auto r = mysql_bind_param(m_, params.size(),
-                                const_cast<MYSQL_BIND *>(params.data()),
-                                const_cast<const char **>(names.data()));
+    stdx::expected<void, MysqlError> bind_params(
+        const stdx::span<MYSQL_BIND> &params,
+        const stdx::span<const char *> &names) {
+      auto err =
+          mysql_bind_param(m_, params.size(), params.data(), names.data());
+
+      if (err) return stdx::make_unexpected(make_mysql_error_code(m_));
+
+      return {};
+    }
+
+    stdx::expected<Result, MysqlError> query(const std::string_view &stmt) {
+      auto r = mysql_real_query(m_, stmt.data(), stmt.size());
 
       if (r != 0) {
         return stdx::make_unexpected(make_mysql_error_code(m_));
       }
 
-      return {};
+      return {m_};
     }
 
-    stdx::expected<Result, MysqlError> query(const std::string &stmt) {
-      auto r = mysql_real_query(m_, stmt.c_str(), stmt.size());
+    stdx::expected<Result, MysqlError> read_query_result() {
+      auto r = mysql_read_query_result(m_);
 
       if (r != 0) {
         return stdx::make_unexpected(make_mysql_error_code(m_));
@@ -650,11 +842,30 @@ class MysqlClient {
     MYSQL *m_;
   };
 
-  stdx::expected<Statement::Result, MysqlError> query(const std::string &stmt) {
+  stdx::expected<Statement::Result, MysqlError> query(
+      const std::string_view &stmt) {
     return Statement(m_.get()).query(stmt);
   }
 
+  stdx::expected<void, MysqlError> send_query(const std::string_view &stmt) {
+    auto r = mysql_send_query(m_.get(), stmt.data(), stmt.size());
+
+    if (r != 0) {
+      return stdx::make_unexpected(make_mysql_error_code(m_.get()));
+    }
+
+    return {};
+  }
+
+  stdx::expected<Statement::Result, MysqlError> read_query_result() {
+    return Statement(m_.get()).read_query_result();
+  }
+
   stdx::expected<void, MysqlError> use_schema(const std::string &schema) {
+    initial_schema_ = schema;
+
+    if (!m_ || m_->net.vio == nullptr) return {};  // no server connection yet.
+
     const auto r = mysql_select_db(m_.get(), schema.c_str());
 
     if (r != 0) {
@@ -664,17 +875,17 @@ class MysqlClient {
     return {};
   }
 
-  stdx::expected<Statement::Rows, MysqlError> list_dbs() {
+  stdx::expected<Statement::ResultSet, MysqlError> list_dbs() {
     const auto res = mysql_list_dbs(m_.get(), nullptr);
 
     if (res == nullptr) {
       return stdx::make_unexpected(make_mysql_error_code(m_.get()));
     }
 
-    return {res};
+    return {std::in_place, m_.get(), res};
   }
 
-  stdx::expected<Statement::Result, MysqlError> list_fields(
+  stdx::expected<Statement::ResultSet, MysqlError> list_fields(
       std::string tablename) {
     const auto res = mysql_list_fields(m_.get(), tablename.c_str(), nullptr);
 
@@ -682,19 +893,12 @@ class MysqlClient {
       return stdx::make_unexpected(make_mysql_error_code(m_.get()));
     }
 
-    return {m_.get()};
+    return {std::in_place, m_.get(), res};
   }
 
-  template <class T, class N>
-  typename std::enable_if<
-      std::conjunction<std::is_same<typename T::value_type, MYSQL_BIND>,
-                       std::is_same<decltype(std::declval<T>().data()),
-                                    typename T::value_type *>,
-                       std::is_same<typename N::value_type, const char *>,
-                       std::is_same<decltype(std::declval<N>().data()),
-                                    typename N::value_type *>>::value,
-      stdx::expected<Statement::Result, MysqlError>>::type
-  query(const std::string &stmt, const T &params, const N &names) {
+  stdx::expected<Statement::Result, MysqlError> query(
+      std::string_view stmt, const stdx::span<MYSQL_BIND> &params,
+      const stdx::span<const char *> &names) {
     Statement st(m_.get());
 
     const auto bind_res = st.bind_params(params, names);
@@ -849,17 +1053,6 @@ class MysqlClient {
      public:
       ResultSet(MYSQL_STMT *st) : st_{st} {}
 
-      ResultSet(const ResultSet &) = delete;
-      ResultSet(ResultSet &&other) : st_{std::exchange(other.st_, nullptr)} {}
-      ResultSet &operator=(const ResultSet &) = delete;
-      ResultSet &operator=(ResultSet &&other) {
-        st_ = std::exchange(other.st_, nullptr);
-
-        return *this;
-      }
-
-      ~ResultSet() { mysql_stmt_free_result(st_); }
-
       Rows rows() const { return {st_}; }
 
       // fetch one row.
@@ -895,6 +1088,13 @@ class MysqlClient {
 
       uint64_t affected_rows() const { return mysql_stmt_affected_rows(st_); }
       uint64_t insert_id() const { return mysql_stmt_insert_id(st_); }
+      bool is_out_param() const {
+        // server-status is updated at the end of the resultset which may not be
+        // fetched yet.
+        mysql_stmt_store_result(st_);
+
+        return st_->mysql->server_status & SERVER_PS_OUT_PARAMS;
+      }
 
      private:
       MYSQL_STMT *st_;
@@ -904,30 +1104,51 @@ class MysqlClient {
      public:
       class Iterator {
        public:
-        using reference = ResultSet;
+        using difference_type = std::ptrdiff_t;
+        using value_type = ResultSet;
+        using reference = value_type &;
+        using pointer = value_type *;
+        using iterator_category = std::input_iterator_tag;
 
         Iterator(MYSQL_STMT *st) : st_{st} {}
         Iterator &operator++() {
+          if (st_ != nullptr && mysql_stmt_field_count(st_) > 0) {
+            mysql_stmt_free_result(st_);
+          }
+
           if (0 != mysql_stmt_next_result(st_)) {
             st_ = nullptr;
           }
 
           return *this;
         }
-        bool operator!=(const Iterator &other) { return st_ != other.st_; }
 
-        reference operator*() { return {st_}; }
+        bool operator==(const Iterator &other) const {
+          return st_ == other.st_;
+        }
+        bool operator!=(const Iterator &other) const {
+          return !(*this == other);
+        }
+
+        reference operator*() { return res_; }
+        pointer operator->() { return &res_; }
 
        private:
         MYSQL_STMT *st_;
+
+        ResultSet res_{st_};
       };
 
       using iterator = Iterator;
+      using value_type = iterator::value_type;
+      using reference = iterator::reference;
 
       Result(MYSQL_STMT *st) : st_{st} {}
 
       iterator begin() { return {st_}; }
+      iterator begin() const { return {st_}; }
       iterator end() { return {nullptr}; }
+      iterator end() const { return {nullptr}; }
 
      private:
       MYSQL_STMT *st_;
@@ -971,9 +1192,32 @@ class MysqlClient {
     return st;
   }
 
+  stdx::expected<void, MysqlError> binlog_dump(MYSQL_RPL &rpl) {
+    auto res = mysql_binlog_open(m_.get(), &rpl);
+
+    if (res != 0) {
+      return stdx::make_unexpected(make_mysql_error_code(m_.get()));
+    }
+
+    return {};
+  }
+
+  stdx::expected<void, MysqlError> binlog_fetch(MYSQL_RPL &rpl) {
+    auto res = mysql_binlog_fetch(m_.get(), &rpl);
+
+    if (res != 0) {
+      return stdx::make_unexpected(make_mysql_error_code(m_.get()));
+    }
+
+    return {};
+  }
+
+  [[nodiscard]] int native_handle() const { return m_->net.fd; }
+
  private:
   std::string username_;
   std::string password_;
+  std::string initial_schema_;
 
   class MysqlDeleter {
    public:
@@ -987,3 +1231,5 @@ class MysqlClient {
 
   unsigned long flags_{};
 };
+
+#endif

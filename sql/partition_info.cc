@@ -1,4 +1,4 @@
-/* Copyright (c) 2006, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -32,8 +32,6 @@
 #include <utility>
 
 #include "lex_string.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "map_helpers.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
@@ -41,6 +39,8 @@
 #include "my_sys.h"
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/plugin.h"
+#include "mysql/strings/int2str.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysqld_error.h"
 #include "sql/auth/auth_acls.h"
@@ -61,12 +61,13 @@
 #include "sql/sql_partition.h"
 #include "sql/sql_tablespace.h"  // validate_tablespace_name
 #include "sql/system_variables.h"
-#include "sql/table.h"                     // TABLE_LIST
+#include "sql/table.h"                     // Table_ref
 #include "sql/table_trigger_dispatcher.h"  // Table_trigger_dispatcher
 #include "sql/thr_malloc.h"
 #include "sql/trigger_chain.h"  // Trigger_chain
 #include "sql/trigger_def.h"
 #include "sql_string.h"
+#include "string_with_len.h"
 #include "varlen_sort.h"
 
 using std::string;
@@ -247,7 +248,7 @@ bool partition_info::set_read_partitions(List<String> *partition_names) {
 /**
   Set read/lock_partitions bitmap over non pruned partitions
 
-  @param table_list   Possible TABLE_LIST which can contain
+  @param table_list   Possible Table_ref which can contain
                       list of partition names to query
 
   @return Operation status
@@ -258,7 +259,7 @@ bool partition_info::set_read_partitions(List<String> *partition_names) {
   @note OK to call multiple times without the need for free_bitmaps.
 */
 
-bool partition_info::set_partition_bitmaps(TABLE_LIST *table_list) {
+bool partition_info::set_partition_bitmaps(Table_ref *table_list) {
   DBUG_TRACE;
 
   assert(bitmaps_are_initialized);
@@ -350,7 +351,7 @@ bool partition_info::can_prune_insert(
   }
 
   /*
-    Can't prune partitions over generated default expresssions, as their values
+    Can't prune partitions over generated default expressions, as their values
     are calculated much later.
   */
   if (table->gen_def_fields_ptr) {
@@ -800,7 +801,7 @@ bool partition_info::set_up_defaults_for_partitioning(
     no parameters
 
   RETURN VALUE
-    Erroneus field name  Error, there are two fields with same name
+    Erroneous field name  Error, there are two fields with same name
     NULL                 Ok, no field defined twice
 
   DESCRIPTION
@@ -1618,7 +1619,7 @@ end:
 void partition_info::print_no_partition_found(THD *thd, TABLE *table_arg) {
   char buf[100];
   const char *buf_ptr = buf;
-  TABLE_LIST table_list;
+  Table_ref table_list;
 
   table_list.db = table_arg->s->db.str;
   table_list.table_name = table_arg->s->table_name.str;
@@ -1730,7 +1731,6 @@ bool partition_info::set_up_charset_field_preps() {
   uchar **char_ptrs;
   unsigned i;
   size_t size;
-  uint tot_fields = 0;
   uint tot_part_fields = 0;
   uint tot_subpart_fields = 0;
   DBUG_TRACE;
@@ -1742,7 +1742,6 @@ bool partition_info::set_up_charset_field_preps() {
     while ((field = *(ptr++))) {
       if (field_is_partition_charset(field)) {
         tot_part_fields++;
-        tot_fields++;
       }
     }
     size = tot_part_fields * sizeof(char *);
@@ -1773,7 +1772,6 @@ bool partition_info::set_up_charset_field_preps() {
     while ((field = *(ptr++))) {
       if (field_is_partition_charset(field)) {
         tot_subpart_fields++;
-        tot_fields++;
       }
     }
     size = tot_subpart_fields * sizeof(char *);
@@ -2057,7 +2055,7 @@ void Parser_partition_info::init_col_val(part_column_list_val *col_val,
 bool Parser_partition_info::add_column_list_value(THD *thd, Item *item) {
   part_column_list_val *col_val;
   Name_resolution_context *context = &thd->lex->current_query_block()->context;
-  TABLE_LIST *save_list = context->table_list;
+  Table_ref *save_list = context->table_list;
   const char *save_where = thd->where;
   DBUG_TRACE;
 

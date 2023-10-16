@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,9 +27,8 @@
 #include <string.h>
 #include <algorithm>
 
-#include "m_ctype.h"
-
 #include "my_table_map.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysqld_error.h"
 #include "sql/derror.h"  // ER_THD
@@ -47,11 +46,12 @@
 #include "sql/sql_optimizer.h"  // JOIN class
 #include "sql/sql_select.h"
 #include "sql/table.h"
+#include "string_with_len.h"
 
 struct MEM_ROOT;
 
 /**
-  Information about hints. Sould be
+  Information about hints. Should be
   synchronized with opt_hints_enum enum.
 
   Note: Hint name depends on hint state. 'NO_' prefix is added
@@ -133,7 +133,7 @@ Opt_hints *Opt_hints::find_by_name(const LEX_CSTRING *name_arg,
 void Opt_hints::print(const THD *thd, String *str, enum_query_type query_type) {
   for (uint i = 0; i < MAX_HINT_ENUM; i++) {
     if (opt_hint_info[i].irregular_hint) continue;
-    opt_hints_enum hint = static_cast<opt_hints_enum>(i);
+    const opt_hints_enum hint = static_cast<opt_hints_enum>(i);
     /*
        If printing a normalized query, also unresolved hints will be printed.
        (This is needed by query rewrite plugins which request
@@ -221,7 +221,7 @@ PT_hint *Opt_hints_qb::get_complex_hints(opt_hints_enum type) {
   return nullptr;
 }
 
-Opt_hints_table *Opt_hints_qb::adjust_table_hints(TABLE_LIST *tr) {
+Opt_hints_table *Opt_hints_qb::adjust_table_hints(Table_ref *tr) {
   const LEX_CSTRING str = {tr->alias, strlen(tr->alias)};
   Opt_hints_table *tab =
       static_cast<Opt_hints_table *>(find_by_name(&str, table_alias_charset));
@@ -307,17 +307,17 @@ static void print_join_order_warn(THD *thd, opt_hints_enum type,
 }
 
 /**
-  Function compares hint table name and TABLE_LIST table name.
+  Function compares hint table name and Table_ref table name.
   Query block name is taken into account.
 
   @param hint_table         hint table name
-  @param table              pointer to TABLE_LIST object
+  @param table              pointer to Table_ref object
 
   @return false if table names are equal, true otherwise.
 */
 
 static bool compare_table_name(const Hint_param_table *hint_table,
-                               const TABLE_LIST *table) {
+                               const Table_ref *table) {
   const LEX_CSTRING *hint_qb_name = &hint_table->opt_query_block;
   const LEX_CSTRING *hint_table_name = &hint_table->table;
 
@@ -353,13 +353,12 @@ static table_map get_other_dep(opt_hints_enum type, table_map hint_tab_map,
     case JOIN_PREFIX_HINT_ENUM:
       if (hint_tab_map & table_map)  // Hint table: No additional dependencies
         return 0;
-      else  // Other tables: depend on all hint tables
-        return hint_tab_map;
+      // Other tables: depend on all hint tables
+      return hint_tab_map;
     case JOIN_SUFFIX_HINT_ENUM:
       if (hint_tab_map & table_map)  // Hint table: depends on all other tables
         return ~hint_tab_map;
-      else
-        return 0;
+      return 0;
     case JOIN_ORDER_HINT_ENUM:
       return 0;  // No additional dependencies
     default:
@@ -370,7 +369,7 @@ static table_map get_other_dep(opt_hints_enum type, table_map hint_tab_map,
 }
 
 /**
-  Auxiluary class is used to save/restore table dependencies.
+  Auxiliary class is used to save/restore table dependencies.
 */
 
 class Join_order_hint_handler {
@@ -430,7 +429,7 @@ class Join_order_hint_handler {
 
 static void update_nested_join_deps(JOIN *join, const JOIN_TAB *hint_tab,
                                     table_map hint_tab_map) {
-  const TABLE_LIST *table = hint_tab->table_ref;
+  const Table_ref *table = hint_tab->table_ref;
   if (table->embedding) {
     for (uint i = 0; i < join->tables; i++) {
       JOIN_TAB *tab = &join->join_tab[i];
@@ -447,7 +446,7 @@ static void update_nested_join_deps(JOIN *join, const JOIN_TAB *hint_tab,
 /**
   Function resolves hint tables, checks and sets table dependencies
   according to the hint. If the hint is ignored due to circular table
-  dependencies, orginal dependencies are restored.
+  dependencies, original dependencies are restored.
 
   @param join             pointer to JOIN object
   @param hint_table_list  hint table list
@@ -475,7 +474,7 @@ static bool set_join_hint_deps(JOIN *join,
        hint_table < hint_table_list->end(); hint_table++) {
     bool hint_table_found = false;
     for (uint i = 0; i < join->tables; i++) {
-      const TABLE_LIST *table = join->join_tab[i].table_ref;
+      const Table_ref *table = join->join_tab[i].table_ref;
       if (!compare_table_name(hint_table, table)) {
         hint_table_found = true;
         /*
@@ -487,7 +486,7 @@ static bool set_join_hint_deps(JOIN *join,
         if (join->const_table_map & table->map()) break;
 
         JOIN_TAB *tab = &join->join_tab[i];
-        // Hint tables are always dependent on preceeding tables
+        // Hint tables are always dependent on preceding tables
         tab->dependent |= hint_tab_map;
         update_nested_join_deps(join, tab, hint_tab_map);
         hint_tab_map |= tab->table_ref->map();
@@ -504,7 +503,7 @@ static bool set_join_hint_deps(JOIN *join,
   // Add dependencies that are related to non-hint tables
   for (uint i = 0; i < join->tables; i++) {
     JOIN_TAB *tab = &join->join_tab[i];
-    table_map dependent_tables =
+    const table_map dependent_tables =
         get_other_dep(type, hint_tab_map, tab->table_ref->map());
     update_nested_join_deps(join, tab, dependent_tables);
     tab->dependent |= dependent_tables;
@@ -526,7 +525,7 @@ void Opt_hints_qb::apply_join_order_hints(JOIN *join) {
   }
 }
 
-void Opt_hints_table::adjust_key_hints(TABLE_LIST *tr) {
+void Opt_hints_table::adjust_key_hints(Table_ref *tr) {
   set_resolved();
   if (child_array_ptr()->size() == 0)  // No key level hints
   {
@@ -535,7 +534,7 @@ void Opt_hints_table::adjust_key_hints(TABLE_LIST *tr) {
   }
 
   /*
-    Make sure that adjustement is done only once.
+    Make sure that adjustment is done only once.
     Table has already been processed if keyinfo_array is not empty.
   */
   if (keyinfo_array.size()) return;
@@ -648,7 +647,7 @@ bool Opt_hints_table::update_index_hint_maps(THD *thd, TABLE *tbl) {
   tbl->keys_in_use_for_query = tbl->keys_in_use_for_group_by =
       tbl->keys_in_use_for_order_by = usable_index_map;
 
-  bool force_index = is_force_index_hint(INDEX_HINT_ENUM);
+  const bool force_index = is_force_index_hint(INDEX_HINT_ENUM);
   tbl->force_index = (force_index || is_force_index_hint(JOIN_INDEX_HINT_ENUM));
   tbl->force_index_group =
       (force_index || is_force_index_hint(GROUP_INDEX_HINT_ENUM));
@@ -816,7 +815,7 @@ void Sys_var_hint::restore_vars(THD *thd) {
     Hint_set_var *hint_var = var_list[i];
     set_var *var = hint_var->var;
     if (hint_var->save_value) {
-      /* Restore original vaule for update */
+      /* Restore original value for update */
       std::swap(var->value, hint_var->save_value);
       /*
         There should be no error since original value is restored.
@@ -828,7 +827,7 @@ void Sys_var_hint::restore_vars(THD *thd) {
       (void)var->check(thd);
       (void)var->update(thd);
 #endif
-      /* Restore hint vaule for further executions */
+      /* Restore hint value for further executions */
       std::swap(var->value, hint_var->save_value);
     }
   }
@@ -844,7 +843,7 @@ void Sys_var_hint::print(const THD *thd, String *str) {
 
 /**
   Function returns hint value depending on
-  the specfied hint level. If hint is specified
+  the specified hint level. If hint is specified
   on current level, current level hint value is
   returned, otherwise parent level hint is checked.
 
@@ -866,8 +865,9 @@ static bool get_hint_state(Opt_hints *hint, Opt_hints *parent_hint,
     if (hint && hint->is_specified(type_arg)) {
       *ret_val = hint->get_switch(type_arg);
       return true;
-    } else if (opt_hint_info[type_arg].check_upper_lvl &&
-               parent_hint->is_specified(type_arg)) {
+    }
+    if (opt_hint_info[type_arg].check_upper_lvl &&
+        parent_hint->is_specified(type_arg)) {
       *ret_val = parent_hint->get_switch(type_arg);
       return true;
     }
@@ -887,7 +887,7 @@ static bool get_hint_state(Opt_hints *hint, Opt_hints *parent_hint,
   return false;
 }
 
-bool hint_key_state(const THD *thd, const TABLE_LIST *table, uint keyno,
+bool hint_key_state(const THD *thd, const Table_ref *table, uint keyno,
                     opt_hints_enum type_arg, uint optimizer_switch) {
   Opt_hints_table *table_hints = table->opt_hints_table;
 
@@ -904,7 +904,7 @@ bool hint_key_state(const THD *thd, const TABLE_LIST *table, uint keyno,
   return thd->optimizer_switch_flag(optimizer_switch);
 }
 
-bool hint_table_state(const THD *thd, const TABLE_LIST *table_list,
+bool hint_table_state(const THD *thd, const Table_ref *table_list,
                       opt_hints_enum type_arg, uint optimizer_switch) {
   if (table_list->opt_hints_qb) {
     bool ret_val = false;
@@ -948,7 +948,7 @@ bool compound_hint_key_enabled(const TABLE *table, uint keyno,
 
 bool idx_merge_hint_state(THD *thd, const TABLE *table,
                           bool *use_cheapest_index_merge) {
-  bool force_index_merge =
+  const bool force_index_merge =
       hint_table_state(thd, table->pos_in_table_list, INDEX_MERGE_HINT_ENUM, 0);
   if (force_index_merge) {
     assert(table->pos_in_table_list->opt_hints_table);

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -348,13 +348,13 @@ class dyn_buf_t {
   block_t *back() { return (UT_LIST_GET_LAST(m_list)); }
 
   /*
-  @return true if request can be fullfilled */
+  @return true if request can be fulfilled */
   bool has_space(ulint size) const {
     return (back()->m_used + size <= MAX_DATA_SIZE);
   }
 
   /*
-  @return true if request can be fullfilled */
+  @return true if request can be fulfilled */
   bool has_space(ulint size) {
     return (back()->m_used + size <= MAX_DATA_SIZE);
   }

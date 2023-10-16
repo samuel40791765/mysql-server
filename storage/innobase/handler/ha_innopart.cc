@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -68,6 +68,7 @@ Created Nov 22, 2013 Mattias Jonsson */
 #include "my_byteorder.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
+#include "my_inttypes.h"
 #include "my_io.h"
 #include "my_macros.h"
 #include "mysql/plugin.h"
@@ -137,7 +138,9 @@ bool Ha_innopart_share::open_one_table_part(
   if (part_table != nullptr) {
     cached = true;
     if (part_table->is_corrupted()) {
-      dict_table_remove_from_cache(part_table);
+      if (part_table->get_ref_count() == 0) {
+        dict_table_remove_from_cache(part_table);
+      }
       part_table = nullptr;
     } else if (part_table->discard_after_ddl) {
       btr_drop_ahi_for_table(part_table);
@@ -825,7 +828,13 @@ int ha_innopart::open(const char *name, int, uint, const dd::Table *table_def) {
     dict_table_t **table_parts = Ha_innopart_share::open_table_parts(
         thd, table, table_def, m_part_info, norm_name);
 
-    if (table_parts == nullptr) return HA_ERR_INTERNAL_ERROR;
+    if (table_parts == nullptr) {
+      ib::warn(ER_IB_MSG_557)
+          << "Cannot open table " << norm_name << TROUBLESHOOTING_MSG;
+      set_my_errno(ENOENT);
+
+      return HA_ERR_NO_SUCH_TABLE;
+    }
 
     /* Now acquire TABLE_SHARE::LOCK_ha_data again and assign table
     and index information. set_table_parts_and_indexes() will check
@@ -1046,7 +1055,7 @@ int ha_innopart::open(const char *name, int, uint, const dd::Table *table_def) {
     of the index used on scan, to make it avoid checking if we
     update the column of the index. That is why we assert below
     that key_used_on_scan is the undefined value MAX_KEY.
-    The column is the row id in the automatical generation case,
+    The column is the row id in the automatic generation case,
     and it will never be updated anyway. */
 
     if (key_used_on_scan != MAX_KEY) {
@@ -1176,6 +1185,9 @@ void ha_innopart::clear_ins_upd_nodes() {
       /* Free memory from update nodes. */
       if (part.m_upd_node != nullptr) {
         upd_node_t *upd = part.m_upd_node;
+        if (upd->update) {
+          upd->update->free_per_stmt_heap();
+        }
         if (upd->cascade_heap) {
           mem_heap_free(upd->cascade_heap);
           upd->cascade_heap = nullptr;
@@ -2883,22 +2895,24 @@ int ha_innopart::key_and_rowid_cmp(KEY **key_info, uchar *a, uchar *b) {
 int ha_innopart::extra(enum ha_extra_function operation) {
   if (operation == HA_EXTRA_SECONDARY_SORT_ROWID) {
     /* index_init(sorted=true) must have been called! */
-    ut_ad(m_ordered);
-    ut_ad(m_ordered_rec_buffer != nullptr);
-    /* No index_read call must have been done! */
-    ut_ad(m_queue->empty());
+    if (m_part_info->num_partitions_used() != 0) {
+      ut_ad(m_ordered);
+      ut_ad(m_ordered_rec_buffer != nullptr);
+      /* No index_read call must have been done! */
+      ut_ad(m_queue->empty());
 
-    /* If not PK is set as secondary sort, do secondary sort by
-    rowid/ref. */
+      /* If not PK is set as secondary sort, do secondary sort by
+      rowid/ref. */
 
-    ut_ad(m_curr_key_info[1] != nullptr ||
-          m_prebuilt->clust_index_was_generated != 0 ||
-          m_curr_key_info[0] == table->key_info + table->s->primary_key);
+      ut_ad(m_curr_key_info[1] != nullptr ||
+            m_prebuilt->clust_index_was_generated != 0 ||
+            m_curr_key_info[0] == table->key_info + table->s->primary_key);
 
-    if (m_curr_key_info[1] == nullptr &&
-        m_prebuilt->clust_index_was_generated) {
-      m_ref_usage = Partition_helper::REF_USED_FOR_SORT;
-      m_queue->m_fun = key_and_rowid_cmp;
+      if (m_curr_key_info[1] == nullptr &&
+          m_prebuilt->clust_index_was_generated) {
+        m_ref_usage = Partition_helper::REF_USED_FOR_SORT;
+        m_queue->m_fun = key_and_rowid_cmp;
+      }
     }
     return (0);
   }
@@ -3039,7 +3053,9 @@ int ha_innopart::truncate_impl(const char *name, TABLE *form,
       }
     }
 
-    dd_clear_instant_table(*table_def, true);
+    if (dd_clear_instant_table(*table_def, true) != DB_SUCCESS) {
+      error = HA_ERR_GENERIC;
+    }
   }
 
   return error;
@@ -3142,7 +3158,9 @@ int ha_innopart::truncate_partition_low(dd::Table *dd_table) {
     } else {
       if (is_instant && !dd_table_part_has_instant_cols(*dd_table)) {
         /* Not all partition truncate. Don't clear the versioned metadata. */
-        dd_clear_instant_table(*dd_table, false);
+        if (dd_clear_instant_table(*dd_table, false) != DB_SUCCESS) {
+          error = HA_ERR_GENERIC;
+        }
       }
     }
   }

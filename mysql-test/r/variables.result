@@ -696,6 +696,7 @@ set @a=@b, @b=@a;
 select @a, @b;
 @a	@b
 2	1
+SET max_join_size = @my_max_join_size;
 set @@global.global.key_buffer_size= 1;
 ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'global.key_buffer_size= 1' at line 1
 set GLOBAL global.key_buffer_size= 1;
@@ -948,7 +949,6 @@ select @@version, @@version_comment, @@version_compile_machine,
 @@version_compile_os;
 @@version	@@version_comment	@@version_compile_machine	@@version_compile_os
 #	#	#	#
-SET SQL_BIG_SELECTS=1;
 select @@basedir, @@datadir, @@tmpdir;
 @@basedir	@@datadir	@@tmpdir
 #	#	#
@@ -997,7 +997,6 @@ ssl_fips_mode	#
 ssl_key	#
 ssl_session_cache_mode	#
 ssl_session_cache_timeout	#
-SET SQL_BIG_SELECTS=0;
 select @@log_queries_not_using_indexes;
 @@log_queries_not_using_indexes
 0
@@ -1470,6 +1469,20 @@ SET GLOBAL expire_logs_days = @old_eld;
 Warnings:
 Warning	1287	'@@expire_logs_days' is deprecated and will be removed in a future release. Please use binlog_expire_logs_seconds instead.
 SET GLOBAL binlog_expire_logs_seconds= @old_seconds;
+SET @@global.binlog_expire_logs_seconds=0;
+SET @@global.expire_logs_days = 1;
+Warnings:
+Warning	1287	'@@expire_logs_days' is deprecated and will be removed in a future release. Please use binlog_expire_logs_seconds instead.
+SET @@global.binlog_expire_logs_seconds=5;
+ERROR HY000: The option expire_logs_days cannot be used together with option binlog_expire_logs_seconds. To set one, first unset the other by setting it to 0.
+SET @@global.expire_logs_days=0;
+Warnings:
+Warning	1287	'@@expire_logs_days' is deprecated and will be removed in a future release. Please use binlog_expire_logs_seconds instead.
+SET @@global.binlog_expire_logs_seconds=5;
+SET @@global.binlog_expire_logs_seconds=@old_seconds;
+SET @@global.expire_logs_days=@old_eld;
+Warnings:
+Warning	1287	'@@expire_logs_days' is deprecated and will be removed in a future release. Please use binlog_expire_logs_seconds instead.
 SET GLOBAL auto_increment_offset=-1;
 Warnings:
 Warning	1292	Truncated incorrect auto_increment_offset value: '-1'
@@ -2058,6 +2071,7 @@ SET SESSION require_row_format = @@session.require_row_format;
 SET SESSION resultset_metadata = @@session.resultset_metadata;
 SET SESSION show_create_table_skip_secondary_engine = @@session.show_create_table_skip_secondary_engine;
 SET SESSION sql_log_bin = @@session.sql_log_bin;
+SET SESSION statement_id = @@session.statement_id;
 SET SESSION timestamp = @@session.timestamp;
 SET SESSION transaction_allow_batching = @@session.transaction_allow_batching;
 SET SESSION use_secondary_engine = @@session.use_secondary_engine;

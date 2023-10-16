@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -264,7 +264,7 @@ header which defines member m of t for the first time, so that it is accessible.
 This way all the places in codebase which know how to access m from t, will be
 also able to use this node getter, and thus iterate over a list chained by it.
 This also ensures, that for(auto elem: list) loops can be fully inlined by the
-compiler as it can see trough the get_node implementation, because each place
+compiler as it can see through the get_node implementation, because each place
 in code which knows that get_node exists also knows its implementation.*/
 #define UT_LIST_NODE_GETTER_DEFINITION(t, m) \
   struct UT_LIST_NODE_GETTER(t, m)           \

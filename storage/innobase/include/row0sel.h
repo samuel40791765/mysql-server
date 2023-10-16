@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -163,7 +163,7 @@ DB_LOCK_TABLE_FULL, DB_CORRUPTION, or DB_TOO_BIG_RECORD */
     ulint direction);
 
 /** Searches for rows in the database using cursor.
-Function is for temporary tables that are not shared accross connections
+Function is for temporary tables that are not shared across connections
 and so lot of complexity is reduced especially locking and transaction related.
 The cursor is an iterator over the table/index.
 

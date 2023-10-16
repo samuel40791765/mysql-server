@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -38,7 +38,8 @@
 
 #include "my_inttypes.h"
 #include "my_sys.h"
-#include "sql/mysqld.h"  //system_charset_info
+#include "mysql/strings/m_ctype.h"
+#include "sql/mysqld_cs.h"  // system_charset_info
 #include "sql_string.h"
 #include "storage/perfschema/pfs_buffer_container.h"
 #include "storage/perfschema/pfs_global.h"
@@ -62,7 +63,7 @@ int init_program(const PFS_global_param *param) {
 }
 
 /** Cleanup table EVENTS_STATEMENTS_SUMMARY_BY_PROGRAM. */
-void cleanup_program(void) { global_program_container.cleanup(); }
+void cleanup_program() { global_program_container.cleanup(); }
 
 static const uchar *program_hash_get_key(const uchar *entry, size_t *length) {
   const PFS_program *const *typed_entry;
@@ -145,7 +146,7 @@ int init_program_hash(const PFS_global_param *param) {
 }
 
 /** Cleanup the program hash. */
-void cleanup_program_hash(void) {
+void cleanup_program_hash() {
   if (program_hash_inited) {
     lf_hash_destroy(&program_hash);
     program_hash_inited = false;
@@ -238,7 +239,7 @@ search:
 
     /* Insert this record. */
     pfs->m_lock.dirty_to_allocated(&dirty_state);
-    int res = lf_hash_insert(&program_hash, pins, &pfs);
+    const int res = lf_hash_insert(&program_hash, pins, &pfs);
 
     if (likely(res == 0)) {
       return pfs;
@@ -289,7 +290,6 @@ void drop_program(PFS_thread *thread, enum_object_type object_type,
   }
 
   lf_hash_search_unpin(pins);
-  return;
 }
 
 void PFS_program::refresh_setup_object_flags(PFS_thread *thread) {

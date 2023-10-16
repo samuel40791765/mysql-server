@@ -1,4 +1,4 @@
-# Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -102,6 +102,7 @@ Vendor:         %{mysql_vendor}
 Source10:       @BOOST_DOWNLOAD_URL@
 BuildRequires:  cmake >= 2.8.2
 BuildRequires:  bison >= 2.1
+BuildRequires:  elfutils
 BuildRequires:  perl
 BuildRequires:  perl(Config)
 BuildRequires:  perl(Cwd)
@@ -426,10 +427,10 @@ Provides:       MySQL-shared = %{version}-%{release}
 Obsoletes:      MySQL-shared < %{version}-%{release}
 Obsoletes:      mysql-libs < %{version}-%{release}
 Obsoletes:      mariadb-libs
-Obsoletes:      libmysqlclient21 < %{version}-%{release}
+Obsoletes:      libmysqlclient22 < %{version}-%{release}
 Obsoletes:      mysql-connector-c-shared < 6.2
 Provides:       mysql-libs = %{version}-%{release}
-Provides:       libmysqlclient21 = %{version}-%{release}
+Provides:       libmysqlclient22 = %{version}-%{release}
 
 %description    libs
 This package contains the shared libraries for MySQL client
@@ -618,7 +619,7 @@ mkdir debug
            -DWITH_MEB=%{with_meb} \
            -DWITH_ROUTER=%{with_router} \
 %if 0%{?cluster}
-           -DWITH_NDBCLUSTER=1 \
+           -DWITH_NDB=1 \
 %endif
 %if 0%{?ndb_nodejs_path:1}
            -DNDB_NODEJS_PATH=%{ndb_nodejs_path} \
@@ -662,7 +663,7 @@ mkdir release
            -DWITH_MEB=%{with_meb} \
            -DWITH_ROUTER=%{with_router} \
 %if 0%{?cluster}
-           -DWITH_NDBCLUSTER=1 \
+           -DWITH_NDB=1 \
 %endif
 %if 0%{?ndb_nodejs_path:1}
            -DNDB_NODEJS_PATH=%{ndb_nodejs_path} \
@@ -719,7 +720,6 @@ install -D -p -m 0644 packaging/rpm-common/mysqlrouter.conf %{buildroot}%{_sysco
 %endif
 
 # Remove files pages we explicitly do not want to package
-rm -rf %{buildroot}%{_infodir}/mysql.info*
 rm -f %{buildroot}%{_datadir}/mysql-*/win_install_firewall.sql
 rm -f %{buildroot}%{_datadir}/mysql-*/audit_log_filter_win_install.sql
 
@@ -882,12 +882,16 @@ rm -r $(readlink var) var
 %attr(644, root, root) %{_datadir}/mysql-*/audit_log_filter_linux_install.sql
 %attr(644, root, root) %{_datadir}/mysql-*/firewall_profile_migration.sql
 %attr(644, root, root) %{_datadir}/mysql-*/linux_install_firewall.sql
+%attr(644, root, root) %{_datadir}/mysql-*/masking_functions_install.sql
+%attr(644, root, root) %{_datadir}/mysql-*/masking_functions_uninstall.sql
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_fido.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_kerberos.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_ldap_sasl.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_ldap_simple.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_pam.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_keyring_encrypted_file.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_keyring_oci.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/telemetry_client.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/data_masking.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/firewall.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/keyring_encrypted_file.so
@@ -896,6 +900,11 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/keyring_okv.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/openssl_udf.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/thread_pool.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_enterprise_encryption.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_masking.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_masking_functions.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_scheduler.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_telemetry.so
 %if 0%{?aws_sdk}
 %attr(755, root, root) %{_libdir}/mysql/plugin/keyring_aws.so
 %endif # aws
@@ -961,6 +970,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_ldap_sasl.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_ldap_simple.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_kerberos.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/telemetry_client.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/data_masking.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/keyring_okv.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/keyring_encrypted_file.so
@@ -971,6 +981,12 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/firewall.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_fido.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_keyring_encrypted_file.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_keyring_oci.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_enterprise_encryption.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_masking.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_masking_functions.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_scheduler.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_telemetry.so
 %if 0%{?aws_sdk}
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/keyring_aws.so
 %endif # aws_sdk
@@ -1010,9 +1026,12 @@ rm -r $(readlink var) var
 %files icu-data-files
 %defattr(-, root, root, -)
 %doc %{?license_files_server}
-%dir %attr(755, root, root) %{_libdir}/mysql/private/icudt69l
-%{_libdir}/mysql/private/icudt69l/unames.icu
-%{_libdir}/mysql/private/icudt69l/brkitr
+%dir %attr(755, root, root) %{_libdir}/mysql/private/icudt73l
+%{_libdir}/mysql/private/icudt73l/cnvalias.icu
+%{_libdir}/mysql/private/icudt73l/uemoji.icu
+%{_libdir}/mysql/private/icudt73l/ulayout.icu
+%{_libdir}/mysql/private/icudt73l/unames.icu
+%{_libdir}/mysql/private/icudt73l/brkitr
 
 %files client
 %defattr(-, root, root, -)
@@ -1061,6 +1080,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_bindir}/ndb_print_sys_file
 %attr(755, root, root) %{_bindir}/ndb_redo_log_reader
 %attr(755, root, root) %{_bindir}/ndb_restore
+%attr(755, root, root) %{_bindir}/ndb_secretsfile_reader
 %attr(755, root, root) %{_bindir}/ndb_select_all
 %attr(755, root, root) %{_bindir}/ndb_select_count
 %attr(755, root, root) %{_bindir}/ndb_show_tables
@@ -1088,15 +1108,17 @@ rm -r $(readlink var) var
 %attr(644, root, root) %{_mandir}/man1/ndb_print_frag_file.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_print_schema_file.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_print_sys_file.1*
+%attr(644, root, root) %{_mandir}/man1/ndb_redo_log_reader.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_restore.1*
+%attr(644, root, root) %{_mandir}/man1/ndb_secretsfile_reader.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_select_all.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_select_count.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_show_tables.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_size.pl.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_top.1*
 %attr(644, root, root) %{_mandir}/man1/ndb_waiter.1*
-%attr(644, root, root) %{_mandir}/man1/ndb_redo_log_reader.1*
 %attr(644, root, root) %{_mandir}/man1/ndbinfo_select_all.1*
+%attr(644, root, root) %{_mandir}/man1/ndbxfrm.1*
 %endif #cluster
 
 %files devel
@@ -1119,7 +1141,7 @@ rm -r $(readlink var) var
 %doc %{?license_files_server}
 %dir %attr(755, root, root) %{_libdir}/mysql
 %attr(644, root, root) %{_sysconfdir}/ld.so.conf.d/mysql-%{_arch}.conf
-%{_libdir}/mysql/libmysqlclient.so.21*
+%{_libdir}/mysql/libmysqlclient.so.22*
 
 %files client-plugins
 %defattr(-, root, root, -)
@@ -1128,7 +1150,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_fido_client.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_kerberos_client.so
 %attr(755, root, root) %{_libdir}/mysql/private/libfido2.so.1
-%attr(755, root, root) %{_libdir}/mysql/private/libfido2.so.1.5.0
+%attr(755, root, root) %{_libdir}/mysql/private/libfido2.so.1.8.0
 %attr(755, root, root) %{_libdir}/mysql/plugin/authentication_oci_client.so
 
 %if 0%{?compatlib}
@@ -1154,6 +1176,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_bindir}/mysqltest_safe_process
 %attr(755, root, root) %{_bindir}/mysqlxtest
 %attr(755, root, root) %{_bindir}/mysql_keyring_encryption_test
+%attr(755, root, root) %{_bindir}/mysql_test_event_tracking
 %attr(644, root, root) %{_mandir}/man1/comp_err.1*
 
 %attr(755, root, root) %{_libdir}/mysql/plugin/auth.so
@@ -1182,6 +1205,8 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_mysql_system_variable_set.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_table_access.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_component_deinit.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_mysql_command_services.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/test_services_command_services.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_udf_reg_3_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_udf_reg_avg_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_udf_reg_int_func.so
@@ -1203,6 +1228,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_system_variable_source.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_audit_api_message.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_udf_services.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/conflicting_variables.so
 %attr(644, root, root) %{_libdir}/mysql/plugin/daemon_example.ini
 %attr(755, root, root) %{_libdir}/mysql/plugin/libdaemon_example.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/test_udf_services.so
@@ -1241,6 +1267,15 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/test_services_host_application_signal.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_mysqlx_global_reset.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_sensitive_system_variables.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_status_var_reader.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_server_telemetry_traces.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_mysql_thd_store_service.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_event_tracking_consumer.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_event_tracking_producer_a.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_event_tracking_producer_b.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_event_tracking_consumer_a.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_event_tracking_consumer_b.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_event_tracking_consumer_c.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/auth.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/auth_test_plugin.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_ldap_sasl_client.so
@@ -1271,6 +1306,8 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_mysql_system_variable_set.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_table_access.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_component_deinit.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_mysql_command_services.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/test_services_command_services.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_udf_reg_3_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_udf_reg_avg_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_udf_reg_int_func.so
@@ -1292,6 +1329,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_system_variable_source.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_audit_api_message.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_udf_services.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/conflicting_variables.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/libdaemon_example.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/test_udf_services.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/udf_example.so
@@ -1329,6 +1367,15 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/test_services_host_application_signal.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_mysqlx_global_reset.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_sensitive_system_variables.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_status_var_reader.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_server_telemetry_traces.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_mysql_thd_store_service.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_event_tracking_consumer.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_event_tracking_producer_a.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_event_tracking_producer_b.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_event_tracking_consumer_a.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_event_tracking_consumer_b.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_event_tracking_consumer_c.so
 
 %if 0%{?cluster}
 %files management-server
@@ -1403,6 +1450,7 @@ rm -r $(readlink var) var
 %{_libdir}/mysqlrouter/private/libmysqlharness_tls.so.*
 %{_libdir}/mysqlrouter/private/libmysqlrouter.so.*
 %{_libdir}/mysqlrouter/private/libmysqlrouter_connection_pool.so.*
+%{_libdir}/mysqlrouter/private/libmysqlrouter_destination_status.so.*
 %{_libdir}/mysqlrouter/private/libmysqlrouter_http.so.*
 %{_libdir}/mysqlrouter/private/libmysqlrouter_http_auth_backend.so.*
 %{_libdir}/mysqlrouter/private/libmysqlrouter_http_auth_realm.so.*
@@ -1419,6 +1467,29 @@ rm -r $(readlink var) var
 %endif # with_router
 
 %changelog
+* Wed Apr 05 2023 Erlend Dahl <erlend.dahl@oracle.com> - 8.1.0-1
+- Bump in the major version of MySQL, so increase the libmysqlclient major version to 22.
+
+* Wed Mar 01 2023 Harin Vadodaria <harin.vadodaria@oracle.com> - 8.0.34-1
+- Added components, libraries and binaries related to event tracking
+
+* Thu Oct 13 2022 Miroslav Rajcic <miroslav.rajcic@oracle.com> - 8.0.33-1
+- Added component_test_server_telemetry_traces, component_test_mysql_thd_store_service
+
+* Tue Oct 11 2022 Michal Jankowski <michal.jankowski@oracle.com> - 8.0.33-1
+- Added component_masking.so component
+- Added component_masking_functions.so component
+
+* Tue Jun 28 2022 Samar Pratap Singh <samar.pratap.singh@oracle.com> - 8.0.31-1
+- Added component_keyring_oci
+
+* Mon Jun 20 2022 Murthy Sidagam <venkata.sidagam@oracle.com> - 8.0.31-1
+- Added component_test_mysql_command_services.so test component
+- Added test_services_command_services.so test plugin
+
+* Wed Feb 02 2022 Harin Vadodaria <harin.vadodaria@oracle.com> - 8.0.30-1
+- Added component_enterprise_encryption
+
 * Mon Jan 03 2022 Harin Vadodaria <harin.vadodaria@oracle.com> - 8.0.29-1
 - Added component_test_sensitive_system_variables
 

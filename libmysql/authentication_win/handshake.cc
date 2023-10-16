@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -101,7 +101,7 @@ int Handshake::packet_processing_loop() {
     // Read packet send by the peer
 
     DBUG_PRINT("info", ("Waiting for packet"));
-    Blob packet = read_packet();
+    const Blob packet = read_packet();
     if (error()) {
       ERROR_LOG(ERROR, ("Error reading packet in round %d", m_round));
       return 1;
@@ -128,7 +128,7 @@ int Handshake::packet_processing_loop() {
       DBUG_PRINT("info", ("Round %d started", m_round));
 
       DBUG_PRINT("info", ("Sending packet of length %d", new_data.len()));
-      int ret = write_packet(new_data);
+      const int ret = write_packet(new_data);
       if (ret) {
         ERROR_LOG(ERROR, ("Error writing packet in round %d", m_round));
         return 1;
@@ -174,7 +174,8 @@ const char *Handshake::ssp_name() {
   if (!m_ssp_info && m_complete) {
     SecPkgContext_PackageInfo pinfo;
 
-    int ret = QueryContextAttributes(&m_sctx, SECPKG_ATTR_PACKAGE_INFO, &pinfo);
+    const int ret =
+        QueryContextAttributes(&m_sctx, SECPKG_ATTR_PACKAGE_INFO, &pinfo);
 
     if (SEC_E_OK == ret) {
       m_ssp_info = pinfo.PackageInfo;

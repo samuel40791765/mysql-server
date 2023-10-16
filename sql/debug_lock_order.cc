@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1226,7 +1226,7 @@ stack when the second lock was acquired:
   A possible fix is to change the implementation of func_blue()
   to take locks on A then C, in that order.
 
-  Fixing the code is not enought, as the lock_order_dependencies.txt file
+  Fixing the code is not enough, as the lock_order_dependencies.txt file
   now contains an arc (C -> A) that is never taken in the code.
 
   Once both:
@@ -1322,18 +1322,18 @@ stack when the second lock was acquired:
 
   First, notice how the read write lock class "rwlock/sql/B"
   is represented by four nodes, named:
-  - "rwlock/sql/B:+R", incomming read lock
+  - "rwlock/sql/B:+R", incoming read lock
   - "rwlock/sql/B:-R", outgoing read lock
-  - "rwlock/sql/B:+W", incomming write lock
+  - "rwlock/sql/B:+W", incoming write lock
   - "rwlock/sql/B:-W", outgoing write lock
 
   A practical way to represent this graphically is to draw a box
   for the lock, that contains four ports.
   Internal connections between ports represent the logic table
-  for the lock: an arc from "+R" to "-W" means that an incomming request
+  for the lock: an arc from "+R" to "-W" means that an incoming request
   for a read lock ("+R") is blocked by a write lock request already given ("-W").
 
-  Micro arcs represent the wired logic of the lock itself, these can not be changed.
+  Micro arcs represent the wired logic of the lock itself, these cannot be changed.
 
   @dot
   digraph LockOrder {
@@ -1416,9 +1416,9 @@ stack when the second lock was acquired:
   Now, at t21, rwlock_B is locked in read mode by thread green,
   so a request for a read lock should be granted, right ?
 
-  Lock order claims there is a dead lock, because a read can block indirectly a read:
+  Lock order claims there is a dead lock, because a read can indirectly block a read:
 
-  Consider the folowing code:
+  Consider the following code:
 
   @code
   func_grey() {
@@ -1695,7 +1695,7 @@ stack when the second lock was acquired:
   }
 
 #define LO_MAX_THREAD_CLASS 100
-#define LO_MAX_MUTEX_CLASS 300
+#define LO_MAX_MUTEX_CLASS 350
 #define LO_MAX_RWLOCK_CLASS 100
 #define LO_MAX_COND_CLASS 150
 #define LO_MAX_FILE_CLASS 100
@@ -2483,7 +2483,7 @@ class LO_rwlock {
 class LO_rwlock_pr : public LO_rwlock {
  public:
   LO_rwlock_pr(const LO_rwlock_class_pr *klass) : LO_rwlock(klass) {}
-  ~LO_rwlock_pr() {}
+  ~LO_rwlock_pr() override {}
 
   virtual LO_rwlock_lock *build_lock(const char *src_file, int src_line,
                                      LO_thread *thread) override;
@@ -2492,7 +2492,7 @@ class LO_rwlock_pr : public LO_rwlock {
 class LO_rwlock_rw : public LO_rwlock {
  public:
   LO_rwlock_rw(const LO_rwlock_class_rw *klass) : LO_rwlock(klass) {}
-  ~LO_rwlock_rw() {}
+  ~LO_rwlock_rw() override {}
 
   virtual LO_rwlock_lock *build_lock(const char *src_file, int src_line,
                                      LO_thread *thread) override;
@@ -2501,7 +2501,7 @@ class LO_rwlock_rw : public LO_rwlock {
 class LO_rwlock_sx : public LO_rwlock {
  public:
   LO_rwlock_sx(const LO_rwlock_class_sx *klass) : LO_rwlock(klass) {}
-  ~LO_rwlock_sx() {}
+  ~LO_rwlock_sx() override {}
 
   virtual LO_rwlock_lock *build_lock(const char *src_file, int src_line,
                                      LO_thread *thread) override;
@@ -2570,7 +2570,7 @@ class LO_rwlock_lock_pr : public LO_rwlock_lock {
  public:
   LO_rwlock_lock_pr(LO_rwlock *rwlock, const char *src_file, int src_line,
                     LO_thread *thread);
-  ~LO_rwlock_lock_pr() {}
+  ~LO_rwlock_lock_pr() override {}
 
   virtual void set_locked(PSI_rwlock_operation op, const char *src_file,
                           int src_line) override;
@@ -2597,7 +2597,7 @@ class LO_rwlock_lock_rw : public LO_rwlock_lock {
  public:
   LO_rwlock_lock_rw(LO_rwlock *rwlock, const char *src_file, int src_line,
                     LO_thread *thread);
-  ~LO_rwlock_lock_rw() {}
+  ~LO_rwlock_lock_rw() override {}
 
   virtual void set_locked(PSI_rwlock_operation op, const char *src_file,
                           int src_line) override;
@@ -2624,7 +2624,7 @@ class LO_rwlock_lock_sx : public LO_rwlock_lock {
  public:
   LO_rwlock_lock_sx(LO_rwlock *rwlock, const char *src_file, int src_line,
                     LO_thread *thread);
-  ~LO_rwlock_lock_sx() {}
+  ~LO_rwlock_lock_sx() override {}
 
   virtual void set_locked(PSI_rwlock_operation op, const char *src_file,
                           int src_line) override;
@@ -3056,7 +3056,7 @@ LO_graph::~LO_graph() {
 
 void LO_graph::check_mutex(LO_thread *thread, const LO_lock *old_lock,
                            const LO_mutex_lock *new_lock) {
-  bool recursive = (old_lock == new_lock) ? true : false;
+  const bool recursive = (old_lock == new_lock) ? true : false;
   assert(!recursive);
   const char *from_class_name = old_lock->get_class_name();
   const char *from_class_state = old_lock->get_state_name();
@@ -3071,7 +3071,7 @@ void LO_graph::check_mutex(LO_thread *thread, const LO_lock *old_lock,
 void LO_graph::check_rwlock(LO_thread *thread, const LO_lock *old_lock,
                             const LO_rwlock_lock *new_lock,
                             PSI_rwlock_operation op) {
-  bool recursive = (old_lock == new_lock) ? true : false;
+  const bool recursive = (old_lock == new_lock) ? true : false;
   const char *from_class_name = old_lock->get_class_name();
   const char *from_class_state = old_lock->get_state_name();
   const LO_node *from_node = old_lock->get_state_node();
@@ -3151,8 +3151,8 @@ void LO_graph::check_common(LO_thread *thread, const char *from_class_name,
   }
 
   LO_arc *arc;
-  unsigned int from_index = from_node->get_node_index();
-  unsigned int to_index = to_node->get_node_index();
+  const unsigned int from_index = from_node->get_node_index();
+  const unsigned int to_index = to_node->get_node_index();
 
   assert(from_index < LO_MAX_NODE_NUMBER);
   assert(to_index < LO_MAX_NODE_NUMBER);
@@ -3246,7 +3246,7 @@ void LO_graph::check_common(LO_thread *thread, const char *from_class_name,
       stack->print(out_log);
     }
 
-    LO_stack_trace new_stack;
+    const LO_stack_trace new_stack;
     print_file(out_log, "stack when the second lock was acquired:\n");
     new_stack.print(out_log);
 
@@ -3443,7 +3443,7 @@ void LO_graph::add_arc(LO_node *from, LO_node *to, bool recursive, int flags,
 
   LO_node_list cycle;
 
-  bool is_loop = ((flags & LO_FLAG_LOOP) == LO_FLAG_LOOP);
+  const bool is_loop = ((flags & LO_FLAG_LOOP) == LO_FLAG_LOOP);
 
   if (to->is_sink()) {
     return;
@@ -3504,8 +3504,8 @@ void LO_graph::add_arc(LO_node *from, LO_node *to, bool recursive, int flags,
     from->set_debug();
   }
 
-  unsigned int from_index = from->get_node_index();
-  unsigned int to_index = to->get_node_index();
+  const unsigned int from_index = from->get_node_index();
+  const unsigned int to_index = to->get_node_index();
 
   assert(from_index < LO_MAX_NODE_NUMBER);
   assert(to_index < LO_MAX_NODE_NUMBER);
@@ -3731,7 +3731,7 @@ void LO_graph::dump_txt() {
 
 void LO_graph::scc_util(const SCC_visitor *v, int *discovery_time,
                         int *scc_count, LO_node *n, std::stack<LO_node *> *st) {
-  int discovered = (*discovery_time)++;
+  const int discovered = (*discovery_time)++;
 
   n->m_scc.m_index = discovered;
   n->m_scc.m_low_index = discovered;
@@ -3940,7 +3940,7 @@ void LO_graph::dump_one_scc(FILE *out, int scc, int number_of_scc,
     n = *node_it;
     if (n->m_scc.m_scc_number == scc) {
       scc_node_size++;
-      int girth = n->m_scc.m_scc_girth;
+      const int girth = n->m_scc.m_scc_girth;
       print_file(out, "SCC Node %s Girth %d\n", n->get_qname(), girth);
 
       if (girth > scc_circumference) {
@@ -5395,7 +5395,7 @@ const char *LO_rwlock_lock::get_class_name() const {
 
 LO_node *LO_rwlock_lock::get_state_node() const {
   const LO_rwlock_class *k = m_rwlock->get_class();
-  PSI_rwlock_operation state = get_state();
+  const PSI_rwlock_operation state = get_state();
   LO_node *n = k->get_state_node(state);
   return n;
 }
@@ -5405,7 +5405,7 @@ LO_node *LO_rwlock_lock::get_operation_node(bool recursive,
   const LO_rwlock_class *k = m_rwlock->get_class();
   LO_node *n;
   if (recursive) {
-    PSI_rwlock_operation state = get_state();
+    const PSI_rwlock_operation state = get_state();
     n = k->get_operation_node(true, state, op);
   } else {
     n = k->get_operation_node(false, PSI_RWLOCK_UNLOCK, op);
@@ -5498,7 +5498,7 @@ PSI_rwlock_operation LO_rwlock_lock_pr::get_state() const {
 }
 
 const char *LO_rwlock_lock_pr::get_state_name() const {
-  PSI_rwlock_operation state = get_state();
+  const PSI_rwlock_operation state = get_state();
   if (state == PSI_RWLOCK_READLOCK) {
     return "R";
   }
@@ -5587,7 +5587,7 @@ PSI_rwlock_operation LO_rwlock_lock_rw::get_state() const {
 }
 
 const char *LO_rwlock_lock_rw::get_state_name() const {
-  PSI_rwlock_operation state = get_state();
+  const PSI_rwlock_operation state = get_state();
   if (state == PSI_RWLOCK_READLOCK) {
     return "R";
   }
@@ -5679,7 +5679,7 @@ PSI_rwlock_operation LO_rwlock_lock_sx::get_state() const {
 }
 
 const char *LO_rwlock_lock_sx::get_state_name() const {
-  PSI_rwlock_operation state = get_state();
+  const PSI_rwlock_operation state = get_state();
   if (state == PSI_RWLOCK_SHAREDLOCK) {
     return "S";
   }
@@ -5833,7 +5833,8 @@ void LO_cond_locker::start(const char *src_file, int src_line) {
   /* Waiting on a cond gives up the mutex lock. */
   LO_thread::remove_mutex_lock(m_thread, m_mutex);
 
-  LO_cond_wait waiting_here(m_mutex, m_cond, m_src_file, m_src_line, m_thread);
+  const LO_cond_wait waiting_here(m_mutex, m_cond, m_src_file, m_src_line,
+                                  m_thread);
 
   if (m_thread != nullptr) {
     /* Make sure no other locks are taken while waiting. */
@@ -6247,7 +6248,7 @@ static PSI_mutex *lo_init_mutex(PSI_mutex_key key, const void *identity) {
     }
   } else {
     if (lo_param.m_trace_missing_key) {
-      LO_stack_trace stack;
+      const LO_stack_trace stack;
       print_file(out_log,
                  "Instrumentation Error: Mutex without a proper key.\n");
       stack.print(out_log);
@@ -6290,7 +6291,7 @@ static PSI_rwlock *lo_init_rwlock(PSI_rwlock_key key, const void *identity) {
     }
   } else {
     if (lo_param.m_trace_missing_key) {
-      LO_stack_trace stack;
+      const LO_stack_trace stack;
       print_file(out_log,
                  "Instrumentation Error: Rwlock without a proper key.\n");
       stack.print(out_log);
@@ -6331,7 +6332,7 @@ static PSI_cond *lo_init_cond(PSI_cond_key key, const void *identity) {
     }
   } else {
     if (lo_param.m_trace_missing_key) {
-      LO_stack_trace stack;
+      const LO_stack_trace stack;
       print_file(out_log,
                  "Instrumentation Error: Cond without a proper key.\n");
       stack.print(out_log);
@@ -6402,7 +6403,7 @@ static void lo_create_file(PSI_file_key key, const char *name, File file) {
 
   if (klass == nullptr) {
     if (lo_param.m_trace_missing_key) {
-      LO_stack_trace stack;
+      const LO_stack_trace stack;
       print_file(out_log,
                  "Instrumentation Error: file without a proper key.\n");
       stack.print(out_log);
@@ -6413,7 +6414,7 @@ static void lo_create_file(PSI_file_key key, const char *name, File file) {
     return;
   }
 
-  int index = (int)file;
+  const int index = (int)file;
   if (index >= 0) {
     LO_file *lo_file = new LO_file(klass);
     lo_file_bindings_insert(index, lo_file);
@@ -6774,7 +6775,7 @@ static PSI_file_locker *lo_get_thread_file_name_locker(
   LO_file_class *klass = LO_file_class::find_by_key(key);
   if (klass == nullptr) {
     if (lo_param.m_trace_missing_key) {
-      LO_stack_trace stack;
+      const LO_stack_trace stack;
       print_file(out_log,
                  "Instrumentation Error: file without a proper key.\n");
       stack.print(out_log);
@@ -6842,7 +6843,7 @@ static PSI_file_locker *lo_get_thread_file_descriptor_locker(
   LO_thread *lo_thread = get_THR_LO();
   LO_file *lo_file = nullptr;
 
-  int index = (int)file;
+  const int index = (int)file;
   if (index >= 0) {
     /*
       See comment in pfs_get_thread_file_descriptor_locker().
@@ -6854,7 +6855,7 @@ static PSI_file_locker *lo_get_thread_file_descriptor_locker(
       conditions with another thread opening a file
       (that could be given the same descriptor).
     */
-    bool remove = (op == PSI_FILE_CLOSE);
+    const bool remove = (op == PSI_FILE_CLOSE);
 
     lo_file = lo_file_bindings_find(index, remove);
 
@@ -7437,6 +7438,20 @@ void lo_drop_sp(uint sp_type, const char *schema_name, uint schema_name_length,
   }
 }
 
+void lo_notify_statement_query_attributes(struct PSI_statement_locker *locker,
+                                          bool with_query_attributes) {
+  if (g_statement_chain != nullptr) {
+    g_statement_chain->notify_statement_query_attributes(locker,
+                                                         with_query_attributes);
+  }
+}
+
+void lo_statement_abort_telemetry(struct PSI_statement_locker *locker) {
+  if (g_statement_chain != nullptr) {
+    g_statement_chain->statement_abort_telemetry(locker);
+  }
+}
+
 static void lo_start_file_open_wait(PSI_file_locker *locker,
                                     const char *src_file, uint src_line) {
   LO_file_locker *lo_locker = reinterpret_cast<LO_file_locker *>(locker);
@@ -7494,7 +7509,7 @@ static void lo_end_file_open_wait_and_bind_to_descriptor(
   assert(lo_locker != nullptr);
   PSI_file_locker *chain_locker = lo_locker->m_chain_locker;
 
-  int index = (int)file;
+  const int index = (int)file;
   if (index >= 0) {
     LO_file *lo_file = new LO_file(lo_locker->m_class);
     lo_file_bindings_insert(index, lo_file);
@@ -7513,7 +7528,7 @@ static void lo_end_temp_file_open_wait_and_bind_to_descriptor(
   assert(lo_locker != nullptr);
   PSI_file_locker *chain_locker = lo_locker->m_chain_locker;
 
-  int index = (int)file;
+  const int index = (int)file;
   if (index >= 0) {
     LO_file *lo_file = new LO_file(lo_locker->m_class);
     lo_file_bindings_insert(index, lo_file);
@@ -7745,7 +7760,27 @@ static void lo_set_mem_cnt_THD(THD *thd, THD **backup_thd) {
   }
 }
 
-PSI_thread_service_v6 LO_thread_v6 = {lo_register_thread,
+static void lo_detect_telemetry(PSI_thread *thread) {
+  LO_thread *lo = reinterpret_cast<LO_thread *>(thread);
+
+  if (lo != nullptr) {
+    if ((g_thread_chain != nullptr) && (lo->m_chain != nullptr)) {
+      g_thread_chain->detect_telemetry(lo->m_chain);
+    }
+  }
+}
+
+static void lo_abort_telemetry(PSI_thread *thread) {
+  LO_thread *lo = reinterpret_cast<LO_thread *>(thread);
+
+  if (lo != nullptr) {
+    if ((g_thread_chain != nullptr) && (lo->m_chain != nullptr)) {
+      g_thread_chain->abort_telemetry(lo->m_chain);
+    }
+  }
+}
+
+PSI_thread_service_v7 LO_thread_v7 = {lo_register_thread,
                                       lo_spawn_thread,
                                       lo_new_thread,
                                       lo_set_thread_id,
@@ -7780,7 +7815,9 @@ PSI_thread_service_v6 LO_thread_v6 = {lo_register_thread,
                                       lo_notify_session_connect,
                                       lo_notify_session_disconnect,
                                       lo_notify_session_change_user,
-                                      lo_set_mem_cnt_THD};
+                                      lo_set_mem_cnt_THD,
+                                      lo_detect_telemetry,
+                                      lo_abort_telemetry};
 
 static void *lo_get_thread_interface(int version) {
   switch (version) {
@@ -7789,9 +7826,10 @@ static void *lo_get_thread_interface(int version) {
     case PSI_THREAD_VERSION_3:
     case PSI_THREAD_VERSION_4:
     case PSI_THREAD_VERSION_5:
-      return nullptr;
     case PSI_THREAD_VERSION_6:
-      return &LO_thread_v6;
+      return nullptr;
+    case PSI_THREAD_VERSION_7:
+      return &LO_thread_v7;
     default:
       return nullptr;
   }
@@ -7889,7 +7927,7 @@ static void *lo_get_idle_interface(int version) {
 
 struct PSI_idle_bootstrap LO_idle_bootstrap = {lo_get_idle_interface};
 
-PSI_statement_service_v3 LO_statement_v3 = {
+PSI_statement_service_v5 LO_statement_v5 = {
     lo_register_statement,
     lo_get_thread_statement_locker,
     lo_refine_statement,
@@ -7926,15 +7964,19 @@ PSI_statement_service_v3 LO_statement_v3 = {
     lo_release_sp_share,
     lo_start_sp,
     lo_end_sp,
-    lo_drop_sp};
+    lo_drop_sp,
+    lo_notify_statement_query_attributes,
+    lo_statement_abort_telemetry};
 
 static void *lo_get_statement_interface(int version) {
   switch (version) {
     case PSI_STATEMENT_VERSION_1:
     case PSI_STATEMENT_VERSION_2:
-      return nullptr;
     case PSI_STATEMENT_VERSION_3:
-      return &LO_statement_v3;
+    case PSI_STATEMENT_VERSION_4:
+      return nullptr;
+    case PSI_STATEMENT_VERSION_5:
+      return &LO_statement_v5;
     default:
       return nullptr;
   }
@@ -7967,7 +8009,7 @@ int LO_init(LO_global_param *param, PSI_thread_bootstrap **thread_bootstrap,
   global_graph = new LO_graph();
 
   char filename[1024];
-  time_t now = time(nullptr);
+  const time_t now = time(nullptr);
 
   /*
     Have to use time + pid,

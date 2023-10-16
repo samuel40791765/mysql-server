@@ -1,4 +1,4 @@
-/* Copyright (c) 2006, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -41,7 +41,6 @@
 #include <atomic>
 
 #include "lf.h"
-#include "m_ctype.h"
 #include "my_atomic.h"
 #include "my_bit.h"
 #include "my_compiler.h"
@@ -49,6 +48,7 @@
 #include "my_inttypes.h"
 #include "my_sys.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysys/mysys_priv.h"
 #include "template_utils.h"
 
@@ -228,6 +228,7 @@ retry:
   @param cursor        Cursor to be position.
   @param pins          LF_PINS for the calling thread to be used during
                        search for pinning result.
+  @param match_arg     Argument passed to match function.
 
   @retval 0 - not found
   @retval 1 - found
@@ -235,7 +236,7 @@ retry:
 
 static int my_lfind_match(std::atomic<LF_SLIST *> *head, uint32 first_hashnr,
                           uint32 last_hashnr, lf_hash_match_func *match,
-                          CURSOR *cursor, LF_PINS *pins) {
+                          CURSOR *cursor, LF_PINS *pins, void *match_arg) {
   uint32 cur_hashnr;
   LF_SLIST *link;
 
@@ -269,7 +270,7 @@ retry:
 
         if (cur_hashnr & 1) {
           /* Normal node. Check if element matches condition. */
-          if ((*match)((uchar *)(cursor->curr + 1))) {
+          if ((*match)((uchar *)(cursor->curr + 1), match_arg)) {
             return 1;
           }
         } else {
@@ -343,7 +344,7 @@ static LF_SLIST *linsert(std::atomic<LF_SLIST *> *head, lf_cmp_func *cmp_func,
   lf_unpin(pins, 2);
   /*
     Note that cursor.curr is not pinned here and the pointer is unreliable,
-    the object may dissapear anytime. But if it points to a dummy node, the
+    the object may disappear anytime. But if it points to a dummy node, the
     pointer is safe, because dummy nodes are never freed - initialize_bucket()
     uses this fact.
   */
@@ -418,7 +419,8 @@ static LF_SLIST *my_lsearch(std::atomic<LF_SLIST *> *head,
                             uint32 hashnr, const uchar *key, uint keylen,
                             LF_PINS *pins) {
   CURSOR cursor;
-  int res = my_lfind(head, cmp_func, cs, hashnr, key, keylen, &cursor, pins);
+  const int res =
+      my_lfind(head, cmp_func, cs, hashnr, key, keylen, &cursor, pins);
   if (res) {
     lf_pin(pins, 2, cursor.curr);
   }
@@ -465,19 +467,20 @@ static uint cset_hash_sort_adapter(const LF_HASH *hash, const uchar *key,
 /*
   Initializes lf_hash, the arguments are compatible with hash_init
 
-  @note element_size sets both the size of allocated memory block for
-  lf_alloc and a size of memcpy'ed block size in lf_hash_insert. Typically
-  they are the same, indeed. But LF_HASH::element_size can be decreased
+  @note element_size sets both the size of an allocated memory block for
+  lf_alloc and a size of memcpy'ed block size in lf_hash_insert. Typically,
+  however, they are the same. But LF_HASH::element_size can be decreased
   after lf_hash_init, and then lf_alloc will allocate larger block that
-  lf_hash_insert will copy over. It is desireable if part of the element
-  is expensive to initialize - for example if there is a mutex or
-  DYNAMIC_ARRAY. In this case they should be initialize in the
+  lf_hash_insert will copy over. It is desirable if part of the element
+  is expensive to initialize - for example, if there is a mutex or
+  DYNAMIC_ARRAY. In this case, they should be initialized in the
   LF_ALLOCATOR::constructor, and lf_hash_insert should not overwrite them.
   See wt_init() for example.
   As an alternative to using the above trick with decreasing
-  LF_HASH::element_size one can provide an "initialize" hook that will finish
-  initialization of object provided by LF_ALLOCATOR and set element key from
-  object passed as parameter to lf_hash_insert instead of doing simple memcpy.
+  LF_HASH::element_size, one can provide an "initialize" hook that will finish
+  initialization of an object provided by LF_ALLOCATOR and set the element key
+  from the object passed as parameter to lf_hash_insert instead of doing simple
+  memcpy.
 */
 void lf_hash_init_impl(LF_HASH *hash, uint element_size, uint flags,
                        uint key_offset, uint key_length,
@@ -715,6 +718,7 @@ void *lf_hash_search(LF_HASH *hash, LF_PINS *pins, const void *key,
   @param rand_val  Random value to be used for selecting hash
                    bucket from which search in sort-ordered
                    list needs to be started.
+  @param match_arg Argument passed to match function.
 
   @retval A pointer to a random element matching condition.
   @retval NULL         - if nothing is found
@@ -730,9 +734,10 @@ void *lf_hash_search(LF_HASH *hash, LF_PINS *pins, const void *key,
 */
 
 void *lf_hash_random_match(LF_HASH *hash, LF_PINS *pins,
-                           lf_hash_match_func *match, uint rand_val) {
+                           lf_hash_match_func *match, uint rand_val,
+                           void *match_arg) {
   /* Convert random value to valid hash value. */
-  uint hashnr = (rand_val & INT_MAX32);
+  const uint hashnr = (rand_val & INT_MAX32);
   uint bucket;
   uint32 rev_hashnr;
   std::atomic<LF_SLIST *> *el;
@@ -764,7 +769,8 @@ void *lf_hash_random_match(LF_HASH *hash, LF_PINS *pins,
     looking for elements with inversed hash value greater or equal than
     inversed value of our random hash.
   */
-  res = my_lfind_match(el, rev_hashnr | 1, UINT_MAX32, match, &cursor, pins);
+  res = my_lfind_match(el, rev_hashnr | 1, UINT_MAX32, match, &cursor, pins,
+                       match_arg);
 
   if (!res && hashnr != 0) {
     /*
@@ -782,7 +788,7 @@ void *lf_hash_random_match(LF_HASH *hash, LF_PINS *pins,
     if (unlikely(!el)) {
       return MY_LF_ERRPTR;
     }
-    res = my_lfind_match(el, 1, rev_hashnr, match, &cursor, pins);
+    res = my_lfind_match(el, 1, rev_hashnr, match, &cursor, pins, match_arg);
   }
 
   if (res) {
@@ -803,7 +809,7 @@ static const uchar *dummy_key = pointer_cast<const uchar *>("");
 */
 static int initialize_bucket(LF_HASH *hash, std::atomic<LF_SLIST *> *node,
                              uint bucket, LF_PINS *pins) {
-  uint parent = my_clear_highest_bit(bucket);
+  const uint parent = my_clear_highest_bit(bucket);
   LF_SLIST *dummy =
       (LF_SLIST *)my_malloc(key_memory_lf_slist, sizeof(LF_SLIST), MYF(MY_WME));
   if (unlikely(!dummy)) {

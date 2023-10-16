@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,6 +25,9 @@
 
 #ifndef ut0core_h
 #define ut0core_h
+
+#include <string.h>
+#include <sstream>
 
 #include "ut0dbg.h"
 

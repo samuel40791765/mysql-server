@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "plugin/group_replication/include/gcs_plugin_messages.h"
+#include "plugin/group_replication/include/plugin_psi.h"
+#include "sql/malloc_allocator.h"
 
 class Group_service_message : public Plugin_gcs_message {
  public:
@@ -40,8 +42,12 @@ class Group_service_message : public Plugin_gcs_message {
     // Length of the payload item: variable
     PIT_DATA = 2,
 
+    // Length of the payload item: 8 bytes
+    PIT_SENT_TIMESTAMP = 3,
+
     // No valid type codes can appear after this one.
-    PIT_MAX = 3
+    // message was sent.
+    PIT_MAX = 4
   };
 
   /**
@@ -111,6 +117,18 @@ class Group_service_message : public Plugin_gcs_message {
   */
   size_t get_tag_length() { return m_tag.length(); }
 
+  /**
+    Return the time at which the message contained in the buffer was sent.
+    @see Metrics_handler::get_current_time()
+
+    @param[in] buffer            the buffer to decode from.
+    @param[in] length            the buffer length
+
+    @return the time on which the message was sent.
+  */
+  static uint64_t get_sent_timestamp(const unsigned char *buffer,
+                                     size_t length);
+
  protected:
   /**
     Encodes the group service message contents for transmission.
@@ -131,7 +149,7 @@ class Group_service_message : public Plugin_gcs_message {
   /**The message identifier*/
   std::string m_tag;
   /**The message data*/
-  std::vector<uchar> m_data;
+  std::vector<uchar, Malloc_allocator<uchar>> m_data;
   /**
      A pointer to the message data, memory ownership belongs to the
      message creator.

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2012, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2012, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -50,6 +50,7 @@
 #include "my_rnd.h"
 #include "mysql/service_mysql_alloc.h"
 #include "mysys/my_default_priv.h"
+#include "nulls.h"
 #include "print_version.h"
 #include "welcome_copyright_notice.h"
 

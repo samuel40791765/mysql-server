@@ -1,4 +1,4 @@
-/* Copyright (c) 2004, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -60,7 +60,7 @@ void set_timespec_nsec(struct timespec *abstime, Timeout_type nsec) {
     *abstime = TIMESPEC_POSINF;
     return;
   }
-  unsigned long long int now = my_getsystime() + (nsec / 100);
+  const unsigned long long int now = my_getsystime() + (nsec / 100);
   unsigned long long int tv_sec = now / 10000000ULL;
 #if SIZEOF_TIME_T < SIZEOF_LONG_LONG
   /* Ensure that the number of seconds don't overflow. */

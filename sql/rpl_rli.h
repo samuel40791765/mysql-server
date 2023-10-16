@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,22 +29,22 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "lex_string.h"
 #include "libbinlogevents/include/binlog_event.h"
-#include "m_string.h"
 #include "map_helpers.h"
 #include "my_bitmap.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_psi_config.h"
 #include "my_sys.h"
 #include "mysql/components/services/bits/mysql_cond_bits.h"
 #include "mysql/components/services/bits/mysql_mutex_bits.h"
 #include "mysql/components/services/bits/psi_mutex_bits.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql/thread_type.h"
 #include "prealloced_array.h"  // Prealloced_array
@@ -62,6 +62,7 @@
 #include "sql/sql_class.h"    // THD
 #include "sql/system_variables.h"
 #include "sql/table.h"
+#include "strmake.h"
 
 class Commit_order_manager;
 class Master_info;
@@ -103,7 +104,7 @@ class Assign_gtids_to_anonymous_transactions_info {
   */
   enum class enum_type { AGAT_OFF = 1, AGAT_LOCAL, AGAT_UUID };
   /**
-    The default constructor intializes the parameter to their default value
+    The default constructor initializes parameters to their default value
   */
   Assign_gtids_to_anonymous_transactions_info() {
     set_info(enum_type::AGAT_OFF, "");
@@ -138,7 +139,7 @@ Relay_log_info contains:
   - misc information specific to the SQL thread
 
 Relay_log_info is initialized from a repository, i.e. table or file, if there is
-one. Otherwise, data members are intialized with defaults by calling
+one. Otherwise, data members are initialized with defaults by calling
 init_relay_log_info().
 
 The relay.info table/file shall be updated whenever: (i) the relay log file
@@ -227,7 +228,7 @@ class Relay_log_info : public Rpl_info {
      */
     USER_DOES_NOT_EXIST,
     /**
-      Provided user doesn't have the necesary privileges to execute the needed
+      Provided user doesn't have the necessary privileges to execute the needed
       operations.
      */
     USER_DOES_NOT_HAVE_PRIVILEGES,
@@ -263,20 +264,22 @@ class Relay_log_info : public Rpl_info {
   };
 
   /**
-    Identifies what is the slave policy on primary keys in tables.
+    Identifies what is the replica policy on primary keys in tables.
   */
   enum enum_require_table_primary_key {
     /**No policy, used on PFS*/
     PK_CHECK_NONE = 0,
     /**
-      The slave sets the value of sql_require_primary_key according to
+      The replica sets the value of sql_require_primary_key according to
       the source replicated value.
     */
     PK_CHECK_STREAM = 1,
-    /** The slave enforces tables to have primary keys for a given channel*/
+    /** The replica enforces tables to have primary keys for a given channel*/
     PK_CHECK_ON = 2,
-    /** The slave does not enforce any policy around primary keys*/
-    PK_CHECK_OFF = 3
+    /** The replica does not enforce any policy around primary keys*/
+    PK_CHECK_OFF = 3,
+    /** The replica generates GIPKs for incoming keyless tables*/
+    PK_CHECK_GENERATE = 4
   };
 
   /**
@@ -623,7 +626,8 @@ class Relay_log_info : public Rpl_info {
      replicated tables.
 
      @return STREAM if it replicates the source values, ON if it enforces the
-             need on primary keys, OFF if it does no enforce any restrictions.
+             need on primary keys, OFF if it does no enforce any restrictions,
+             GENERATE if a GIPK is added to the table.
    */
   enum_require_table_primary_key get_require_table_primary_key_check() const;
 
@@ -663,7 +667,7 @@ class Relay_log_info : public Rpl_info {
     Let's call a group (of events) :
       - a transaction
       or
-      - an autocommiting query + its associated events (INSERT_ID,
+      - an autocommitting query + its associated events (INSERT_ID,
     TIMESTAMP...)
     We need these rli coordinates :
     - relay log name and position of the beginning of the group we currently are
@@ -673,7 +677,7 @@ class Relay_log_info : public Rpl_info {
     executed. This event is part of the current group.
     Formerly we only had the immediately above coordinates, plus a 'pending'
     variable, but this dealt wrong with the case of a transaction starting on a
-    relay log and finishing (commiting) on another relay log. Case which can
+    relay log and finishing (committing) on another relay log. Case which can
     happen when, for example, the relay log gets rotated because of
     max_binlog_size.
   */
@@ -699,6 +703,36 @@ class Relay_log_info : public Rpl_info {
   ulonglong event_relay_log_pos;
   ulonglong future_event_relay_log_pos;
 
+ public:
+  /**
+     Process an event and based on its type () set group beginning and end
+     @param ev - event within a group (including first and last)
+   */
+  void set_group_source_log_start_end_pos(const Log_event *ev);
+  /**
+     Get event group positions in source binary log on a replica which is
+     processed by a worker in MTA or coordinator in STA.
+     @return source event group start and end position in binary log
+   */
+  std::tuple<ulonglong, ulonglong> get_group_source_log_start_end_pos() const;
+
+ private:
+  /**
+   * Event group beginning event has been seen. Event group may begin with two
+   * events marked as beginning.
+   * @see set_group_source_log_start_end_pos
+   */
+  bool group_source_log_seen_start_pos;
+  /**
+   * @see set_group_source_log_start_end_pos, get_group_source_log_start_end_pos
+   */
+  ulonglong group_source_log_start_pos;
+  /**
+   * @see set_group_source_log_start_end_pos, get_group_source_log_start_end_pos
+   */
+  ulonglong group_source_log_end_pos;
+
+ protected:
   /* current event's start position in relay log */
   my_off_t event_start_pos;
   /*
@@ -784,6 +818,8 @@ class Relay_log_info : public Rpl_info {
     or alter operation that does not have a primary key.
     If set to OFF it does not enforce any policies on the channel for primary
     keys.
+    If set to GENERATE it adds GIPKs to tables that are created without a PK
+    in the replica applier threads.
   */
   enum_require_table_primary_key m_require_table_primary_key_check;
 
@@ -939,7 +975,7 @@ class Relay_log_info : public Rpl_info {
   ulonglong ign_master_log_pos_end;
 
   /*
-    Indentifies where the SQL Thread should create temporary files for the
+    Identifies where the SQL Thread should create temporary files for the
     LOAD DATA INFILE. This is used for security reasons.
    */
   char slave_patternload_file[FN_REFLEN];
@@ -1041,20 +1077,20 @@ class Relay_log_info : public Rpl_info {
 
   void close_temporary_tables();
 
-  RPL_TABLE_LIST *tables_to_lock; /* RBR: Tables to lock  */
-  uint tables_to_lock_count;      /* RBR: Count of tables to lock */
-  table_mapping m_table_map;      /* RBR: Mapping table-id to table */
+  RPL_Table_ref *tables_to_lock; /* RBR: Tables to lock  */
+  uint tables_to_lock_count;     /* RBR: Count of tables to lock */
+  table_mapping m_table_map;     /* RBR: Mapping table-id to table */
   /* RBR: Record Rows_query log event */
   Rows_query_log_event *rows_query_ev;
 
   bool get_table_data(TABLE *table_arg, table_def **tabledef_var,
                       TABLE **conv_table_var) const {
     assert(tabledef_var && conv_table_var);
-    for (TABLE_LIST *ptr = tables_to_lock; ptr != nullptr;
+    for (Table_ref *ptr = tables_to_lock; ptr != nullptr;
          ptr = ptr->next_global)
       if (ptr->table == table_arg) {
-        *tabledef_var = &static_cast<RPL_TABLE_LIST *>(ptr)->m_tabledef;
-        *conv_table_var = static_cast<RPL_TABLE_LIST *>(ptr)->m_conv_table;
+        *tabledef_var = &static_cast<RPL_Table_ref *>(ptr)->m_tabledef;
+        *conv_table_var = static_cast<RPL_Table_ref *>(ptr)->m_conv_table;
         DBUG_PRINT("debug", ("Fetching table data for table %s.%s:"
                              " tabledef: %p, conv_table: %p",
                              table_arg->s->db.str, table_arg->s->table_name.str,
@@ -1138,9 +1174,9 @@ class Relay_log_info : public Rpl_info {
   /*
     This flag is turned ON when the workers array is initialized.
     Before destroying the workers array we check this flag to make sure
-    we are not destroying an unitilized array. For the purpose of reporting the
-    worker status in performance schema table, we need to preserve the workers
-    array after worker thread was killed. So, we copy this array into
+    we are not destroying an uninitialized array. For the purpose of reporting
+    the worker status in performance schema table, we need to preserve the
+    workers array after worker thread was killed. So, we copy this array into
     workers_copy_pfs array which is used for reporting until next
     init_workers().
   */
@@ -1208,7 +1244,7 @@ class Relay_log_info : public Rpl_info {
   bool mts_recovery_group_seen_begin;
 
   /*
-    While distibuting events basing on their properties MTS
+    While distributing events based on their properties MTS
     Coordinator changes its mts group status.
     Transition normally flowws to follow `=>' arrows on the diagram:
 
@@ -1243,7 +1279,7 @@ class Relay_log_info : public Rpl_info {
   ulong wq_size_waits_cnt;  // number of times C slept due to WQ:s oversize
   /*
     Counter of how many times Coordinator saw Workers are filled up
-    "enough" with assignements. The enough definition depends on
+    "enough" with assignments. The enough definition depends on
     the scheduler type.
   */
   ulong mts_wq_no_underrun_cnt;
@@ -1266,6 +1302,8 @@ class Relay_log_info : public Rpl_info {
   struct timespec stats_begin;  // applier's bootstrap time
 
   time_t mts_last_online_stat;
+  /// Last moment in time the MTA printed a coordinator waited stats
+  time_t mta_coordinator_has_waited_stat;
   /* end of MTS statistics */
 
   /**
@@ -1798,7 +1836,7 @@ class Relay_log_info : public Rpl_info {
  private:
   /*
     Commit order manager to order commits made by its workers. In context of
-    Multi Source Replication each worker will be ordered by the coresponding
+    Multi Source Replication each worker will be ordered by the corresponding
     corrdinator's order manager.
    */
   Commit_order_manager *commit_order_mngr;
@@ -1994,7 +2032,7 @@ class Relay_log_info : public Rpl_info {
     which is not atomic DDL and has no XID assigned. Checked at commit
     time to decide whether it is safe to update slave info table
     within the same transaction as the write to binary log or this
-    should be deffered. The deffered scenario applies for not XIDed events
+    should be deferred. The deferred scenario applies for not XIDed events
     in which case such update might be lost on recovery.
   */
   bool ddl_not_atomic;
@@ -2032,7 +2070,7 @@ class Relay_log_info : public Rpl_info {
            until_option->is_satisfied_after_dispatching_event();
   }
   /**
-   Intialize until option object when starting slave.
+   Initialize until option object when starting slave.
 
    @param[in] thd The thread object of current session.
    @param[in] master_param the parameters of START SLAVE.
@@ -2179,7 +2217,7 @@ inline bool is_committed_ddl(Log_event *ev) {
   is always correct.
 
   @param  thd   a pointer to THD describing the transaction context
-  @return true  when a slave applier thread is set to commmit being processed
+  @return true  when a slave applier thread is set to commit being processed
                 DDL query-log-event, otherwise returns false.
 */
 inline bool is_atomic_ddl_commit_on_slave(THD *thd) {
@@ -2381,9 +2419,9 @@ class Applier_security_context_guard {
   /**
     Checks if the `PRIVILEGE_CHECKS_USER` user has access to the privilieges
     passed on by `extra_privileges` parameter as well as to the privileges
-    passed on at initilization time.
+    passed on at initialization time.
 
-    This particular method checks those privileges agains a given table and
+    This particular method checks those privileges against a given table and
     against that table's columns - the ones that are used or changed in the
     event.
 
@@ -2400,7 +2438,7 @@ class Applier_security_context_guard {
   /**
     Checks if the `PRIVILEGE_CHECKS_USER` user has access to the privilieges
     passed on by `extra_privileges` parameter as well as to the privileges
-    passed on at initilization time.
+    passed on at initialization time.
 
     @param extra_privileges set of privileges to check, additionally to those
                             passed on at initialization. It's a list of
@@ -2415,7 +2453,7 @@ class Applier_security_context_guard {
   /**
     Checks if the `PRIVILEGE_CHECKS_USER` user has access to the privilieges
     passed on by `extra_privileges` parameter as well as to the privileges
-    passed on at initilization time.
+    passed on at initialization time.
 
     @param extra_privileges set of privileges to check, additionally to those
                             passed on at initialization. It's a list of

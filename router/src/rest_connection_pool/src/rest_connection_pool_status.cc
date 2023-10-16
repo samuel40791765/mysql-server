@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -36,8 +36,6 @@
 #include "mysqlrouter/connection_pool.h"
 #include "mysqlrouter/connection_pool_component.h"
 #include "mysqlrouter/rest_api_utils.h"
-
-constexpr const char RestConnectionPoolStatus::path_regex[];
 
 bool RestConnectionPoolStatus::on_handle_request(
     HttpRequest &req, const std::string & /* base_path */,

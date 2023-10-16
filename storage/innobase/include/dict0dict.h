@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -35,6 +35,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #define dict0dict_h
 
 #include <set>
+#include <vector>
 
 #include <deque>
 #include "data0data.h"
@@ -49,6 +50,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "rem0types.h"
 #include "row0types.h"
 #include "sql/dd/object_id.h"
+#include "srv0mon.h" /* for dict0dict.ic */
 #include "sync0rw.h"
 #include "trx0types.h"
 #include "univ.i"
@@ -599,7 +601,12 @@ static inline void dict_table_x_unlock_indexes(
  @return true if table has an FTS index */
 [[nodiscard]] static inline bool dict_table_has_fts_index(
     dict_table_t *table); /*!< in: table */
-#endif                    /* !UNIV_HOTBACKUP */
+#ifdef UNIV_DEBUG
+/** Validate no active background threads to cause purge or rollback
+ operations. */
+void dict_validate_no_purge_rollback_threads();
+#endif /* UNIV_DEBUG */
+#endif /* !UNIV_HOTBACKUP */
 /** Checks if a column is in the ordering columns of the clustered index of a
  table. Column prefixes are treated like whole columns.
  @return true if the column, or its prefix, is in the clustered key */
@@ -1014,7 +1021,7 @@ struct dict_sys_t {
                                on name */
   hash_table_t *table_id_hash; /*!< hash table of the tables, based
                                on id */
-  lint size;                   /*!< varying space in bytes occupied
+  size_t size;                 /*!< varying space in bytes occupied
                                by the data dictionary table and
                                index objects */
   /** Handler to sys_* tables, they're only for upgrade */
@@ -1050,7 +1057,7 @@ struct dict_sys_t {
     const auto n_cells = hash->get_n_cells();
     for (ulint i = 0; i < n_cells; i++) {
       for (dict_table_t *table =
-               static_cast<dict_table_t *>(HASH_GET_FIRST(hash, i));
+               static_cast<dict_table_t *>(hash_get_first(hash, i));
            table;
            table = static_cast<dict_table_t *>(HASH_GET_NEXT(id_hash, table))) {
         functor(table);
@@ -1081,7 +1088,7 @@ struct dict_sys_t {
   }
 
   /** The first ID of the redo log pseudo-tablespace */
-  static constexpr space_id_t s_log_space_first_id = 0xFFFFFFF0UL;
+  static constexpr space_id_t s_log_space_id = 0xFFFFFFF0UL;
 
   /** Use maximum UINT value to indicate invalid space ID. */
   static constexpr space_id_t s_invalid_space_id = 0xFFFFFFFF;
@@ -1097,10 +1104,10 @@ struct dict_sys_t {
 
   /** The lowest undo tablespace ID. */
   static constexpr space_id_t s_min_undo_space_id =
-      s_log_space_first_id - (FSP_MAX_UNDO_TABLESPACES * s_undo_space_id_range);
+      s_log_space_id - (FSP_MAX_UNDO_TABLESPACES * s_undo_space_id_range);
 
   /** The highest undo tablespace ID. */
-  static constexpr space_id_t s_max_undo_space_id = s_log_space_first_id - 1;
+  static constexpr space_id_t s_max_undo_space_id = s_log_space_id - 1;
 
   /** Start space_ids for temporary tablespaces. */
   static constexpr space_id_t s_max_temp_space_id = s_min_undo_space_id - 1;
@@ -1230,18 +1237,19 @@ void dict_ind_init(void);
 
 /** Converts a database and table name from filesystem encoding (e.g.
 "@code d@i1b/a@q1b@1Kc @endcode", same format as used in  dict_table_t::name)
-in two strings in UTF8 encoding (e.g. dцb and aюbØc). The output buffers must
-be at least MAX_DB_UTF8_LEN and MAX_TABLE_UTF8_LEN bytes.
+in two strings in UTF8MB3 encoding (e.g. dцb and aюbØc). The output buffers must
+be at least MAX_DB_UTF8MB3_LEN and MAX_TABLE_UTF8MB3_LEN bytes.
 @param[in]      db_and_table    database and table names,
                                 e.g. "@code d@i1b/a@q1b@1Kc @endcode"
-@param[out]     db_utf8         database name, e.g. dцb
-@param[in]      db_utf8_size    dbname_utf8 size
-@param[out]     table_utf8      table name, e.g. aюbØc
-@param[in]      table_utf8_size table_utf8 size */
-void dict_fs2utf8(const char *db_and_table, char *db_utf8, size_t db_utf8_size,
-                  char *table_utf8, size_t table_utf8_size);
+@param[out]     db_utf8mb3         database name, e.g. dцb
+@param[in]      db_utf8mb3_size    db_utf8mb3 size
+@param[out]     table_utf8mb3      table name, e.g. aюbØc
+@param[in]      table_utf8mb3_size table_utf8mb3 size */
+void dict_fs2utf8(const char *db_and_table, char *db_utf8mb3,
+                  size_t db_utf8mb3_size, char *table_utf8mb3,
+                  size_t table_utf8mb3_size);
 
-/** Resize the hash tables besed on the current buffer pool size. */
+/** Resize the hash tables based on the current buffer pool size. */
 void dict_resize();
 
 /** Wrapper for the mysql.innodb_dynamic_metadata used to buffer the persistent
@@ -1280,9 +1288,9 @@ class DDTableBuffer {
   has to delete the returned std::string object by ut::delete_
   @param[in]    id      table id
   @param[out]   version table dynamic metadata version
-  @return the metadata saved in a string object, if nothing, the
-  string would be of length 0 */
-  std::string *get(table_id_t id, uint64_t *version);
+  @return the metadata saved in a vector object, if nothing, the
+  vector would be empty */
+  std::vector<byte> get(table_id_t id, uint64_t *version);
 
  private:
   /** Initialize m_index, the in-memory clustered index of the table
@@ -1395,18 +1403,7 @@ void dict_table_load_dynamic_metadata(dict_table_t *table);
 write dirty persistent data of table to mysql.innodb_dynamic_metadata
 accordingly. */
 void dict_persist_to_dd_table_buffer();
-#endif /* !UNIV_HOTBACKUP */
 
-/** Apply the persistent dynamic metadata read from redo logs or
-DDTableBuffer to corresponding table during recovery.
-@param[in,out]  table           table
-@param[in]      metadata        structure of persistent metadata
-@return true if we do apply something to the in-memory table object,
-otherwise false */
-bool dict_table_apply_dynamic_metadata(dict_table_t *table,
-                                       const PersistentTableMetadata *metadata);
-
-#ifndef UNIV_HOTBACKUP
 /** Sets merge_threshold in the SYS_INDEXES
 @param[in,out]  index           index
 @param[in]      merge_threshold value to set */

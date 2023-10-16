@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,20 +29,21 @@
 #include <mysql/components/my_service.h>
 #include <mysql/components/services/component_sys_var_service.h>
 #include <mysql/components/services/group_replication_status_service.h>
-#include "m_string.h"
+#include "libbinlogevents/include/binlog_event.h"  // binary_log::max_log_event_size
 #include "my_dbug.h"
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_sys.h"
+#include "my_systime.h"
+#include "my_time.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/plugin.h"
 #include "mysql/plugin_group_replication.h"
 #include "mysql/service_mysql_alloc.h"
 #include "mysqld_error.h"       // ER_*
 #include "sql/clone_handler.h"  // is_data_dropped
 #include "sql/log.h"
-#include "sql/log_event.h"           // MAX_MAX_ALLOWED_PACKET
 #include "sql/mysqld.h"              // mysqld_port
 #include "sql/mysqld_thd_manager.h"  // Global_THD_manager
 #include "sql/replication.h"         // Trans_context_info
@@ -56,6 +57,8 @@
 #include "sql/sql_plugin_ref.h"
 #include "sql/ssl_init_callback.h"
 #include "sql/system_variables.h"  // System_variables
+#include "sql/tztime.h"            // my_tz_UTC
+#include "string_with_len.h"
 
 REQUIRES_SERVICE_PLACEHOLDER(component_sys_variable_register);
 REQUIRES_SERVICE_PLACEHOLDER(component_sys_variable_unregister);
@@ -166,7 +169,7 @@ int group_replication_start(char **error_message, THD *thd) {
         (st_mysql_group_replication *)plugin_decl(plugin)->info;
     /*
       is_running check is required below before storing credentials.
-      Check makes sure runing instance of START GR is not impacted by
+      Check makes sure running instance of START GR is not impacted by
       temporary storage of credentials or if storing credential failed
       message is meaningful.
       e.g. of credential conflict blocked by below check
@@ -556,7 +559,6 @@ bool is_gtid_committed(const Gtid &gtid) {
 bool wait_for_gtid_set_committed(const char *gtid_set_text, double timeout,
                                  bool update_thd_status) {
   THD *thd = current_thd;
-  assert(!thd->slave_thread);
   Gtid_set wait_for_gtid_set(global_sid_map, nullptr);
 
   global_sid_lock->rdlock();
@@ -592,7 +594,7 @@ unsigned long get_replica_max_allowed_packet() {
 }
 
 unsigned long get_max_replica_max_allowed_packet() {
-  return MAX_MAX_ALLOWED_PACKET;
+  return binary_log::max_log_event_size;
 }
 
 bool is_server_restarting_after_clone() { return clone_startup; }
@@ -695,4 +697,14 @@ bool is_group_replication_member_secondary() {
 
   srv_registry->release(gr_status_service_handler);
   return is_a_secondary;
+}
+
+void microseconds_to_datetime_str(uint64_t microseconds_since_epoch,
+                                  char *datetime_str, uint decimal_precision) {
+  my_timeval time_value;
+  my_micro_time_to_timeval(microseconds_since_epoch, &time_value);
+
+  MYSQL_TIME mysql_time;
+  my_tz_UTC->gmt_sec_to_TIME(&mysql_time, time_value);
+  my_datetime_to_str(mysql_time, datetime_str, decimal_precision);
 }

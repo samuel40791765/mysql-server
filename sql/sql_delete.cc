@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -151,13 +151,13 @@ bool DeleteCurrentRowAndProcessTriggers(THD *thd, TABLE *table,
 bool Sql_cmd_delete::precheck(THD *thd) {
   DBUG_TRACE;
 
-  TABLE_LIST *tables = lex->query_tables;
+  Table_ref *tables = lex->query_tables;
 
   if (!multitable) {
     if (check_one_table_access(thd, DELETE_ACL, tables)) return true;
   } else {
-    TABLE_LIST *aux_tables = delete_tables->first;
-    TABLE_LIST **save_query_tables_own_last = lex->query_tables_own_last;
+    Table_ref *aux_tables = delete_tables->first;
+    Table_ref **save_query_tables_own_last = lex->query_tables_own_last;
 
     if (check_table_access(thd, SELECT_ACL, tables, false, UINT_MAX, false))
       return true;
@@ -222,13 +222,13 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
   Query_block *const query_block = lex->query_block;
   Query_expression *const unit = query_block->master_query_expression();
   ORDER *order = query_block->order_list.first;
-  TABLE_LIST *const table_list = query_block->get_table_list();
+  Table_ref *const table_list = query_block->get_table_list();
   THD::killed_state killed_status = THD::NOT_KILLED;
   THD::enum_binlog_query_type query_type = THD::ROW_QUERY_TYPE;
 
   const bool safe_update = thd->variables.option_bits & OPTION_SAFE_UPDATES;
 
-  TABLE_LIST *const delete_table_ref = table_list->updatable_base_table();
+  Table_ref *const delete_table_ref = table_list->updatable_base_table();
   TABLE *const table = delete_table_ref->table;
 
   const bool transactional_table = table->file->has_transactions();
@@ -259,8 +259,10 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
   const bool using_limit = limit != HA_POS_ERROR;
 
   if (limit == 0 && thd->lex->is_explain()) {
-    Modification_plan plan(thd, MT_DELETE, table, "LIMIT is zero", true, 0);
-    bool err = explain_single_table_modification(thd, thd, &plan, query_block);
+    const Modification_plan plan(thd, MT_DELETE, table, "LIMIT is zero", true,
+                                 0);
+    const bool err =
+        explain_single_table_modification(thd, thd, &plan, query_block);
     return err;
   }
 
@@ -324,10 +326,10 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     table->file->info(HA_STATUS_VARIABLE | HA_STATUS_NO_LOCK);
     ha_rows const maybe_deleted = table->file->stats.records;
 
-    Modification_plan plan(thd, MT_DELETE, table, "Deleting all rows", false,
-                           maybe_deleted);
+    const Modification_plan plan(thd, MT_DELETE, table, "Deleting all rows",
+                                 false, maybe_deleted);
     if (lex->is_explain()) {
-      bool err =
+      const bool err =
           explain_single_table_modification(thd, thd, &plan, query_block);
       return err;
     }
@@ -362,17 +364,17 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     COND_EQUAL *cond_equal = nullptr;
     Item::cond_result result;
 
-    if (optimize_cond(thd, &conds, &cond_equal, query_block->join_list,
-                      &result))
+    if (optimize_cond(thd, &conds, &cond_equal,
+                      query_block->m_current_table_nest, &result))
       return true;
     if (result == Item::COND_FALSE)  // Impossible where
     {
       no_rows = true;
 
       if (lex->is_explain()) {
-        Modification_plan plan(thd, MT_DELETE, table, "Impossible WHERE", true,
-                               0);
-        bool err =
+        const Modification_plan plan(thd, MT_DELETE, table, "Impossible WHERE",
+                                     true, 0);
+        const bool err =
             explain_single_table_modification(thd, thd, &plan, query_block);
         return err;
       }
@@ -391,10 +393,10 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     if (table->all_partitions_pruned_away) {
       no_rows = true;
       if (lex->is_explain()) {
-        Modification_plan plan(thd, MT_DELETE, table,
-                               "No matching rows after partition pruning", true,
-                               0);
-        bool err =
+        const Modification_plan plan(thd, MT_DELETE, table,
+                                     "No matching rows after partition pruning",
+                                     true, 0);
+        const bool err =
             explain_single_table_modification(thd, thd, &plan, query_block);
         return err;
       }
@@ -421,7 +423,8 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     wrapper.add_utf8_table(delete_table_ref);
 
     if (!no_rows && conds != nullptr) {
-      Key_map keys_to_use(Key_map::ALL_BITS), needed_reg_dummy;
+      const Key_map keys_to_use(Key_map::ALL_BITS);
+      Key_map needed_reg_dummy;
       MEM_ROOT temp_mem_root(key_memory_test_quick_select_exec,
                              thd->variables.range_alloc_block_size);
       no_rows = test_quick_select(
@@ -435,9 +438,9 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
 
     if (no_rows) {
       if (lex->is_explain()) {
-        Modification_plan plan(thd, MT_DELETE, table, "Impossible WHERE", true,
-                               0);
-        bool err =
+        const Modification_plan plan(thd, MT_DELETE, table, "Impossible WHERE",
+                                     true, 0);
+        const bool err =
             explain_single_table_modification(thd, thd, &plan, query_block);
         return err;
       }
@@ -469,7 +472,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
   if (order) {
     if (conds != nullptr) table->update_const_key_parts(conds);
     order = simple_remove_const(order, conds);
-    ORDER_with_src order_src(order, ESC_ORDER_BY);
+    ORDER_with_src order_src(order, ESC_ORDER_BY, /*const_optimized=*/true);
     usable_index = get_index_for_order(&order_src, table, limit, range_scan,
                                        &need_sort, &reverse);
     if (range_scan != nullptr) {
@@ -484,19 +487,20 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
   {
     ha_rows rows;
     if (range_scan)
-      rows = range_scan->num_output_rows;
+      rows = range_scan->num_output_rows();
     else if (!conds && !need_sort && limit != HA_POS_ERROR)
       rows = limit;
     else {
       delete_table_ref->fetch_number_of_rows();
       rows = table->file->stats.records;
     }
-    Modification_plan plan(thd, MT_DELETE, table, type, range_scan, conds,
-                           usable_index, limit, false, need_sort, false, rows);
+    const Modification_plan plan(thd, MT_DELETE, table, type, range_scan, conds,
+                                 usable_index, limit, false, need_sort, false,
+                                 rows);
     DEBUG_SYNC(thd, "planned_single_delete");
 
     if (lex->is_explain()) {
-      bool err =
+      const bool err =
           explain_single_table_modification(thd, thd, &plan, query_block);
       return err;
     }
@@ -531,7 +535,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
           thd, {table}, /*keep_buffers=*/false, order, HA_POS_ERROR,
           /*remove_duplicates=*/false,
           /*force_sort_rowids=*/true, /*unwrap_rollup=*/false));
-      path = NewSortAccessPath(thd, path, fsort.get(),
+      path = NewSortAccessPath(thd, path, fsort.get(), order,
                                /*count_examined_rows=*/false);
       iterator = CreateIteratorFromAccessPath(thd, path, &join,
                                               /*eligible_for_batch_mode=*/true);
@@ -662,7 +666,7 @@ cleanup:
         we replicate statement-based; otherwise, 'ha_delete_row()' was used to
         delete specific rows which we might log row-based.
       */
-      int log_result =
+      const int log_result =
           thd->binlog_query(query_type, thd->query().str, thd->query().length,
                             transactional_table, false, false, errcode);
 
@@ -688,7 +692,7 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   DBUG_TRACE;
 
   Query_block *const select = lex->query_block;
-  TABLE_LIST *const table_list = select->get_table_list();
+  Table_ref *const table_list = select->get_table_list();
 
   bool apply_semijoin;
 
@@ -698,16 +702,16 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   Opt_trace_object trace_wrapper(trace);
   Opt_trace_object trace_prepare(trace, "delete_preparation");
   trace_prepare.add_select_number(select->select_number);
-  Opt_trace_array trace_steps(trace, "steps");
+  const Opt_trace_array trace_steps(trace, "steps");
 
   apply_semijoin = multitable;
 
   if (select->setup_tables(thd, table_list, false))
     return true; /* purecov: inspected */
 
-  ulong want_privilege_saved = thd->want_privilege;
+  const ulong want_privilege_saved = thd->want_privilege;
   thd->want_privilege = SELECT_ACL;
-  enum enum_mark_columns mark_used_columns_saved = thd->mark_used_columns;
+  const enum enum_mark_columns mark_used_columns_saved = thd->mark_used_columns;
   thd->mark_used_columns = MARK_COLUMNS_READ;
 
   if (select->derived_table_count || select->table_func_count) {
@@ -726,7 +730,7 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   */
 
   // Check the list of tables to be deleted from
-  for (TABLE_LIST *table_ref = table_list; table_ref;
+  for (Table_ref *table_ref = table_list; table_ref;
        table_ref = table_ref->next_local) {
     // Skip tables that are only selected from
     if (!table_ref->updating) continue;
@@ -753,14 +757,13 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
     assert(!table_ref->is_view() || table_ref->table == nullptr);
 
     // Cannot delete from a storage engine that does not support delete.
-    TABLE_LIST *base_table = table_ref->updatable_base_table();
+    Table_ref *base_table = table_ref->updatable_base_table();
     if (base_table->table->file->ha_table_flags() & HA_DELETE_NOT_SUPPORTED) {
       my_error(ER_ILLEGAL_HA, MYF(0), base_table->table_name);
       return true;
     }
 
-    for (TABLE_LIST *tr = base_table; tr != nullptr;
-         tr = tr->referencing_view) {
+    for (Table_ref *tr = base_table; tr != nullptr; tr = tr->referencing_view) {
       tr->updating = true;
     }
 
@@ -782,10 +785,10 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
     multitable = true;
 
   if (multitable) {
-    if (!select->top_join_list.empty())
-      propagate_nullability(&select->top_join_list, false);
+    if (!select->m_table_nest.empty())
+      propagate_nullability(&select->m_table_nest, false);
 
-    Prepared_stmt_arena_holder ps_holder(thd);
+    const Prepared_stmt_arena_holder ps_holder(thd);
     result = new (thd->mem_root) Query_result_delete;
     if (result == nullptr) return true; /* purecov: inspected */
 
@@ -804,7 +807,8 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
 
   // Precompute and store the row types of NATURAL/USING joins.
   if (select->leaf_table_count >= 2 &&
-      setup_natural_join_row_types(thd, select->join_list, &select->context))
+      setup_natural_join_row_types(thd, select->m_current_table_nest,
+                                   &select->context))
     return true;
 
   // Enable the following code if allowing LIMIT with multi-table DELETE
@@ -821,7 +825,7 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
 
   // check ORDER BY even if it can be ignored
   if (select->order_list.first) {
-    TABLE_LIST tables;
+    Table_ref tables;
 
     tables.table = table_list->table;
     tables.alias = table_list->alias;
@@ -845,15 +849,15 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   */
   select->exclude_from_table_unique_test = true;
 
-  for (TABLE_LIST *table_ref = table_list; table_ref;
+  for (Table_ref *table_ref = table_list; table_ref;
        table_ref = table_ref->next_local) {
     if (!table_ref->is_deleted()) continue;
     /*
       Check that table from which we delete is not used somewhere
       inside subqueries/view.
     */
-    TABLE_LIST *duplicate = unique_table(table_ref->updatable_base_table(),
-                                         lex->query_tables, false);
+    Table_ref *duplicate = unique_table(table_ref->updatable_base_table(),
+                                        lex->query_tables, false);
     if (duplicate) {
       update_non_unique_table_error(table_ref, "DELETE", duplicate);
       return true;
@@ -889,9 +893,9 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
 bool Sql_cmd_delete::execute_inner(THD *thd) {
   if (is_empty_query()) {
     if (lex->is_explain()) {
-      Modification_plan plan(thd, MT_DELETE, /*table_arg=*/nullptr,
-                             "No matching rows after partition pruning", true,
-                             0);
+      const Modification_plan plan(thd, MT_DELETE, /*table_arg=*/nullptr,
+                                   "No matching rows after partition pruning",
+                                   true, 0);
       return explain_single_table_modification(thd, thd, &plan,
                                                lex->query_block);
     }
@@ -921,13 +925,12 @@ DeleteRowsIterator::DeleteRowsIterator(
       m_tables_to_delete_from(tables_to_delete_from),
       m_immediate_tables(immediate_tables),
       // The old optimizer does not use hash join in DELETE statements.
-      m_tables_with_rowid_in_hash_join_buffer(
-          thd->lex->using_hypergraph_optimizer
-              ? GetTablesWithRowIDsInHashJoin(join->root_access_path())
-              : 0),
+      m_hash_join_tables(thd->lex->using_hypergraph_optimizer
+                             ? GetHashJoinTables(join->root_access_path())
+                             : 0),
       m_tempfiles(thd->mem_root),
       m_delayed_tables(thd->mem_root) {
-  for (const TABLE_LIST *tr = join->query_block->leaf_tables; tr != nullptr;
+  for (const Table_ref *tr = join->query_block->leaf_tables; tr != nullptr;
        tr = tr->next_leaf) {
     TABLE *const table = tr->table;
     const uint tableno = tr->tableno();
@@ -951,7 +954,7 @@ DeleteRowsIterator::DeleteRowsIterator(
 }
 
 void SetUpTablesForDelete(THD *thd, JOIN *join) {
-  for (const TABLE_LIST *tr = join->query_block->leaf_tables; tr != nullptr;
+  for (const Table_ref *tr = join->query_block->leaf_tables; tr != nullptr;
        tr = tr->next_leaf) {
     if (!tr->is_deleted()) continue;
     TABLE *table = tr->table;
@@ -963,12 +966,7 @@ void SetUpTablesForDelete(THD *thd, JOIN *join) {
   THD_STAGE_INFO(thd, stage_deleting_from_main_table);
 }
 
-/// Performs some extra checks if the sql_safe_updates option is enabled, and
-/// raises an error (and returns true) if the statement is likely to delete a
-/// large number of rows. Specifically, it raises an error if there is a full
-/// table scan or full index scan of one of the tables deleted from, and there
-/// is no LIMIT clause.
-static bool CheckSqlSafeUpdate(THD *thd, const JOIN *join) {
+bool CheckSqlSafeUpdate(THD *thd, const JOIN *join) {
   if (!Overlaps(thd->variables.option_bits, OPTION_SAFE_UPDATES)) {
     return false;
   }
@@ -1009,7 +1007,7 @@ bool DeleteRowsIterator::Init() {
     return true;
   }
 
-  for (TABLE_LIST *tr = m_join->query_block->leaf_tables; tr != nullptr;
+  for (Table_ref *tr = m_join->query_block->leaf_tables; tr != nullptr;
        tr = tr->next_leaf) {
     TABLE *const table = tr->table;
     const uint tableno = tr->tableno();
@@ -1034,7 +1032,7 @@ bool DeleteRowsIterator::Init() {
       auto tempfile = make_unique_destroy_only<Unique>(
           thd()->mem_root, refpos_order_cmp, table->file,
           table->file->ref_length, thd()->variables.sortbuff_size);
-      if (tempfile == nullptr || m_tempfiles.push_back(move(tempfile)) ||
+      if (tempfile == nullptr || m_tempfiles.push_back(std::move(tempfile)) ||
           m_delayed_tables.push_back(table)) {
         return true; /* purecov: inspected */
       }
@@ -1049,16 +1047,16 @@ bool DeleteRowsIterator::Init() {
 bool DeleteRowsIterator::DoImmediateDeletesAndBufferRowIds() {
   DBUG_TRACE;
 
-  // For now, don't actually delete anything in EXPLAIN ANALYZE. (Maybe we
-  // should have done the deletions. If so, INSERT and UPDATE should also be
-  // changed to have side effects when running under EXPLAIN ANALYZE.)
+  // For now, don't actually delete anything in EXPLAIN ANALYZE. (If we enable
+  // it, INSERT and UPDATE should also be changed to have side effects when
+  // running under EXPLAIN ANALYZE.)
   if (thd()->lex->is_explain_analyze) {
     return false;
   }
 
   int unique_counter = 0;
 
-  for (TABLE_LIST *tr = m_join->query_block->leaf_tables; tr != nullptr;
+  for (Table_ref *tr = m_join->query_block->leaf_tables; tr != nullptr;
        tr = tr->next_leaf) {
     const table_map map = tr->map();
 
@@ -1081,7 +1079,10 @@ bool DeleteRowsIterator::DoImmediateDeletesAndBufferRowIds() {
     // Check if using outer join and no row found, or row is already deleted
     if (table->has_null_row() || table->has_deleted_row()) continue;
 
-    if (!Overlaps(map, m_tables_with_rowid_in_hash_join_buffer)) {
+    // Hash joins have already copied the row ID from the join buffer into
+    // table->file->ref. Nested loop joins have not, so we call position() to
+    // get the row ID from the handler.
+    if (!Overlaps(map, m_hash_join_tables)) {
       table->file->position(table->record[0]);
     }
 
@@ -1266,11 +1267,11 @@ table_map GetImmediateDeleteTables(const JOIN *join, table_map delete_tables) {
   // in which case join order optimization is short-circuited. See
   // JOIN::create_access_paths_for_zero_rows().
   if (join->thd->lex->using_hypergraph_optimizer) {
-    assert(join->root_access_path()->type == AccessPath::ZERO_ROWS);
+    assert(join->zero_result_cause != nullptr);
     return 0;
   }
 
-  for (TABLE_LIST *tr = join->query_block->leaf_tables; tr != nullptr;
+  for (Table_ref *tr = join->query_block->leaf_tables; tr != nullptr;
        tr = tr->next_leaf) {
     if (!tr->is_deleted()) continue;
 
@@ -1295,7 +1296,7 @@ table_map GetImmediateDeleteTables(const JOIN *join, table_map delete_tables) {
     // Can be called in different stages after the join order has been
     // determined, so look into QEP_TAB or JOIN_TAB depending on which is
     // available in the current stage.
-    const TABLE_LIST *first_non_const;
+    const Table_ref *first_non_const;
     if (join->qep_tab != nullptr) {
       first_non_const = join->qep_tab[join->const_tables].table_ref;
     } else {

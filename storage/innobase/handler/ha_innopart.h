@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -34,6 +34,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "ha_innodb.h"
 #include "my_compiler.h"
+#include "my_inttypes.h"
 #include "partitioning/partition_handler.h"
 #include "row0mysql.h"
 #include "ut0bitset.h"

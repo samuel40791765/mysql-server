@@ -1,4 +1,4 @@
-# Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,15 @@ MYSQL_ADD_EXECUTABLE(master_key_test_writer
   SKIP_INSTALL
   )
 
+MYSQL_ADD_EXECUTABLE(signal_me
+  signal_me.cc
+  LINK_LIBRARIES mysys
+  COMPONENT Router
+  SKIP_INSTALL
+  )
+
+ADD_SUBDIRECTORY(rest_signal)
+
 ADD_DEFINITIONS(-DSSL_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/mysql-test/std_data/")
 ADD_DEFINITIONS(-DCMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 FOREACH(test_file
@@ -51,6 +60,7 @@ FOREACH(test_file
     test_master_key_reader_writer.cc
     test_metadata_ttl.cc
     test_pidfile.cc
+    test_read_replica.cc
     test_rest_api.cc
     test_rest_api_enable.cc
     test_rest_metadata_cache.cc
@@ -59,15 +69,21 @@ FOREACH(test_file
     test_rest_routing.cc
     test_rest_connection_pool.cc
     test_router_configuration_errors.cc
+    test_router_stacktrace.cc
     test_routing.cc
     test_routing_connection.cc
+    test_routing_connection_errors.cc
+    test_routing_retry.cc
     test_routing_strategy.cc
+    test_routing_sharing.cc
     test_sd_notify.cc
     test_shutdown.cc
     test_state_file.cc
     test_user_option.cc
     test_metadata_http_auth_backend.cc
     test_socket_close.cc
+    test_stacktrace.cc
+    test_destination_status.cc
     )
 add_test_file(${CMAKE_CURRENT_SOURCE_DIR}/${test_file}
   MODULE "component"
@@ -105,6 +121,7 @@ add_test_file(${CMAKE_CURRENT_SOURCE_DIR}/${test_file}
   router_protobuf
   routing
   routertestplugin_logger
+  signal_me
   )
 ENDFOREACH()
 

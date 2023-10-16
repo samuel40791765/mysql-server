@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -36,6 +36,7 @@
 
 #include "mysql/harness/arg_handler.h"
 #include "mysql/harness/loader.h"
+#include "mysql/harness/signal_handler.h"
 #include "mysqlrouter/keyring_info.h"
 #include "mysqlrouter/sys_user_operations.h"
 
@@ -60,7 +61,7 @@ class ConfigFiles;
  *  explicit location was given, the application exits.
  *
  *  The class depends on MySQL Harness to, among other things, load the
- *  configuration and initalize all request plugins.
+ *  configuration and initialize all request plugins.
  *
  *  Example usage:
  *
@@ -70,7 +71,7 @@ class ConfigFiles;
  *     }
  *
  */
-class ROUTER_LIB_EXPORT MySQLRouter {
+class MySQLRouter {
  public:
   /** @brief Default constructor
    *
@@ -160,7 +161,7 @@ class ROUTER_LIB_EXPORT MySQLRouter {
    *
    * Initializes main logger, according to options in the configuration.
    *
-   * @param config Configuaration to be used to initialize logger
+   * @param config Configuration to be used to initialize logger
    * @param raw_mode If true, all messages are logged raw; if false, messages
    *        are subject formatting
    * @param use_os_log If true, Windows EventLog will be used instead of STDERR;
@@ -550,6 +551,8 @@ class ROUTER_LIB_EXPORT MySQLRouter {
   std::ostream &out_stream_;
   std::ostream &err_stream_;
 
+  bool core_file_{false};
+
 #ifndef _WIN32
   /** @brief Value of the --user parameter given on the command line if router
    * is launched in bootstrap mode **/
@@ -567,12 +570,11 @@ class ROUTER_LIB_EXPORT MySQLRouter {
   mysqlrouter::SysUserOperationsBase *sys_user_operations_;
 #endif
 
+  mysql_harness::SignalHandler signal_handler_;
+
 #ifdef FRIEND_TEST
   FRIEND_TEST(Bug24909259, PasswordPrompt_plain);
   FRIEND_TEST(Bug24909259, PasswordPrompt_keyed);
-  FRIEND_TEST(ConfigGeneratorTest, ssl_stage1_cmdline_arg_parse);
-  FRIEND_TEST(ConfigGeneratorTest, ssl_stage2_bootstrap_connection);
-  FRIEND_TEST(ConfigGeneratorTest, ssl_stage3_create_config);
 #endif
 };
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -177,7 +177,7 @@ class ItemFilterTest : public ::testing::Test {
       TestFailLinePrinter called_from_line) {
     SCOPED_TRACE(called_from_line);
 
-    PT_item_list *list = new (thd()->mem_root) PT_item_list;
+    PT_item_list *list = new (thd()->mem_root) PT_item_list(POS());
     list->value = lst;
     Item_func_in *in_item = new Item_func_in(POS(), list, false);
     Parse_context pc(thd(), thd()->lex->current_query_block());
@@ -205,7 +205,7 @@ class ItemFilterTest : public ::testing::Test {
   MEM_ROOT m_alloc;
 
   Fake_TABLE *m_table;
-  TABLE_LIST *m_table_list;
+  Table_ref *m_table_list;
   /*
     Pointer to m_table->field. Only valid if the table was
     created by calling one of ItemFilterTest::create_table*()

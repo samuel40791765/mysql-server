@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -66,8 +66,9 @@ Tablespaces::Tablespaces() {
                          "se_private_data MEDIUMTEXT");
   m_target_def.add_field(FIELD_COMMENT, "FIELD_COMMENT",
                          "comment VARCHAR(2048) NOT NULL");
-  m_target_def.add_field(FIELD_ENGINE, "FIELD_ENGINE",
-                         "engine VARCHAR(64) NOT NULL COLLATE utf8_general_ci");
+  m_target_def.add_field(
+      FIELD_ENGINE, "FIELD_ENGINE",
+      "engine VARCHAR(64) NOT NULL COLLATE utf8mb3_general_ci");
   m_target_def.add_field(FIELD_ENGINE_ATTRIBUTE, "FIELD_ENGINE_ATTRIBUTE",
                          "engine_attribute JSON");
 

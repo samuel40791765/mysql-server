@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -145,29 +145,28 @@ void equi_height_test(histograms::Value_map_type value_map_type) {
             Invoke(&catalog_id, &Mock_dd_field_longlong::fake_store));
 
     ON_CALL(name, store(_, _, _))
-        .WillByDefault(
-            WithArgs<0>(Invoke(&name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(Invoke(&name, &Mock_dd_field_varstring::fake_store));
 
     ON_CALL(schema_name, store(_, _, _))
-        .WillByDefault(WithArgs<0>(
-            Invoke(&schema_name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(
+            Invoke(&schema_name, &Mock_dd_field_varstring::fake_store));
     ON_CALL(schema_name, val_str(_, _))
-        .WillByDefault(WithArgs<1>(
-            Invoke(&schema_name, &Mock_dd_field_varstring::fake_val_str)));
+        .WillByDefault(
+            Invoke(&schema_name, &Mock_dd_field_varstring::fake_val_str));
 
     ON_CALL(table_name, store(_, _, _))
-        .WillByDefault(WithArgs<0>(
-            Invoke(&table_name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(
+            Invoke(&table_name, &Mock_dd_field_varstring::fake_store));
     ON_CALL(table_name, val_str(_, _))
-        .WillByDefault(WithArgs<1>(
-            Invoke(&table_name, &Mock_dd_field_varstring::fake_val_str)));
+        .WillByDefault(
+            Invoke(&table_name, &Mock_dd_field_varstring::fake_val_str));
 
     ON_CALL(column_name, store(_, _, _))
-        .WillByDefault(WithArgs<0>(
-            Invoke(&column_name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(
+            Invoke(&column_name, &Mock_dd_field_varstring::fake_store));
     ON_CALL(column_name, val_str(_, _))
-        .WillByDefault(WithArgs<1>(
-            Invoke(&column_name, &Mock_dd_field_varstring::fake_val_str)));
+        .WillByDefault(
+            Invoke(&column_name, &Mock_dd_field_varstring::fake_val_str));
 
     EXPECT_CALL(catalog_id, store(_, _)).Times(1);
     EXPECT_CALL(name, store(_, _, _)).Times(1);
@@ -285,29 +284,28 @@ void singleton_test(histograms::Value_map_type value_map_type) {
             Invoke(&catalog_id, &Mock_dd_field_longlong::fake_store));
 
     ON_CALL(name, store(_, _, _))
-        .WillByDefault(
-            WithArgs<0>(Invoke(&name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(Invoke(&name, &Mock_dd_field_varstring::fake_store));
 
     ON_CALL(schema_name, store(_, _, _))
-        .WillByDefault(WithArgs<0>(
-            Invoke(&schema_name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(
+            Invoke(&schema_name, &Mock_dd_field_varstring::fake_store));
     ON_CALL(schema_name, val_str(_, _))
-        .WillByDefault(WithArgs<1>(
-            Invoke(&schema_name, &Mock_dd_field_varstring::fake_val_str)));
+        .WillByDefault(
+            Invoke(&schema_name, &Mock_dd_field_varstring::fake_val_str));
 
     ON_CALL(table_name, store(_, _, _))
-        .WillByDefault(WithArgs<0>(
-            Invoke(&table_name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(
+            Invoke(&table_name, &Mock_dd_field_varstring::fake_store));
     ON_CALL(table_name, val_str(_, _))
-        .WillByDefault(WithArgs<1>(
-            Invoke(&table_name, &Mock_dd_field_varstring::fake_val_str)));
+        .WillByDefault(
+            Invoke(&table_name, &Mock_dd_field_varstring::fake_val_str));
 
     ON_CALL(column_name, store(_, _, _))
-        .WillByDefault(WithArgs<0>(
-            Invoke(&column_name, &Mock_dd_field_varstring::fake_store)));
+        .WillByDefault(
+            Invoke(&column_name, &Mock_dd_field_varstring::fake_store));
     ON_CALL(column_name, val_str(_, _))
-        .WillByDefault(WithArgs<1>(
-            Invoke(&column_name, &Mock_dd_field_varstring::fake_val_str)));
+        .WillByDefault(
+            Invoke(&column_name, &Mock_dd_field_varstring::fake_val_str));
 
     EXPECT_CALL(catalog_id, store(_, _)).Times(1);
     EXPECT_CALL(name, store(_, _, _)).Times(1);

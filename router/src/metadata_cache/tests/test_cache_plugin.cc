@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -76,8 +76,7 @@ class MetadataCachePluginTest : public ::testing::Test {
         &mock_metadata_factory_get_instance);
 
     metadata_cache::MetadataCacheAPI::instance()->cache_init(
-        mysqlrouter::ClusterType::GR_V1, kRouterId, replication_group_id, "",
-        metadata_server_vector,
+        mysqlrouter::ClusterType::GR_V1, kRouterId, "", metadata_server_vector,
         {kDefaultMetadataTTL, kDefaultAuthCacheTTL,
          kDefaultAuthCacheRefreshInterval},
         mysqlrouter::SSLOptions(),
@@ -93,7 +92,7 @@ class MetadataCachePluginTest : public ::testing::Test {
      */
     while (instance_vector_1.size() != 3) {
       try {
-        instance_vector_1 = cache_api_->get_cluster_nodes().instance_vector;
+        instance_vector_1 = cache_api_->get_cluster_nodes();
       } catch (const std::runtime_error &exc) {
         /**
          * If the lookup fails after 5 attempts it points to an error
@@ -121,7 +120,7 @@ class MetadataCachePluginTest : public ::testing::Test {
  */
 TEST_F(MetadataCachePluginTest, ValidCluserTest_1) {
   std::vector<ManagedInstance> instance_vector_1 =
-      cache_api_->get_cluster_nodes().instance_vector;
+      cache_api_->get_cluster_nodes();
 
   EXPECT_EQ(instance_vector_1[0], mf.ms1);
   EXPECT_EQ(instance_vector_1[1], mf.ms2);

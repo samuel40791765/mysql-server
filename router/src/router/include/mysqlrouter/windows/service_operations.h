@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -41,11 +41,12 @@ struct ServiceConfOptions {
  *
  * @param arg_handler arg handler object in which the function will register the
  * Windows service related parameters
- * @param conf_opts object where the option handler will store the selected
- * option parameters (service operation, name)
+ * @param conf_opts pointer to the object where the option handler will store
+   the selected option parameters (service operation, name), not stored if
+   nullptr passsed
  *
  */
 void add_service_options(CmdArgHandler &arg_handler,
-                         ServiceConfOptions &conf_opts);
+                         ServiceConfOptions *conf_opts = nullptr);
 
 #endif  // SRC_ROUTER_INCLUDE_MYSQLROUTER_WINDOWS_SERVICE_OPERATIONS_H_

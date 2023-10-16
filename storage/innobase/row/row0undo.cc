@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -184,7 +184,8 @@ bool row_undo_search_clust_to_pcur(
 
   rec = node->pcur.get_rec();
 
-  offsets = rec_get_offsets(rec, clust_index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, clust_index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   found = row_get_rec_roll_ptr(rec, clust_index, offsets) == node->roll_ptr;
 

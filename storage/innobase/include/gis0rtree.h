@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -89,7 +89,7 @@ rec_t *rtr_page_split_and_insert(
 
 /** Sets the child node mbr in a node pointer.
 @param[in]      index   index
-@param[in]      block   bufer block
+@param[in]      block   buffer block
 @param[out]     mbr     MBR encapsulates the page
 @param[in]      heap    heap for the memory allocation */
 static inline void rtr_page_cal_mbr(const dict_index_t *index,

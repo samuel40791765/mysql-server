@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -58,7 +58,6 @@
 #include "sql/sql_class.h"
 #include "sql/sql_const.h"
 #include "sql/sql_executor.h"
-#include "sql/sql_join_buffer.h"
 #include "sql/sql_lex.h"
 #include "sql/sql_opt_exec_shared.h"
 #include "sql/sql_optimizer.h"  // JOIN
@@ -69,13 +68,12 @@
 #include "template_utils.h"
 
 using std::make_pair;
-using std::move;
 using std::pair;
 
 static inline pair<uchar *, key_part_map> FindKeyBufferAndMap(
-    const TABLE_REF *ref);
+    const Index_lookup *ref);
 
-ConstIterator::ConstIterator(THD *thd, TABLE *table, TABLE_REF *table_ref,
+ConstIterator::ConstIterator(THD *thd, TABLE *table, Index_lookup *table_ref,
                              ha_rows *examined_rows)
     : TableRowIterator(thd, table),
       m_ref(table_ref),
@@ -108,11 +106,10 @@ int ConstIterator::Read() {
   return err;
 }
 
-EQRefIterator::EQRefIterator(THD *thd, TABLE *table, TABLE_REF *ref,
-                             bool use_order, ha_rows *examined_rows)
+EQRefIterator::EQRefIterator(THD *thd, TABLE *table, Index_lookup *ref,
+                             ha_rows *examined_rows)
     : TableRowIterator(thd, table),
       m_ref(ref),
-      m_use_order(use_order),
       m_examined_rows(examined_rows) {}
 
 /**
@@ -134,8 +131,7 @@ EQRefIterator::EQRefIterator(THD *thd, TABLE *table, TABLE_REF *ref,
 
 bool EQRefIterator::Init() {
   if (!table()->file->inited) {
-    assert(!m_use_order);  // Don't expect sort req. for single row.
-    int error = table()->file->ha_index_init(m_ref->key, m_use_order);
+    int error = table()->file->ha_index_init(m_ref->key, /*sorted=*/false);
     if (error) {
       PrintError(error);
       return true;
@@ -183,7 +179,7 @@ int EQRefIterator::Read() {
     memcpy(m_ref->key_buff2, m_ref->key_buff, m_ref->key_length);
 
   // Create new key for lookup
-  m_ref->key_err = construct_lookup_ref(thd(), table(), m_ref);
+  m_ref->key_err = construct_lookup(thd(), table(), m_ref);
   if (m_ref->key_err) {
     table()->set_no_row();
     return -1;
@@ -206,7 +202,7 @@ int EQRefIterator::Read() {
       Perform "Late NULLs Filtering" (see internals manual for explanations)
 
       As EQRefIterator effectively implements a one row cache of last
-      fetched row, the NULLs filtering cant be done until after the cache
+      fetched row, the NULLs filtering can't be done until after the cache
       key has been checked and updated, and row locks maintained.
     */
     if (m_ref->impossible_null_ref()) {
@@ -242,7 +238,7 @@ int EQRefIterator::Read() {
   it if it was not used in this invocation of EQRefIterator::Read().
   Only count locks, thus remembering if the record was left unused,
   and unlock already when pruning the current value of
-  TABLE_REF buffer.
+  Index_lookup buffer.
   @sa EQRefIterator::Read()
 */
 
@@ -252,7 +248,7 @@ void EQRefIterator::UnlockRow() {
 }
 
 PushedJoinRefIterator::PushedJoinRefIterator(THD *thd, TABLE *table,
-                                             TABLE_REF *ref, bool use_order,
+                                             Index_lookup *ref, bool use_order,
                                              bool is_unique,
                                              ha_rows *examined_rows)
     : TableRowIterator(thd, table),
@@ -287,7 +283,7 @@ int PushedJoinRefIterator::Read() {
       return -1;
     }
 
-    if (construct_lookup_ref(thd(), table(), m_ref)) {
+    if (construct_lookup(thd(), table(), m_ref)) {
       table()->set_no_row();
       return -1;
     }
@@ -375,7 +371,7 @@ int RefIterator<false>::Read() {  // Forward read.
       table()->set_no_row();
       return -1;
     }
-    if (construct_lookup_ref(thd(), table(), m_ref)) {
+    if (construct_lookup(thd(), table(), m_ref)) {
       table()->set_no_row();
       return -1;
     }
@@ -428,7 +424,7 @@ int RefIterator<true>::Read() {  // Reverse read.
       table()->set_no_row();
       return -1;
     }
-    if (construct_lookup_ref(thd(), table(), m_ref)) {
+    if (construct_lookup(thd(), table(), m_ref)) {
       table()->set_no_row();
       return -1;
     }
@@ -483,11 +479,7 @@ DynamicRangeIterator::DynamicRangeIterator(THD *thd, TABLE *table,
       m_qep_tab(qep_tab),
       m_mem_root(key_memory_test_quick_select_exec,
                  thd->variables.range_alloc_block_size),
-      m_examined_rows(examined_rows),
-      m_read_set_without_base_columns(table->read_set) {
-  add_virtual_gcol_base_cols(table, thd->mem_root,
-                             &m_read_set_with_base_columns);
-}
+      m_examined_rows(examined_rows) {}
 
 DynamicRangeIterator::~DynamicRangeIterator() {
   // This is owned by our MEM_ROOT.
@@ -578,29 +570,13 @@ bool DynamicRangeIterator::Init() {
     return false;
   }
 
-  // Create the required Iterator based on the strategy chosen. Also set the
-  // read set to be used while accessing the table. Unlike a regular range
-  // scan, as the access strategy keeps changing for a dynamic range scan,
-  // optimizer cannot know if the read set should include base columns of
-  // virtually generated columns or not. As a result, this Iterator maintains
-  // two different read sets, to be used once the access strategy is chosen
-  // here.
+  // Create the required Iterator based on the strategy chosen.
   if (qck) {
-    m_iterator = move(qck);
-    // If the range optimizer chose index merge scan or a range scan with
-    // covering index, use the read set without base columns. Otherwise we use
-    // the read set with base columns included.
-    if (used_index(range_scan) == MAX_KEY ||
-        table()->covering_keys.is_set(used_index(range_scan)))
-      table()->read_set = m_read_set_without_base_columns;
-    else
-      table()->read_set = &m_read_set_with_base_columns;
+    m_iterator = std::move(qck);
   } else {
     m_iterator = NewIterator<TableScanIterator>(
         thd(), &m_mem_root, table(), m_qep_tab->position()->rows_fetched,
         m_examined_rows);
-    // For a table scan, include base columns in read set.
-    table()->read_set = &m_read_set_with_base_columns;
   }
   return m_iterator->Init();
 }
@@ -614,7 +590,7 @@ int DynamicRangeIterator::Read() {
 }
 
 FullTextSearchIterator::FullTextSearchIterator(THD *thd, TABLE *table,
-                                               TABLE_REF *ref,
+                                               Index_lookup *ref,
                                                Item_func_match *ft_func,
                                                bool use_order, bool use_limit,
                                                ha_rows *examined_rows)
@@ -706,7 +682,7 @@ int FullTextSearchIterator::Read() {
   Reading of key with key reference and one part that may be NULL.
 */
 
-RefOrNullIterator::RefOrNullIterator(THD *thd, TABLE *table, TABLE_REF *ref,
+RefOrNullIterator::RefOrNullIterator(THD *thd, TABLE *table, Index_lookup *ref,
                                      bool use_order, double expected_rows,
                                      ha_rows *examined_rows)
     : TableRowIterator(thd, table),
@@ -737,7 +713,7 @@ int RefOrNullIterator::Read() {
     /* Perform "Late NULLs Filtering" (see internals manual for explanations)
      */
     if (m_ref->impossible_null_ref() ||
-        construct_lookup_ref(thd(), table(), m_ref)) {
+        construct_lookup(thd(), table(), m_ref)) {
       // Skip searching for non-NULL rows; go straight to NULL rows.
       *m_ref->null_ref_key = true;
     }
@@ -789,12 +765,11 @@ RefOrNullIterator::~RefOrNullIterator() {
 
 AlternativeIterator::AlternativeIterator(
     THD *thd, TABLE *table, unique_ptr_destroy_only<RowIterator> source,
-    unique_ptr_destroy_only<RowIterator> table_scan_iterator, TABLE_REF *ref)
+    unique_ptr_destroy_only<RowIterator> table_scan_iterator, Index_lookup *ref)
     : RowIterator(thd),
       m_source_iterator(std::move(source)),
       m_table_scan_iterator(std::move(table_scan_iterator)),
-      m_table(table),
-      m_original_read_set(table->read_set) {
+      m_table(table) {
   for (unsigned key_part_idx = 0; key_part_idx < ref->key_parts;
        ++key_part_idx) {
     bool *cond_guard = ref->cond_guards[key_part_idx];
@@ -803,17 +778,13 @@ AlternativeIterator::AlternativeIterator(
     }
   }
   assert(!m_applicable_cond_guards.empty());
-
-  add_virtual_gcol_base_cols(table, thd->mem_root, &m_table_scan_read_set);
 }
 
 bool AlternativeIterator::Init() {
   m_iterator = m_source_iterator.get();
-  m_table->read_set = m_original_read_set;
   for (bool *cond_guard : m_applicable_cond_guards) {
     if (!*cond_guard) {
       m_iterator = m_table_scan_iterator.get();
-      m_table->read_set = &m_table_scan_read_set;
       break;
     }
   }
@@ -906,7 +877,7 @@ int ZeroRowsAggregatedIterator::Read() {
   }
 
   // Mark tables as containing only NULL values
-  for (TABLE_LIST *table = m_join->query_block->leaf_tables; table;
+  for (Table_ref *table = m_join->query_block->leaf_tables; table;
        table = table->next_leaf) {
     table->table->set_null_row();
   }
@@ -972,7 +943,7 @@ int TableValueConstructorIterator::Read() {
 }
 
 static inline pair<uchar *, key_part_map> FindKeyBufferAndMap(
-    const TABLE_REF *ref) {
+    const Index_lookup *ref) {
   if (ref->keypart_hash != nullptr) {
     return make_pair(pointer_cast<uchar *>(ref->keypart_hash), key_part_map{1});
   } else {

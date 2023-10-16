@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -52,7 +52,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "fil0fil.h"
 #include "fsp0sysspace.h"
 #include "ibuf0ibuf.h"
-#include "log0log.h"
+#include "log0buf.h"
+#include "log0chkp.h"
+#include "log0write.h"
 #include "my_compiler.h"
 #include "os0file.h"
 #include "os0thread-create.h"
@@ -85,7 +87,7 @@ static uint buf_flush_lsn_scan_factor = 3;
 static lsn_t buf_flush_sync_lsn = 0;
 
 #ifdef UNIV_DEBUG
-/** Get the lsn upto which data pages are to be synchronously flushed.
+/** Get the lsn up to which data pages are to be synchronously flushed.
 @return target lsn for the requested flush_sync */
 lsn_t get_flush_sync_lsn() noexcept { return buf_flush_sync_lsn; }
 #endif /* UNIV_DEBUG */
@@ -130,7 +132,7 @@ struct page_cleaner_slot_t {
   /*!< number of requested pages
   for the slot */
   /* These values are updated during state==PAGE_CLEANER_STATE_FLUSHING,
-  and commited with state==PAGE_CLEANER_STATE_FINISHED.
+  and committed with state==PAGE_CLEANER_STATE_FINISHED.
   The consistency is protected by the 'state' */
   ulint n_flushed_lru;
   /*!< number of flushed pages
@@ -218,7 +220,7 @@ static void buf_flush_sync_datafiles() {
   os_aio_wait_until_no_pending_writes();
 
   /* Now we flush the data to disk (for example, with fsync) */
-  fil_flush_file_spaces(FIL_TYPE_TABLESPACE);
+  fil_flush_file_spaces();
 }
 
 /** Thread tasked with flushing dirty pages from the buffer pools.
@@ -526,7 +528,7 @@ void buf_flush_insert_into_flush_list(
     /* This is no-redo dirtied page. Borrow the lsn. */
     lsn = buf_flush_borrow_lsn(buf_pool);
 
-    ut_ad(log_lsn_validate(lsn));
+    ut_ad(log_is_data_lsn(lsn));
 
     /* This page could already be no-redo dirtied before,
     and flushed since then. Also the page from which we
@@ -556,7 +558,7 @@ void buf_flush_insert_into_flush_list(
         std::max(lsn, log_sys->flushed_to_disk_lsn.load()));
   }
 
-  ut_ad(log_lsn_validate(lsn));
+  ut_ad(log_is_data_lsn(lsn));
   ut_ad(!block->page.is_dirty());
   ut_ad(block->page.get_newest_lsn() >= lsn);
 
@@ -938,7 +940,7 @@ void buf_flush_write_complete(buf_page_t *bpage) {
 
   mutex_exit(&buf_pool->flush_state_mutex);
 
-  if (!fsp_is_system_temporary(bpage->id.space()) && dblwr::enabled) {
+  if (!fsp_is_system_temporary(bpage->id.space()) && dblwr::is_enabled()) {
     dblwr::write_complete(bpage, flush_type);
   }
 }
@@ -1214,13 +1216,6 @@ static void buf_flush_write_block_low(buf_page_t *bpage, buf_flush_t flush_type,
     }
   }
 
-  DBUG_EXECUTE_IF("log_first_rec_group_test", {
-    recv_no_ibuf_operations = false;
-    const lsn_t end_lsn = mtr_commit_mlog_test();
-    log_write_up_to(*log_sys, end_lsn, true);
-    DBUG_SUICIDE();
-  });
-
   switch (buf_page_get_state(bpage)) {
     case BUF_BLOCK_POOL_WATCH:
     case BUF_BLOCK_ZIP_PAGE: /* The page should be dirty. */
@@ -1371,7 +1366,7 @@ bool buf_flush_page(buf_pool_t *buf_pool, buf_page_t *bpage,
 
     if (flush_type == BUF_FLUSH_LIST && is_uncompressed &&
         !rw_lock_sx_lock_nowait(rw_lock, BUF_IO_WRITE, UT_LOCATION_HERE)) {
-      if (!fsp_is_system_temporary(bpage->id.space()) && dblwr::enabled) {
+      if (!fsp_is_system_temporary(bpage->id.space()) && dblwr::is_enabled()) {
         dblwr::force_flush(flush_type, buf_pool_index(buf_pool));
       } else {
         buf_flush_sync_datafiles();
@@ -1820,6 +1815,7 @@ static ulint buf_flush_LRU_list_batch(buf_pool_t *buf_pool, ulint max) {
 
     free_len = UT_LIST_GET_LEN(buf_pool->free);
     lru_len = UT_LIST_GET_LEN(buf_pool->LRU);
+    withdraw_depth = buf_get_withdraw_depth(buf_pool);
   }
 
   buf_pool->lru_hp.set(nullptr);
@@ -2042,7 +2038,7 @@ static void buf_flush_end(buf_pool_t *buf_pool, buf_flush_t flush_type) {
   mutex_exit(&buf_pool->flush_state_mutex);
 
   if (!srv_read_only_mode) {
-    if (dblwr::enabled) {
+    if (dblwr::is_enabled()) {
       dblwr::force_flush(flush_type, buf_pool_index(buf_pool));
     } else {
       buf_flush_sync_datafiles();
@@ -2510,19 +2506,24 @@ ulint get_pct_for_dirty() {
  @return percent of io_capacity to flush to manage redo space */
 ulint get_pct_for_lsn(lsn_t age) /*!< in: current age of LSN. */
 {
-  const lsn_t log_capacity = log_get_free_check_capacity(*log_sys);
+  ut_a(log_sys != nullptr);
+  log_t &log = *log_sys;
 
-  lsn_t lsn_age_factor;
-  lsn_t af_lwm = (srv_adaptive_flushing_lwm * log_capacity) / 100;
+  lsn_t limit_for_free_check;
+  lsn_t limit_for_dirty_page_age;
+
+  log_files_capacity_get_limits(log, limit_for_free_check,
+                                limit_for_dirty_page_age);
+
+  double lsn_age_factor;
+  lsn_t af_lwm = (srv_adaptive_flushing_lwm * limit_for_free_check) / 100;
 
   if (age < af_lwm) {
     /* No adaptive flushing. */
     return (0);
   }
 
-  const auto limit_for_age = log_get_max_modified_age_async(*log_sys);
-
-  if (age < limit_for_age && !srv_adaptive_flushing) {
+  if (age < limit_for_dirty_page_age && !srv_adaptive_flushing) {
     /* We have still not reached the max_async point and
     the user has disabled adaptive flushing. */
     return (0);
@@ -2531,13 +2532,13 @@ ulint get_pct_for_lsn(lsn_t age) /*!< in: current age of LSN. */
   /* If we are here then we know that either:
   1) User has enabled adaptive flushing
   2) User may have disabled adaptive flushing but we have reached
-  max_async_age. */
-  lsn_age_factor = (age * 100) / limit_for_age;
+  limit_for_dirty_page_age. */
+  lsn_age_factor = (age * 100.0) / limit_for_dirty_page_age;
 
   ut_ad(srv_max_io_capacity >= srv_io_capacity);
 
   return (static_cast<ulint>(((srv_max_io_capacity / srv_io_capacity) *
-                              (lsn_age_factor * sqrt((double)lsn_age_factor))) /
+                              (lsn_age_factor * sqrt(lsn_age_factor))) /
                              7.5));
 }
 
@@ -3260,10 +3261,22 @@ static void buf_flush_page_coordinator_thread() {
     /* We consider server active if either we have just discovered a first
     activity after a period of inactive server, or we are after the period
     of active server in which case, it could be just the beginning of the
-    next period, so there is no reason to consider it idle yet. */
+    next period, so there is no reason to consider it idle yet.
+    The withdrawing blocks process when shrinking the buffer pool always
+    needs the page_cleaner activity. So, we consider server is active
+    during the withdrawing blocks process also. */
 
-    const bool is_server_active =
-        was_server_active || srv_check_activity(last_activity);
+    bool is_withdrawing = false;
+    for (ulint i = 0; i < srv_buf_pool_instances; i++) {
+      buf_pool_t *buf_pool = buf_pool_from_array(i);
+      if (buf_get_withdraw_depth(buf_pool) > 0) {
+        is_withdrawing = true;
+        break;
+      }
+    }
+
+    const bool is_server_active = is_withdrawing || was_server_active ||
+                                  srv_check_activity(last_activity);
 
     /* The page_cleaner skips sleep if the server is
     idle and there are no pending IOs in the buffer pool
@@ -3469,7 +3482,7 @@ static void buf_flush_page_coordinator_thread() {
   and the purge threads may be working as well. We start flushing
   the buffer pool but can't be sure that no new pages are being
   dirtied until we enter SRV_SHUTDOWN_FLUSH_PHASE phase which is
-  the last phase (mean while we visit SRV_SHUTDOWN_MASTER_STOP).
+  the last phase (meanwhile we visit SRV_SHUTDOWN_MASTER_STOP).
 
   Note, that if we are handling fatal error, we set the state
   directly to EXIT_THREADS in which case we also might exit the loop
@@ -3530,8 +3543,19 @@ static void buf_flush_page_coordinator_thread() {
   buf_flush_wait_LRU_batch_end();
 
   bool success;
+  bool are_any_read_ios_still_underway;
 
   do {
+    /* If there are any read operations pending, they can result in the ibuf
+    merges and a dirtying page after the read is completed. If there are any
+    IO reads running before we run the flush loop, we risk having some dirty
+    pages after flushing reports n_flushed == 0. The ibuf change merging on
+    page results in dirtying the page and is followed by decreasing the
+    n_pend_reads counter, thus it's safe to check it before flush loop and
+    have guarantees if it was seen with value of 0. These reads could be issued
+    in the previous stage(s), the srv_master thread on shutdown tasks clear the
+    ibuf unless it's the fast shutdown. */
+    are_any_read_ios_still_underway = buf_get_n_pending_read_ios() > 0;
     pc_request(ULINT_MAX, LSN_MAX);
 
     while (pc_flush_slot() > 0) {
@@ -3546,7 +3570,7 @@ static void buf_flush_page_coordinator_thread() {
     buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);
     buf_flush_wait_LRU_batch_end();
 
-  } while (!success || n_flushed > 0);
+  } while (!success || n_flushed > 0 || are_any_read_ios_still_underway);
 
   for (ulint i = 0; i < srv_buf_pool_instances; i++) {
     buf_pool_t *buf_pool = buf_pool_from_array(i);
@@ -3555,9 +3579,10 @@ static void buf_flush_page_coordinator_thread() {
 
   /* Mark that it is safe to recover as we have already flushed all dirty
   pages in buffer pools. */
-  if (mtr_t::s_logging.is_disabled()) {
+  if (mtr_t::s_logging.is_disabled() && !srv_read_only_mode) {
     log_persist_crash_safe(*log_sys);
   }
+  log_crash_safe_validate(*log_sys);
 
   /* We have lived our life. Time to die. */
 
@@ -3597,10 +3622,35 @@ static void buf_flush_page_cleaner_thread() {
   }
 }
 
+void buf_flush_fsync() {
+#ifdef _WIN32
+  switch (srv_win_file_flush_method) {
+    case SRV_WIN_IO_UNBUFFERED:
+      break;
+    case SRV_WIN_IO_NORMAL:
+      fil_flush_file_spaces();
+      break;
+  }
+#else  /* !_WIN32 */
+  switch (srv_unix_file_flush_method) {
+    case SRV_UNIX_NOSYNC:
+      break;
+    case SRV_UNIX_O_DSYNC:
+      /* O_SYNC is respected only for redo files and we need to
+      flush data files here. For details look inside os0file.cc. */
+    case SRV_UNIX_FSYNC:
+    case SRV_UNIX_LITTLESYNC:
+    case SRV_UNIX_O_DIRECT:
+    case SRV_UNIX_O_DIRECT_NO_FSYNC:
+      fil_flush_file_spaces();
+  }
+#endif /* _WIN32 */
+}
+
 /** Synchronously flush dirty blocks from the end of the flush list of all
  buffer pool instances. NOTE: The calling thread is not allowed to own any
  latches on pages! */
-void buf_flush_sync_all_buf_pools(void) {
+void buf_flush_sync_all_buf_pools() {
   bool success;
   ulint n_pages;
   do {
@@ -3618,6 +3668,10 @@ void buf_flush_sync_all_buf_pools(void) {
   } while (!success);
 
   ut_a(success);
+
+  /* All pages have been written to disk, but we need to make fsync for files
+  to which the writes have been made. */
+  buf_flush_fsync();
 }
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG

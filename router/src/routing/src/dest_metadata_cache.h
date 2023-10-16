@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -45,13 +45,14 @@ class DestMetadataCacheGroup final
   enum ServerRole { Primary, Secondary, PrimaryAndSecondary };
 
   /** @brief Constructor */
-  DestMetadataCacheGroup(
-      net::io_context &io_ctx_, const std::string &metadata_cache,
-      const routing::RoutingStrategy routing_strategy,
-      const mysqlrouter::URIQuery &query, const Protocol::Type protocol,
-      const routing::AccessMode access_mode = routing::AccessMode::kUndefined,
-      metadata_cache::MetadataCacheAPIBase *cache_api =
-          metadata_cache::MetadataCacheAPI::instance());
+  DestMetadataCacheGroup(net::io_context &io_ctx_,
+                         const std::string &metadata_cache,
+                         const routing::RoutingStrategy routing_strategy,
+                         const mysqlrouter::URIQuery &query,
+                         const Protocol::Type protocol,
+                         const routing::Mode mode = routing::Mode::kUndefined,
+                         metadata_cache::MetadataCacheAPIBase *cache_api =
+                             metadata_cache::MetadataCacheAPI::instance());
 
   /** @brief Copy constructor */
   DestMetadataCacheGroup(const DestMetadataCacheGroup &other) = delete;
@@ -113,6 +114,8 @@ class DestMetadataCacheGroup final
     cache_api()->handle_sockets_acceptors_on_md_refresh();
   }
 
+  routing::RoutingStrategy get_strategy() override { return routing_strategy_; }
+
  private:
   /** @brief The Metadata Cache to use
    *
@@ -158,18 +161,18 @@ class DestMetadataCacheGroup final
    *
    */
   std::pair<AllowedNodes, bool> get_available(
-      const metadata_cache::LookupResult &managed_servers,
+      const metadata_cache::cluster_nodes_list_t &instances,
       bool for_new_connections = true) const;
 
   AllowedNodes get_available_primaries(
-      const metadata_cache::LookupResult &managed_servers) const;
+      const metadata_cache::cluster_nodes_list_t &managed_servers) const;
 
   Destinations balance(const AllowedNodes &all_replicaset_nodes,
                        bool primary_fallback);
 
   routing::RoutingStrategy routing_strategy_;
 
-  routing::AccessMode access_mode_;
+  routing::Mode mode_;
 
   ServerRole server_role_;
 
@@ -180,23 +183,24 @@ class DestMetadataCacheGroup final
   bool disconnect_on_promoted_to_primary_{false};
   bool disconnect_on_metadata_unavailable_{false};
 
-  void on_instances_change(const metadata_cache::LookupResult &instances,
-                           const bool md_servers_reachable);
+  void on_instances_change(
+      const metadata_cache::ClusterTopology &cluster_topology,
+      const bool md_servers_reachable);
   void subscribe_for_metadata_cache_changes();
   void subscribe_for_acceptor_handler();
   void subscribe_for_md_refresh_handler();
 
   void notify_instances_changed(
-      const metadata_cache::LookupResult &instances,
-      const metadata_cache::metadata_servers_list_t &metadata_servers,
+      const metadata_cache::ClusterTopology &cluster_topology,
       const bool md_servers_reachable,
       const uint64_t /*view_id*/) noexcept override;
 
   bool update_socket_acceptor_state(
-      const metadata_cache::LookupResult &instances) noexcept override;
+      const metadata_cache::cluster_nodes_list_t &instances) noexcept override;
 
-  void on_md_refresh(const bool instances_changed,
-                     const metadata_cache::LookupResult &instances) override;
+  void on_md_refresh(
+      const bool instances_changed,
+      const metadata_cache::ClusterTopology &cluster_topology) override;
 
   // MUST take the RouteDestination Mutex
   size_t start_pos_{};

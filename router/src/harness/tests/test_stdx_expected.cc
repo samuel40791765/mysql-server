@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2019, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -595,7 +595,7 @@ TEST(Expected, T_string_E_std_error_code) {
   // don't inspect 'res' after it has been moved from.
   // EXPECT_EQ(res.value(), "");
 
-  // prepare copy assignement
+  // prepare copy assignment
   res3 = test_func(true);
   ASSERT_TRUE(res3);
   EXPECT_EQ(res3.value(), "from_func");  // fail

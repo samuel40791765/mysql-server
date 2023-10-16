@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -82,7 +82,7 @@
 #include "x_connection.h"
 
 using mysql_harness::utility::string_format;
-using routing::AccessMode;
+using routing::Mode;
 using routing::RoutingStrategy;
 IMPORT_LOG_FUNCTIONS()
 
@@ -110,52 +110,48 @@ static stdx::expected<size_t, std::error_code> encode_initial_error_packet(
   }
 }
 
-MySQLRouting::MySQLRouting(
-    net::io_context &io_ctx, routing::RoutingStrategy routing_strategy,
-    uint16_t port, const Protocol::Type protocol,
-    const routing::AccessMode access_mode, const std::string &bind_address,
-    const mysql_harness::Path &named_socket, const std::string &route_name,
-    int max_connections, std::chrono::milliseconds destination_connect_timeout,
-    unsigned long long max_connect_errors,
-    std::chrono::milliseconds client_connect_timeout,
-    unsigned int net_buffer_length, SslMode client_ssl_mode,
-    TlsServerContext *client_ssl_ctx, SslMode server_ssl_mode,
-    DestinationTlsContext *dest_ssl_ctx)
-    : context_(protocol, route_name, net_buffer_length,
-               destination_connect_timeout, client_connect_timeout,
-               mysql_harness::TCPAddress(bind_address, port), named_socket,
-               max_connect_errors, client_ssl_mode, client_ssl_ctx,
-               server_ssl_mode, dest_ssl_ctx),
+MySQLRouting::MySQLRouting(const RoutingConfig &routing_config,
+                           net::io_context &io_ctx,
+                           const std::string &route_name,
+                           TlsServerContext *client_ssl_ctx,
+                           DestinationTlsContext *dest_ssl_ctx)
+    : context_(routing_config, route_name,
+
+               client_ssl_ctx, dest_ssl_ctx),
       io_ctx_{io_ctx},
-      routing_strategy_(routing_strategy),
-      access_mode_(access_mode),
-      max_connections_(set_max_connections(max_connections)),
+      routing_strategy_(routing_config.routing_strategy),
+      mode_(routing_config.mode),
+      max_connections_(set_max_connections(routing_config.max_connections)),
       service_tcp_(io_ctx_)
 #if !defined(_WIN32)
       ,
       service_named_socket_(io_ctx_)
 #endif
 {
-  validate_destination_connect_timeout(destination_connect_timeout);
+  validate_destination_connect_timeout(
+      std::chrono::milliseconds{routing_config.connect_timeout * 1000});
 
 #ifdef _WIN32
-  if (named_socket.is_set()) {
+  if (routing_config.named_socket.is_set()) {
     throw std::invalid_argument(
         "'socket' configuration item is not supported on Windows platform");
   }
 #endif
 
   // This test is only a basic assertion.  Calling code is expected to check the
-  // validity of these arguments more thoroughally. At the time of writing,
+  // validity of these arguments more thoroughly. At the time of writing,
   // routing_plugin.cc : init() is one such place.
-  if (!context_.get_bind_address().port() && !named_socket.is_set()) {
+  if (!context_.get_bind_address().port() &&
+      !routing_config.named_socket.is_set()) {
     throw std::invalid_argument(
         string_format("No valid address:port (%s:%d) or socket (%s) to bind to",
-                      bind_address.c_str(), port, named_socket.c_str()));
+                      routing_config.bind_address.address().c_str(),
+                      routing_config.bind_address.port(),
+                      routing_config.named_socket.c_str()));
   }
 }
 
-void MySQLRouting::start(mysql_harness::PluginFuncEnv *env) {
+void MySQLRouting::run(mysql_harness::PluginFuncEnv *env) {
   my_thread_self_setname(get_routing_thread_name(context_.get_name(), "RtM")
                              .c_str());  // "Rt main" would be too long :(
   if (context_.get_bind_address().port() > 0) {
@@ -166,7 +162,7 @@ void MySQLRouting::start(mysql_harness::PluginFuncEnv *env) {
                get_routing_strategy_name(routing_strategy_).c_str());
     else
       log_info("[%s] started: routing mode = %s", context_.get_name().c_str(),
-               get_access_mode_name(access_mode_).c_str());
+               get_mode_name(mode_).c_str());
   }
 #ifndef _WIN32
   if (context_.get_bind_named_socket().is_set()) {
@@ -184,7 +180,7 @@ void MySQLRouting::start(mysql_harness::PluginFuncEnv *env) {
 #endif
   if (context_.get_bind_address().port() > 0 ||
       context_.get_bind_named_socket().is_set()) {
-    auto res = start_acceptor(env);
+    auto res = run_acceptor(env);
     if (!res) {
       clear_running(env);
       throw std::runtime_error(
@@ -276,6 +272,15 @@ class Acceptor {
     }
   }
 
+  template <typename S>
+  void graceful_shutdown(S &sock) {
+    sock->shutdown(net::socket_base::shutdown_send);
+    // we want to capture the socket shared_ptr by value to make sure it lives
+    // when the async handler gets executed
+    sock->async_wait(net::socket_base::wait_read,
+                     [=](auto /*ec*/) { sock->close(); });
+  }
+
   void operator()(std::error_code ec) {
     waitable_([this, ec](auto &) {
       if (ec) {
@@ -320,14 +325,15 @@ class Acceptor {
           }
 
           // accepted
-          auto sock = std::move(sock_res.value());
+          auto sock =
+              std::make_shared<socket_type>(std::move(sock_res.value()));
 
 #if 0 && defined(SO_INCOMING_CPU)
         // try to run the socket-io on the CPU which also handles the kernels
         // socket-RX queue
         net::socket_option::integer<SOL_SOCKET, SO_INCOMING_CPU>
             incoming_cpu_opt;
-        const auto incoming_cpu_res = sock.get_option(incoming_cpu_opt);
+        const auto incoming_cpu_res = sock->get_option(incoming_cpu_opt);
         if (incoming_cpu_res) {
           auto affine_cpu = incoming_cpu_opt.value();
           if (affine_cpu >= 0) {
@@ -341,8 +347,8 @@ class Acceptor {
               if (affinity.any() && affinity.test(affine_cpu)) {
                 // replace the io-context of the socket
                 sock =
-                    socket_type(io_thread.context(), client_endpoint.protocol(),
-                                sock.release().value());
+                    std::make_shared<socket_type>(socket_type(io_thread.context(), 
+                                client_endpoint.protocol(), sock->release().value()));
                 break;
               }
             }
@@ -362,7 +368,7 @@ class Acceptor {
             if (std::is_same<client_protocol_type, net::ip::tcp>::value) {
               log_debug("[%s] fd=%d connection accepted at %s",
                         r_->get_context().get_name().c_str(),
-                        sock.native_handle(),
+                        sock->native_handle(),
                         r_->get_context().get_bind_address().str().c_str());
 #ifdef NET_TS_HAS_UNIX_SOCKET
             } else if (std::is_same<client_protocol_type,
@@ -377,10 +383,10 @@ class Acceptor {
             //
             // if we can't get the PID, we'll just show a simpler errormsg
 
-            if (0 == unix_getpeercred(sock, peer_pid, peer_uid)) {
+            if (0 == unix_getpeercred(*sock, peer_pid, peer_uid)) {
               log_debug(
                   "[%s] fd=%d connection accepted at %s from (pid=%d, uid=%d)",
-                  r_->get_context().get_name().c_str(), sock.native_handle(),
+                  r_->get_context().get_name().c_str(), sock->native_handle(),
                   r_->get_context().get_bind_named_socket().str().c_str(),
                   peer_pid, peer_uid);
             } else
@@ -388,7 +394,7 @@ class Acceptor {
 #endif
               log_debug(
                   "[%s] fd=%d connection accepted at %s",
-                  r_->get_context().get_name().c_str(), sock.native_handle(),
+                  r_->get_context().get_name().c_str(), sock->native_handle(),
                   r_->get_context().get_bind_named_socket().str().c_str());
 #endif
             }
@@ -407,20 +413,20 @@ class Acceptor {
             if (!encode_res) {
               log_debug("[%s] fd=%d encode error: %s",
                         r_->get_context().get_name().c_str(),
-                        sock.native_handle(),
+                        sock->native_handle(),
                         encode_res.error().message().c_str());
             } else {
-              auto write_res = net::write(sock, net::buffer(error_frame));
+              auto write_res = net::write(*sock, net::buffer(error_frame));
               if (!write_res) {
                 log_debug("[%s] fd=%d write error: %s",
                           r_->get_context().get_name().c_str(),
-                          sock.native_handle(),
+                          sock->native_handle(),
                           write_res.error().message().c_str());
               }
             }
 
             // log_info("%s", msg.c_str());
-            sock.close();
+            graceful_shutdown(sock);
           } else {
             const auto current_total_connections =
                 routing_component.current_total_connections();
@@ -444,20 +450,18 @@ class Acceptor {
               if (!encode_res) {
                 log_debug("[%s] fd=%d encode error: %s",
                           r_->get_context().get_name().c_str(),
-                          sock.native_handle(),
+                          sock->native_handle(),
                           encode_res.error().message().c_str());
               } else {
-                auto write_res = net::write(sock, net::buffer(error_frame));
+                auto write_res = net::write(*sock, net::buffer(error_frame));
                 if (!write_res) {
                   log_debug("[%s] fd=%d write error: %s",
                             r_->get_context().get_name().c_str(),
-                            sock.native_handle(),
+                            sock->native_handle(),
                             write_res.error().message().c_str());
                 }
               }
-
-              sock.close();  // no shutdown() before close()
-
+              graceful_shutdown(sock);
               if (max_route_connections_limit_reached) {
                 log_warning(
                     "[%s] reached max active connections for route (%d max=%d)",
@@ -472,9 +476,9 @@ class Acceptor {
               }
             } else {
               if (std::is_same_v<Protocol, net::ip::tcp>) {
-                sock.set_option(net::ip::tcp::no_delay{true});
+                sock->set_option(net::ip::tcp::no_delay{true});
               }
-              r_->create_connection<client_protocol_type>(std::move(sock),
+              r_->create_connection<client_protocol_type>(std::move(*sock),
                                                           client_endpoint);
             }
           }
@@ -554,7 +558,7 @@ std::string MySQLRouting::get_port_str() const {
   return port_str;
 }
 
-stdx::expected<void, std::error_code> MySQLRouting::start_acceptor(
+stdx::expected<void, std::error_code> MySQLRouting::run_acceptor(
     mysql_harness::PluginFuncEnv *env) {
   destination_->start(env);
   destination_->register_start_router_socket_acceptor(
@@ -666,6 +670,28 @@ stdx::expected<void, std::error_code> MySQLRouting::start_acceptor(
 }
 
 stdx::expected<void, std::error_code>
+MySQLRouting::restart_accepting_connections() {
+  const auto result = start_accepting_connections();
+
+  // if we failed to restart the acceptor we keep retrying every 1 second if we
+  // have standalone destination. For the metadata-cache destinations there is
+  // another mechanism for that,` that uses metadata TTL as a trigger for that.
+  if (is_destination_standalone_ && !result) {
+    accept_port_reopen_retry_timer_.cancel();
+    accept_port_reopen_retry_timer_.expires_after(1s);
+    accept_port_reopen_retry_timer_.async_wait(
+        [this](const std::error_code &ec) {
+          if (ec && ec == std::errc::operation_canceled) {
+            return;
+          }
+          restart_accepting_connections();
+        });
+  }
+
+  return result;
+}
+
+stdx::expected<void, std::error_code>
 MySQLRouting::start_accepting_connections() {
   if (!is_running()) {
     return stdx::make_unexpected(
@@ -754,7 +780,7 @@ void MySQLRouting::create_connection(
 
   switch (context_.get_protocol()) {
     case BaseProtocol::Type::kClassicProtocol: {
-      auto new_connection = std::make_unique<MysqlRoutingClassicConnection>(
+      auto new_connection = MysqlRoutingClassicConnection::create(
           context_, destinations(),
           std::make_unique<BasicConnection<ClientProtocol>>(
               std::move(client_socket), client_endpoint),
@@ -768,7 +794,7 @@ void MySQLRouting::create_connection(
       net::defer(io_ctx, [new_conn_ptr]() { new_conn_ptr->async_run(); });
     } break;
     case BaseProtocol::Type::kXProtocol: {
-      auto new_connection = std::make_unique<MysqlRoutingXConnection>(
+      auto new_connection = MysqlRoutingXConnection::create(
           context_, destinations(),
           std::make_unique<BasicConnection<ClientProtocol>>(
               std::move(client_socket), client_endpoint),
@@ -777,7 +803,7 @@ void MySQLRouting::create_connection(
       auto *new_conn_ptr = new_connection.get();
 
       connection_container_.add_connection(std::move(new_connection));
-      new_conn_ptr->async_run();
+      net::defer(io_ctx, [new_conn_ptr]() { new_conn_ptr->async_run(); });
     } break;
   }
 }
@@ -957,7 +983,7 @@ void MySQLRouting::set_destinations_from_uri(const mysqlrouter::URI &uri) {
 
     destination_ = std::make_unique<DestMetadataCacheGroup>(
         io_ctx_, uri.host, routing_strategy_, uri.query,
-        context_.get_protocol(), access_mode_);
+        context_.get_protocol(), mode_);
   } else {
     throw std::runtime_error(string_format(
         "Invalid URI scheme; expecting: 'metadata-cache' is: '%s'",
@@ -968,11 +994,11 @@ void MySQLRouting::set_destinations_from_uri(const mysqlrouter::URI &uri) {
 namespace {
 
 routing::RoutingStrategy get_default_routing_strategy(
-    const routing::AccessMode access_mode) {
-  switch (access_mode) {
-    case routing::AccessMode::kReadOnly:
+    const routing::Mode mode) {
+  switch (mode) {
+    case routing::Mode::kReadOnly:
       return routing::RoutingStrategy::kRoundRobin;
-    case routing::AccessMode::kReadWrite:
+    case routing::Mode::kReadWrite:
       return routing::RoutingStrategy::kFirstAvailable;
     default:;  // fall-through
   }
@@ -1008,7 +1034,7 @@ void MySQLRouting::set_destinations_from_csv(const std::string &csv) {
   // if no routing_strategy is defined for standalone routing
   // we set the default based on the mode
   if (routing_strategy_ == RoutingStrategy::kUndefined) {
-    routing_strategy_ = get_default_routing_strategy(access_mode_);
+    routing_strategy_ = get_default_routing_strategy(mode_);
   }
 
   is_destination_standalone_ = true;
@@ -1072,7 +1098,7 @@ int MySQLRouting::set_max_connections(int maximum) {
   return max_connections_;
 }
 
-routing::AccessMode MySQLRouting::get_mode() const { return access_mode_; }
+routing::Mode MySQLRouting::get_mode() const { return mode_; }
 
 routing::RoutingStrategy MySQLRouting::get_routing_strategy() const {
   return routing_strategy_;
@@ -1084,6 +1110,11 @@ std::vector<mysql_harness::TCPAddress> MySQLRouting::get_destinations() const {
 
 std::vector<MySQLRoutingAPI::ConnData> MySQLRouting::get_connections() {
   return connection_container_.get_all_connections_info();
+}
+
+MySQLRoutingConnectionBase *MySQLRouting::get_connection(
+    const std::string &client_endpoint) {
+  return connection_container_.get_connection(client_endpoint);
 }
 
 bool MySQLRouting::is_accepting_connections() const {

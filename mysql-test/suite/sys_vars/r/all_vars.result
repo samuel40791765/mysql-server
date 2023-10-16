@@ -30,6 +30,8 @@ default_collation_for_utf8mb4
 default_collation_for_utf8mb4
 disabled_storage_engines
 disabled_storage_engines
+explain_format
+explain_format
 generated_random_password_length
 generated_random_password_length
 group_replication_consistency
@@ -158,6 +160,7 @@ sql_require_primary_key
 sql_require_primary_key
 sql_slave_skip_counter
 sql_slave_skip_counter
+statement_id
 sync_master_info
 sync_master_info
 temptable_max_mmap
@@ -166,6 +169,8 @@ temptable_use_mmap
 temptable_use_mmap
 terminology_use_previous
 terminology_use_previous
+tls_certificates_enforced_validation
+tls_certificates_enforced_validation
 tls_ciphersuites
 tls_ciphersuites
 use_secondary_engine

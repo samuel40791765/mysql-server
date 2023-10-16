@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -54,6 +54,8 @@ Plugin_table table_hosts::m_table_def(
     "  HOST CHAR(255) CHARACTER SET ASCII default null,\n"
     "  CURRENT_CONNECTIONS bigint not null,\n"
     "  TOTAL_CONNECTIONS bigint not null,\n"
+    "  MAX_SESSION_CONTROLLED_MEMORY BIGINT unsigned not null,\n"
+    "  MAX_SESSION_TOTAL_MEMORY BIGINT unsigned not null,\n"
     "  UNIQUE KEY (HOST) USING HASH\n",
     /* Options */
     " ENGINE=PERFORMANCE_SCHEMA",
@@ -89,7 +91,7 @@ PFS_engine_table *table_hosts::create(PFS_engine_table_share *) {
   return new table_hosts();
 }
 
-int table_hosts::delete_all_rows(void) {
+int table_hosts::delete_all_rows() {
   reset_events_waits_by_thread();
   reset_events_waits_by_account();
   reset_events_waits_by_host();
@@ -162,6 +164,8 @@ int table_hosts::read_row_values(TABLE *table, unsigned char *buf,
           break;
         case 1: /* CURRENT_CONNECTIONS */
         case 2: /* TOTAL_CONNECTIONS */
+        case 3: /* MAX_SESSION_CONTROLLED_MEMORY */
+        case 4: /* MAX_SESSION_TOTAL_MEMORY */
           m_row.m_connection_stat.set_field(f->field_index() - 1, f);
           break;
         default:

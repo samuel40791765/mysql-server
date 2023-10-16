@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -56,10 +56,10 @@
 #include "m_string.h"
 #include "my_dbug.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_sys.h"
 #include "my_thread.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_thread.h"
 #include "mysqld_error.h"
 #include "sql-common/net_ns.h"
@@ -151,7 +151,9 @@ class Channel_info_local_socket : public Channel_info {
         mysql_socket_vio_new(m_connect_sock, VIO_TYPE_SOCKET, VIO_LOCALHOST);
 #ifdef USE_PPOLL_IN_VIO
     if (vio != nullptr) {
-      vio->thread_id = my_thread_self();
+      // Unset thread_id, to ensure that all shutdowns explicitly set the
+      // current real_id from the THD.
+      vio->thread_id.reset();
       vio->signal_mask = mysqld_signal_mask;
     }
 #endif
@@ -214,7 +216,7 @@ class Channel_info_tcpip_socket : public Channel_info {
     Vio *vio = mysql_socket_vio_new(m_connect_sock, VIO_TYPE_TCPIP, 0);
 #ifdef USE_PPOLL_IN_VIO
     if (vio != nullptr) {
-      vio->thread_id = my_thread_self();
+      vio->thread_id.reset();
       vio->signal_mask = mysqld_signal_mask;
     }
 #endif
@@ -408,7 +410,7 @@ class TCP_socket {
           dummy IPv6-socket. Do not instrument that socket by P_S.
         */
 
-        MYSQL_SOCKET s = mysql_socket_socket(0, AF_INET6, SOCK_STREAM, 0);
+        const MYSQL_SOCKET s = mysql_socket_socket(0, AF_INET6, SOCK_STREAM, 0);
         ipv6_available = mysql_socket_getfd(s) != INVALID_SOCKET;
         if (ipv6_available) mysql_socket_close(s);
       }
@@ -619,12 +621,12 @@ class TCP_socket {
 */
 class Unix_socket {
   std::string m_unix_sockname;  // pathname for socket to bind to.
-  uint m_backlog;  // backlog specifying lenght of pending queue connection.
+  uint m_backlog;  // backlog specifying length of pending queue connection.
   /**
     Create a lockfile which contains the pid of the mysqld instance started
     and pathname as name of unix socket pathname appended with .lock
 
-    @retval   false if lockfile creation is successful else true if lockfile
+    @retval   False if lockfile creation is successful else true if lockfile
               file could not be created.
 
   */
@@ -659,7 +661,9 @@ class Unix_socket {
       return MYSQL_INVALID_SOCKET;
     }
 
-    if (create_lockfile()) {
+    if (create_lockfile() ||
+        DBUG_EVALUATE_IF("simulate_create_socket_lockfile_error", true,
+                         false)) {
       LogErr(ERROR_LEVEL, ER_CONN_UNIX_LOCK_FILE_FAIL);
       return MYSQL_INVALID_SOCKET;
     }
@@ -1069,15 +1073,15 @@ static bool handle_admin_socket(
   fd_set client_fds;
   FD_ZERO(&client_fds);
   FD_SET(mysql_socket_getfd(admin_socket), &client_fds);
-  int max_used_connection = mysql_socket_getfd(admin_socket);
+  const int max_used_connection = mysql_socket_getfd(admin_socket);
 #endif
 
   while (!connection_events_loop_aborted()) {
 #ifdef HAVE_POLL
-    int retval = poll(fds, NUMBER_OF_POLLED_FDS, -1);
+    const int retval = poll(fds, NUMBER_OF_POLLED_FDS, -1);
 #else
     fd_set read_fds = client_fds;
-    int retval = select(max_used_connection, &read_fds, 0, 0, 0);
+    const int retval = select(max_used_connection, &read_fds, 0, 0, 0);
 #endif
 
     if (retval < 0 && socket_errno != SOCKET_EINTR) {
@@ -1110,7 +1114,7 @@ static bool handle_admin_socket(
 #endif
 
     MYSQL_SOCKET connect_sock;
-    bool accept_retval = accept_connection(admin_socket, &connect_sock);
+    const bool accept_retval = accept_connection(admin_socket, &connect_sock);
 
 #ifdef HAVE_SETNS
     if (!network_namespace_for_listening_socket.empty() &&
@@ -1215,7 +1219,7 @@ static inline bool spawn_admin_thread(MYSQL_SOCKET admin_socket,
 
   if (arg_for_admin_socket_thread == nullptr) return true;
 
-  int ret = mysql_thread_create(
+  const int ret = mysql_thread_create(
       key_thread_handle_con_admin_sockets, &admin_socket_thread_id,
       &admin_socket_thread_attrib, admin_socket_thread,
       (void *)arg_for_admin_socket_thread);
@@ -1324,13 +1328,13 @@ const Listen_socket *Mysqld_socket_listener::get_listen_socket() const {
   if (!m_admin_bind_address.address.empty() &&
       !m_use_separate_thread_for_admin &&
       FD_ISSET(mysql_socket_getfd(m_admin_interface_listen_socket),
-               &m_select_info.m_read_fds)) {
+               const_cast<fd_set *>(&m_select_info.m_read_fds))) {
     return &m_socket_vector[0];
   }
 
   for (const auto &socket_element : m_socket_vector) {
     if (FD_ISSET(mysql_socket_getfd(socket_element.m_socket),
-                 &m_select_info.m_read_fds)) {
+                 const_cast<fd_set *>(&m_select_info.m_read_fds))) {
       return &socket_element;
     }
   }

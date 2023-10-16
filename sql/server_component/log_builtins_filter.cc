@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -77,6 +77,7 @@
 
 #include "log_builtins_filter_imp.h"
 #include "log_builtins_imp.h"
+#include "m_string.h"
 #include "my_atomic.h"
 #include "my_systime.h"  // my_micro_time()
 #include "mysys_err.h"   // EE_ERROR_LAST for globerrs
@@ -288,7 +289,7 @@ static void log_builtins_filter_ruleset_free(log_filter_ruleset **ruleset) {
 
 /**
   Defaults for when the configuration engine isn't loaded;
-  aim for 5.7 compatibilty.
+  aim for 5.7 compatibility.
 */
 static void log_builtins_filter_set_defaults(log_filter_ruleset *ruleset) {
   log_filter_rule *r;
@@ -401,8 +402,8 @@ static log_filter_apply log_filter_try_apply(log_line *ll, int ln,
       break;
 
     case LOG_FILTER_THROTTLE: {
-      ulonglong now = my_micro_time();
-      ulong rate = (ulong)(
+      const ulonglong now = my_micro_time();
+      const ulong rate = (ulong)(
           (r->aux.data.data_integer < 0) ? 0 : r->aux.data.data_integer);
       ulong suppressed = 0;
       ulong matches;
@@ -480,7 +481,7 @@ static log_filter_apply log_filter_try_apply(log_line *ll, int ln,
       if (ln < 0) return LOG_FILTER_APPLY_TARGET_NOT_IN_LOG_LINE;
 
       {
-        log_item_type t = ll->item[ln].type;
+        const log_item_type t = ll->item[ln].type;
 
         log_line_item_remove(ll, ln);
 

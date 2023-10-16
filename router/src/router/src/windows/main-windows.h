@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -25,11 +25,8 @@
 #ifndef ROUTER_MAIN_WINDOWS_INCLUDED
 #define ROUTER_MAIN_WINDOWS_INCLUDED
 
-#include "mysqlrouter/router_export.h"
+int proxy_main(int (*real_main)(int, char **, bool), int argc, char **argv);
 
-int ROUTER_LIB_EXPORT proxy_main(int (*real_main)(int, char **, bool), int argc,
-                                 char **argv);
-
-std::string ROUTER_LIB_EXPORT get_logging_folder(const std::string &);
+std::string get_logging_folder(const std::string &);
 
 #endif  // ROUTER_MAIN_WINDOWS_INCLUDED

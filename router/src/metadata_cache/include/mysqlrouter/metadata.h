@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -28,7 +28,9 @@
 #include "mysqlrouter/metadata_cache_export.h"
 
 #include <atomic>
+#include <chrono>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,7 +51,7 @@ class METADATA_CACHE_EXPORT MetaData {
  public:
   using JsonAllocator = rapidjson::CrtAllocator;
   using JsonDocument = rapidjson::Document;
-  // username as key, password hash and priviliges as value
+  // username as key, password hash and privileges as value
   using auth_credentials_t =
       std::map<std::string, std::pair<std::string, JsonDocument>>;
 
@@ -59,8 +61,8 @@ class METADATA_CACHE_EXPORT MetaData {
       const std::atomic<bool> &terminated,
       mysqlrouter::TargetCluster &target_cluster, const unsigned router_id,
       const metadata_cache::metadata_servers_list_t &metadata_servers,
-      bool needs_writable_node, const std::string &cluster_type_specific_id,
-      const std::string &clusterset_id, std::size_t &instance_id) = 0;
+      bool needs_writable_node, const std::string &clusterset_id,
+      bool whole_topology, std::size_t &instance_id) = 0;
 
   virtual bool update_router_attributes(
       const metadata_cache::metadata_server_t &rw_server,
@@ -77,8 +79,7 @@ class METADATA_CACHE_EXPORT MetaData {
   virtual void disconnect() = 0;
 
   virtual void setup_notifications_listener(
-      const std::vector<metadata_cache::ManagedInstance> &instances,
-      const mysqlrouter::TargetCluster &target_cluster,
+      const metadata_cache::ClusterTopology &cluster_topology,
       const std::function<void()> &callback) = 0;
 
   virtual void shutdown_notifications_listener() = 0;
@@ -88,8 +89,11 @@ class METADATA_CACHE_EXPORT MetaData {
   virtual mysqlrouter::ClusterType get_cluster_type() = 0;
 
   virtual auth_credentials_t fetch_auth_credentials(
-      const mysqlrouter::TargetCluster &target_cluster,
-      const std::string &cluster_type_specific_id) = 0;
+      const metadata_cache::metadata_server_t &md_server,
+      const mysqlrouter::TargetCluster &target_cluster) = 0;
+
+  virtual std::optional<std::chrono::seconds>
+  get_periodic_stats_update_frequency() noexcept = 0;
 
   MetaData() = default;
   // disable copy as it isn't needed right now. Feel free to enable

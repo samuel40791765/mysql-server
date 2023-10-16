@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -153,14 +153,17 @@ static inline void rec_set_deleted_flag_new(rec_t *rec,
                                             bool flag);
 
 /** The following function is used to set the instant bit.
-@param[in,out]  rec     new-style physical record
-@param[in]      flag    set the bit to this flag */
-static inline void rec_set_instant_flag_new(rec_t *rec, bool flag);
+@param[in,out]  rec     new-style physical record */
+static inline void rec_new_set_instant(rec_t *rec);
 
 /** The following function is used to set the row version bit.
-@param[in,out]  rec     new-style (COMPACT/DYNAMIC) physical record
-@param[in]      flag    set the bit to this flag */
-static inline void rec_new_set_versioned(rec_t *rec, bool flag);
+@param[in,out]  rec     new-style (COMPACT/DYNAMIC) physical record */
+static inline void rec_new_set_versioned(rec_t *rec);
+
+/** The following function is used to reset the instant bit and the row version
+bit.
+@param[in,out]  rec     new-style (COMPACT/DYNAMIC) physical record */
+static inline void rec_new_reset_instant_version(rec_t *rec);
 
 /** The following function is used to set the instant bit.
 @param[in,out]  rec     old-style (REDUNDANT) physical record
@@ -209,14 +212,6 @@ physical record are stored externally.
 @return number of externally stored columns */
 [[nodiscard]] ulint rec_get_n_extern_new(const rec_t *rec,
                                          const dict_index_t *index, ulint n);
-
-#ifdef UNIV_DEBUG
-#define rec_get_offsets(rec, index, offsets, n, heap) \
-  rec_get_offsets_func(rec, index, offsets, n, UT_LOCATION_HERE, heap)
-#else /* UNIV_DEBUG */
-#define rec_get_offsets(rec, index, offsets, n, heap) \
-  rec_get_offsets_func(rec, index, offsets, n, heap)
-#endif /* UNIV_DEBUG */
 
 /** Gets the value of the specified field in the record in old style.
 This is only used for record from instant index, which is clustered
@@ -316,14 +311,16 @@ class Rec_offsets : private ut::Non_copyable {
   instance. You can use its value as long as this object does not go out of
   scope (which can free the buffer), and you don't call compute() again (which
   can overwrite the offsets).
-  @param[in]  rec   The record for which you want to compute the offsets
-  @param[in]  index The index which contains the record
+  @param[in]  rec      The record for which you want to compute the offsets
+  @param[in]  index    The index which contains the record
+  @param[in]  n_fields Number of columns to scan
   @return A pointer to offsets array owned by this instance. Valid till next
   call to compute() or end of this instance lifetime.
   */
-  const ulint *compute(const rec_t *rec, const dict_index_t *index) {
-    m_offsets =
-        rec_get_offsets(rec, index, m_offsets, ULINT_UNDEFINED, &m_heap);
+  const ulint *compute(const rec_t *rec, const dict_index_t *index,
+                       const ulint n_fields = ULINT_UNDEFINED) {
+    m_offsets = rec_get_offsets(rec, index, m_offsets, n_fields,
+                                UT_LOCATION_HERE, &m_heap);
     return m_offsets;
   }
   /** Deallocated dynamically allocated memory, if any. */
@@ -435,8 +432,7 @@ void rec_deserialize_init_offsets(const rec_t *rec, const dict_index_t *index,
 @see rec_deserialize_init_offsets() */
 void rec_serialize_dtuple(rec_t *rec, const dict_index_t *index,
                           const dfield_t *fields, ulint n_fields,
-                          const dtuple_t *v_entry,
-                          uint8_t rec_version = MAX_ROW_VERSION);
+                          const dtuple_t *v_entry, uint8_t rec_version);
 
 /** Copies the first n fields of a physical record to a new physical record in
 a buffer.
@@ -452,15 +448,16 @@ rec_t *rec_copy_prefix_to_buf(const rec_t *rec, const dict_index_t *index,
 /** Compute a hash value of a prefix of a leaf page record.
 @param[in]      rec             leaf page record
 @param[in]      offsets         rec_get_offsets(rec)
-@param[in]      n_fields        number of complete fields to fold
-@param[in]      n_bytes         number of bytes to fold in the last field
-@param[in]      fold            fold value of the index identifier
+@param[in]      n_fields        number of complete fields to hash
+@param[in]      n_bytes         number of bytes to hash in the last field
+@param[in]      hashed_value    hash value of the index identifier
 @param[in]      index           index where the record resides
-@return the folded value */
-[[nodiscard]] static inline ulint rec_fold(const rec_t *rec,
-                                           const ulint *offsets, ulint n_fields,
-                                           ulint n_bytes, ulint fold,
-                                           const dict_index_t *index);
+@return the hashed value */
+[[nodiscard]] static inline uint64_t rec_hash(const rec_t *rec,
+                                              const ulint *offsets,
+                                              ulint n_fields, ulint n_bytes,
+                                              uint64_t hashed_value,
+                                              const dict_index_t *index);
 #endif /* !UNIV_HOTBACKUP */
 
 /** Builds a physical record out of a data tuple and stores it into the given
@@ -685,6 +682,15 @@ constexpr ulint REC_MAX_DATA_SIZE = 16384;
 @return true, if version is to be stored */
 bool is_store_version(const dict_index_t *index, size_t n_tuple_fields);
 
+/* A temp record, generated for a REDUNDANT row record, will have info bits
+iff table has INSTANT ADD columns. And if record has row version, then it will
+also be stored on temp record header. Following function finds the number of
+more bytes needed in record header to store this info.
+@param[in]  index record descriptor
+@param[in]  valid_version true if record has version
+@return number of bytes NULL pointer should be adjusted. */
+size_t get_extra_bytes_for_temp_redundant(const dict_index_t *index,
+                                          bool valid_version);
 #include "rem0rec.ic"
 
 #endif

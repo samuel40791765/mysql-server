@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2021, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -38,7 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "rem0cmp.h"
 #include "row0sel.h"
 
-/** Dummy adress used when we should allocate a buffer of size 0 in
+/** Dummy address used when we should allocate a buffer of size 0 in
 eval_node_alloc_val_buf */
 
 static byte eval_dummy;

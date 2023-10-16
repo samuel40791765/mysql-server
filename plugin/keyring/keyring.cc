@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -109,11 +109,17 @@ SERVICE_TYPE(log_builtins_string) *log_bs = nullptr;
 static int keyring_init(MYSQL_PLUGIN plugin_info [[maybe_unused]]) {
   if (init_logging_service_for_plugin(&reg_srv, &log_bi, &log_bs)) return true;
 
+  logger.reset(new Logger());
+  logger->log(WARNING_LEVEL, ER_SERVER_WARN_DEPRECATED, "keyring_file plugin",
+              "component_keyring_file");
+
   try {
     SSL_library_init();  // always returns 1
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
     ERR_load_BIO_strings();
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
+#endif /* OPENSSL_VERSION_NUMBER < 0x30000000L */
 
 #ifdef HAVE_PSI_INTERFACE
     keyring_init_psi_keys();
@@ -123,7 +129,6 @@ static int keyring_init(MYSQL_PLUGIN plugin_info [[maybe_unused]]) {
 
     if (init_keyring_locks()) return true;
 
-    logger.reset(new Logger());
     if (create_keyring_dir_if_does_not_exist(keyring_file_data_value)) {
       logger->log(ERROR_LEVEL, ER_KEYRING_FAILED_TO_CREATE_KEYRING_DIR);
       return true;

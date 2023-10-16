@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,12 +29,11 @@
 #include <vector>
 
 #include "field_types.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "mem_root_deque.h"
 #include "my_alloc.h"
 #include "my_dbug.h"
 #include "mysql/mysql_lex_string.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "scope_guard.h"
@@ -53,6 +52,7 @@
 #include "sql/item_func.h"
 #include "sql/item_timefunc.h"
 #include "sql/key_spec.h"
+#include "sql/lex.h"
 #include "sql/mdl.h"
 #include "sql/mysqld.h"                   // global_system_variables
 #include "sql/opt_explain_json.h"         // Explain_format_JSON
@@ -60,11 +60,13 @@
 #include "sql/parse_location.h"
 #include "sql/parse_tree_column_attrs.h"  // PT_field_def_base
 #include "sql/parse_tree_hints.h"
+#include "sql/parse_tree_items.h"
 #include "sql/parse_tree_partitions.h"  // PT_partition
 #include "sql/parse_tree_window.h"      // PT_window
 #include "sql/parser_yystype.h"
 #include "sql/query_options.h"
 #include "sql/query_result.h"
+#include "sql/query_term.h"
 #include "sql/sp.h"  // sp_add_used_routine
 #include "sql/sp_head.h"
 #include "sql/sp_instr.h"  // sp_instr_set
@@ -74,6 +76,7 @@
 #include "sql/sql_class.h"
 #include "sql/sql_cmd.h"
 #include "sql/sql_cmd_ddl_table.h"
+#include "sql/sql_component.h"  // Sql_cmd_component
 #include "sql/sql_const.h"
 #include "sql/sql_data_change.h"
 #include "sql/sql_delete.h"  // Sql_cmd_delete...
@@ -86,12 +89,15 @@
 #include "sql/sql_show_processlist.h"
 #include "sql/sql_show_status.h"  // build_show_session_status, ...
 #include "sql/sql_update.h"       // Sql_cmd_update...
+#include "sql/strfunc.h"
 #include "sql/system_variables.h"
 #include "sql/table_function.h"
 #include "sql/thr_malloc.h"
 #include "sql/trigger_def.h"
 #include "sql/window.h"  // Window
 #include "sql_string.h"
+#include "string_with_len.h"
+#include "strxmov.h"
 #include "template_utils.h"
 
 static constexpr const size_t MAX_SYS_VAR_LENGTH{32};
@@ -114,12 +120,21 @@ bool contextualize_safe(Context *pc, mem_root_deque<Item *> *list) {
 }
 
 /**
-  Convenience function that calls Parse_tree_node::contextualize() on each of
+  Convenience function that calls Parse_tree_node::do_contextualize() on each of
   the nodes that are non-NULL, stopping when a call returns true.
 */
 template <typename Context, typename Node, typename... Nodes>
 bool contextualize_safe(Context *pc, Node node, Nodes... nodes) {
   return contextualize_safe(pc, node) || contextualize_safe(pc, nodes...);
+}
+
+static void print_table_ident(const THD *thd, const Table_ident *ident,
+                              String *s) {
+  if (ident->db.length > 0) {
+    append_identifier(thd, s, ident->db.str, ident->db.length);
+    s->append('.');
+  }
+  append_identifier(thd, s, ident->table.str, ident->table.length);
 }
 
 /**
@@ -147,39 +162,41 @@ PT_joined_table *PT_table_reference::add_cross_join(PT_cross_join *cj) {
 }
 
 bool PT_joined_table::contextualize_tabs(Parse_context *pc) {
-  if (tr1 != nullptr) return false;  // already done
+  if (m_left_table_ref != nullptr) return false;  // already done
 
-  bool was_right = m_type & JTT_RIGHT;
-  if (was_right)  // rewrite to LEFT
-  {
+  bool was_right_join = m_type & JTT_RIGHT;
+  // rewrite to LEFT JOIN
+  if (was_right_join) {
     m_type =
         static_cast<PT_joined_table_type>((m_type & ~JTT_RIGHT) | JTT_LEFT);
-    std::swap(tab1_node, tab2_node);
+    std::swap(m_left_pt_table, m_right_pt_table);
   }
 
-  if (tab1_node->contextualize(pc) || tab2_node->contextualize(pc)) return true;
+  if (m_left_pt_table->contextualize(pc) || m_right_pt_table->contextualize(pc))
+    return true;
 
-  tr1 = tab1_node->value;
-  tr2 = tab2_node->value;
+  m_left_table_ref = m_left_pt_table->m_table_ref;
+  m_right_table_ref = m_right_pt_table->m_table_ref;
 
-  if (tr1 == nullptr || tr2 == nullptr) {
-    error(pc, join_pos);
+  if (m_left_table_ref == nullptr || m_right_table_ref == nullptr) {
+    error(pc, m_join_pos);
     return true;
   }
 
   if (m_type & JTT_LEFT) {
-    tr2->outer_join = true;
-    if (was_right) {
-      tr2->join_order_swapped = true;
-      tr2->query_block->set_right_joins();
+    m_right_table_ref->outer_join = true;
+    if (was_right_join) {
+      m_right_table_ref->join_order_swapped = true;
+      m_right_table_ref->query_block->set_right_joins();
     }
   }
 
   return false;
 }
 
-bool PT_option_value_no_option_type_charset::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_option_value_no_option_type_charset::do_contextualize(
+    Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -195,8 +212,8 @@ bool PT_option_value_no_option_type_charset::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_option_value_no_option_type_names::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_option_value_no_option_type_names::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -206,13 +223,13 @@ bool PT_option_value_no_option_type_names::contextualize(Parse_context *pc) {
   if (pctx && pctx->find_variable(names.str, names.length, false))
     my_error(ER_SP_BAD_VAR_SHADOW, MYF(0), names.str);
   else
-    error(pc, pos);
+    error(pc, m_error_pos);
 
-  return true;  // alwais fails with an error
+  return true;  // always fails with an error
 }
 
-bool PT_set_names::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_set_names::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -244,8 +261,8 @@ bool PT_set_names::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_group::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_group::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   Query_block *select = pc->select;
   select->parsing_place = CTX_GROUP_BY;
@@ -280,8 +297,8 @@ bool PT_group::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_order::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_order::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   pc->select->parsing_place = CTX_ORDER_BY;
   pc->thd->where = "global ORDER clause";
@@ -297,8 +314,9 @@ bool PT_order::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_order_expr::contextualize(Parse_context *pc) {
-  return super::contextualize(pc) || item_initial->itemize(pc, &item_initial);
+bool PT_order_expr::do_contextualize(Parse_context *pc) {
+  return super::do_contextualize(pc) ||
+         item_initial->itemize(pc, &item_initial);
 }
 
 /**
@@ -474,7 +492,7 @@ static bool add_system_variable_assignment(THD *thd, LEX_CSTRING prefix,
   if (val && val->type() == Item::FIELD_ITEM) {
     Item_field *item_field = down_cast<Item_field *>(val);
     if (item_field->table_name != nullptr) {
-      // Reject a dot-separated identified at the RHS of:
+      // Reject a dot-separated identifier as the RHS of:
       //    SET <variable_name> = <table_name>.<field_name>
       my_error(ER_WRONG_TYPE_FOR_VAR, MYF(0), var_tracker.get_var_name());
       return true;
@@ -492,13 +510,10 @@ static bool add_system_variable_assignment(THD *thd, LEX_CSTRING prefix,
   return lex->var_list.push_back(var);
 }
 
-bool PT_set_variable::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || itemize_safe(pc, &m_opt_expr)) {
+bool PT_set_variable::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || itemize_safe(pc, &m_opt_expr)) {
     return true;
   }
-
-  THD *const thd = pc->thd;
-  LEX *const lex = thd->lex;
   const bool is_1d_name = m_opt_prefix.str == nullptr;
 
   /*
@@ -525,7 +540,14 @@ bool PT_set_variable::contextualize(Parse_context *pc) {
     3. Process SP local variable assignment:
   */
 
+  THD *const thd = pc->thd;
+  LEX *const lex = thd->lex;
   if (is_1d_name) {
+    // Remove deprecation warning when FULL is used as keyword.
+    if (thd->get_stmt_da()->has_sql_condition(ER_WARN_DEPRECATED_IDENT)) {
+      thd->get_stmt_da()->reset_condition_info(thd);
+    }
+
     sp_variable *spv = find_sp_variable(*pc, m_name);
     if (spv != nullptr) {
       if (m_opt_expr == nullptr) {
@@ -570,9 +592,9 @@ bool PT_set_variable::contextualize(Parse_context *pc) {
                                         lex->option_type, m_opt_expr);
 }
 
-bool PT_option_value_no_option_type_password_for::contextualize(
+bool PT_option_value_no_option_type_password_for::do_contextualize(
     Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -616,8 +638,9 @@ bool PT_option_value_no_option_type_password_for::contextualize(
   return false;
 }
 
-bool PT_option_value_no_option_type_password::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_option_value_no_option_type_password::do_contextualize(
+    Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -657,23 +680,26 @@ bool PT_option_value_no_option_type_password::contextualize(Parse_context *pc) {
   return false;
 }
 
-PT_key_part_specification::PT_key_part_specification(Item *expression,
+PT_key_part_specification::PT_key_part_specification(const POS &pos,
+                                                     Item *expression,
                                                      enum_order order)
-    : m_expression(expression), m_order(order) {}
+    : super(pos), m_expression(expression), m_order(order) {}
 
 PT_key_part_specification::PT_key_part_specification(
-    const LEX_CSTRING &column_name, enum_order order, int prefix_length)
-    : m_expression(nullptr),
+    const POS &pos, const LEX_CSTRING &column_name, enum_order order,
+    int prefix_length)
+    : super(pos),
+      m_expression(nullptr),
       m_order(order),
       m_column_name(column_name),
       m_prefix_length(prefix_length) {}
 
-bool PT_key_part_specification::contextualize(Parse_context *pc) {
-  return super::contextualize(pc) || itemize_safe(pc, &m_expression);
+bool PT_key_part_specification::do_contextualize(Parse_context *pc) {
+  return super::do_contextualize(pc) || itemize_safe(pc, &m_expression);
 }
 
-bool PT_select_sp_var::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_select_sp_var::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   LEX *lex = pc->thd->lex;
 #ifndef NDEBUG
@@ -690,6 +716,35 @@ bool PT_select_sp_var::contextualize(Parse_context *pc) {
   offset = spv->offset;
 
   return false;
+}
+
+std::string PT_select_stmt::get_printable_parse_tree(THD *thd) {
+  Parse_context pc(thd, thd->lex->current_query_block(),
+                   /*show_parse_tree=*/true);
+
+  pc.m_show_parse_tree->push_level(m_pos, typeid(*this).name());
+
+  thd->lex->sql_command = m_sql_command;
+
+  if (m_qe->contextualize(&pc)) {
+    return "";
+  }
+
+  const bool has_into_clause_inside_query_block = thd->lex->result != nullptr;
+
+  if (has_into_clause_inside_query_block && m_into != nullptr) {
+    my_error(ER_MULTIPLE_INTO_CLAUSES, MYF(0));
+    return "";
+  }
+  if (contextualize_safe(&pc, m_into)) {
+    return "";
+  }
+
+  if (pc.finalize_query_expression()) return "";
+
+  pc.m_show_parse_tree->pop_level();
+
+  return pc.m_show_parse_tree->get_parse_tree();
 }
 
 Sql_cmd *PT_select_stmt::make_cmd(THD *thd) {
@@ -711,10 +766,13 @@ Sql_cmd *PT_select_stmt::make_cmd(THD *thd) {
     return nullptr;
   }
 
+  if (pc.finalize_query_expression()) return nullptr;
+
   if (m_into != nullptr && m_has_trailing_locking_clauses) {
     // Example: ... INTO ... FOR UPDATE;
     push_warning(thd, ER_WARN_DEPRECATED_INNER_INTO);
-  } else if (has_into_clause_inside_query_block && thd->lex->unit->is_union()) {
+  } else if (has_into_clause_inside_query_block &&
+             thd->lex->unit->is_set_operation()) {
     // Example: ... UNION ... INTO ...;
     if (!m_qe->has_trailing_into_clause()) {
       // Example: ... UNION SELECT * INTO OUTFILE 'foo' FROM ...;
@@ -724,6 +782,11 @@ Sql_cmd *PT_select_stmt::make_cmd(THD *thd) {
       push_warning(thd, ER_WARN_DEPRECATED_INNER_INTO);
     }
   }
+
+  DBUG_EXECUTE_IF("ast", Query_term *qn =
+                             pc.select->master_query_expression()->query_term();
+                  std::ostringstream buf; qn->debugPrint(0, buf);
+                  DBUG_PRINT("ast", ("\n%s", buf.str().c_str())););
 
   if (thd->lex->sql_command == SQLCOM_SELECT)
     return new (thd->mem_root) Sql_cmd_select(thd->lex->result);
@@ -747,12 +810,11 @@ Sql_cmd *PT_select_stmt::make_cmd(THD *thd) {
   @return Matching table, NULL if error.
 */
 
-static TABLE_LIST *multi_delete_table_match(TABLE_LIST *tbl,
-                                            TABLE_LIST *tables) {
-  TABLE_LIST *match = nullptr;
+static Table_ref *multi_delete_table_match(Table_ref *tbl, Table_ref *tables) {
+  Table_ref *match = nullptr;
   DBUG_TRACE;
 
-  for (TABLE_LIST *elem = tables; elem; elem = elem->next_local) {
+  for (Table_ref *elem = tables; elem; elem = elem->next_local) {
     int cmp;
 
     if (tbl->is_fqtn && elem->is_alias) continue; /* no match */
@@ -794,15 +856,15 @@ static TABLE_LIST *multi_delete_table_match(TABLE_LIST *tbl,
 */
 
 static bool multi_delete_link_tables(Parse_context *pc,
-                                     SQL_I_List<TABLE_LIST> *delete_tables) {
+                                     SQL_I_List<Table_ref> *delete_tables) {
   DBUG_TRACE;
 
-  TABLE_LIST *tables = pc->select->table_list.first;
+  Table_ref *tables = pc->select->get_table_list();
 
-  for (TABLE_LIST *target_tbl = delete_tables->first; target_tbl;
+  for (Table_ref *target_tbl = delete_tables->first; target_tbl;
        target_tbl = target_tbl->next_local) {
     /* All tables in aux_tables must be found in FROM PART */
-    TABLE_LIST *walk = multi_delete_table_match(target_tbl, tables);
+    Table_ref *walk = multi_delete_table_match(target_tbl, tables);
     if (!walk) return true;
     if (!walk->is_derived()) {
       target_tbl->table_name = walk->table_name;
@@ -856,11 +918,11 @@ Sql_cmd *PT_delete::make_cmd(THD *thd) {
     return nullptr;
 
   if (is_multitable()) {
-    select->table_list.save_and_clear(&delete_tables);
+    select->m_table_list.save_and_clear(&delete_tables);
     lex->query_tables = nullptr;
     lex->query_tables_last = &lex->query_tables;
   } else {
-    select->top_join_list.push_back(select->get_table_list());
+    select->m_table_nest.push_back(select->get_table_list());
   }
   Yacc_state *const yyps = &pc.thd->m_parser_state->m_yacc;
   yyps->m_lock_type = TL_READ_DEFAULT;
@@ -870,7 +932,7 @@ Sql_cmd *PT_delete::make_cmd(THD *thd) {
     if (contextualize_array(&pc, &join_table_list)) return nullptr;
     pc.select->context.table_list =
         pc.select->context.first_name_resolution_table =
-            pc.select->table_list.first;
+            pc.select->get_table_list();
   }
 
   if (opt_where_clause != nullptr &&
@@ -921,7 +983,7 @@ Sql_cmd *PT_update::make_cmd(THD *thd) {
   // Ensure we're resetting parsing context of the right select
   assert(select->parsing_place == CTX_UPDATE_VALUE);
   select->parsing_place = CTX_NONE;
-  const bool is_multitable = select->table_list.elements > 1;
+  const bool is_multitable = select->m_table_list.elements > 1;
   lex->sql_command = is_multitable ? SQLCOM_UPDATE_MULTI : SQLCOM_UPDATE;
 
   /*
@@ -952,8 +1014,8 @@ Sql_cmd *PT_update::make_cmd(THD *thd) {
   return new (thd->mem_root) Sql_cmd_update(is_multitable, &value_list->value);
 }
 
-bool PT_insert_values_list::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_insert_values_list::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
   for (List_item *item_list : many_values) {
     for (auto it = item_list->begin(); it != item_list->end(); ++it) {
       if ((*it)->itemize(pc, &*it)) return true;
@@ -1032,17 +1094,19 @@ Sql_cmd *PT_insert::make_cmd(THD *thd) {
       The following work only with the local list, the global list
       is created correctly in this case
     */
-    SQL_I_List<TABLE_LIST> save_list;
+    SQL_I_List<Table_ref> save_list;
     Query_block *const save_query_block = pc.select;
-    save_query_block->table_list.save_and_clear(&save_list);
+    save_query_block->m_table_list.save_and_clear(&save_list);
 
     if (insert_query_expression->contextualize(&pc)) return nullptr;
+
+    if (pc.finalize_query_expression()) return nullptr;
 
     /*
       The following work only with the local list, the global list
       is created correctly in this case
     */
-    save_query_block->table_list.push_front(&save_list);
+    save_query_block->m_table_list.push_front(&save_list);
 
     lex->bulk_insert_row_cnt = 0;
   } else {
@@ -1059,7 +1123,7 @@ Sql_cmd *PT_insert::make_cmd(THD *thd) {
   // which can be referred to from ON DUPLICATE KEY UPDATE. Naming the derived
   // table columns is deferred to Sql_cmd_insert_base::prepare_inner, as this
   // requires the insert table to be resolved.
-  TABLE_LIST *values_table{nullptr};
+  Table_ref *values_table{nullptr};
   if (opt_values_table_alias != nullptr && opt_values_column_list != nullptr) {
     if (!strcmp(opt_values_table_alias, table_ident->table.str)) {
       my_error(ER_NONUNIQ_TABLE, MYF(0), opt_values_table_alias);
@@ -1082,7 +1146,7 @@ Sql_cmd *PT_insert::make_cmd(THD *thd) {
                opt_on_duplicate_column_list->elements());
 
     lex->duplicates = DUP_UPDATE;
-    TABLE_LIST *first_table = lex->query_block->table_list.first;
+    Table_ref *first_table = lex->query_block->get_table_list();
     /* Fix lock for ON DUPLICATE KEY UPDATE */
     if (first_table->lock_descriptor().type == TL_WRITE_CONCURRENT_DEFAULT)
       first_table->set_lock({TL_WRITE_DEFAULT, THR_DEFAULT});
@@ -1143,9 +1207,9 @@ Sql_cmd *PT_call::make_cmd(THD *thd) {
   return new (thd->mem_root) Sql_cmd_call(proc_name, proc_args);
 }
 
-bool PT_query_specification::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
-
+bool PT_query_specification::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
+  pc->m_stack.push_back(QueryLevel(pc->mem_root, SC_QUERY_SPECIFICATION));
   pc->select->parsing_place = CTX_SELECT_LIST;
 
   if (options.query_spec_options & SELECT_HIGH_PRIORITY) {
@@ -1167,7 +1231,7 @@ bool PT_query_specification::contextualize(Parse_context *pc) {
     if (contextualize_array(pc, &from_clause)) return true;
     pc->select->context.table_list =
         pc->select->context.first_name_resolution_table =
-            pc->select->table_list.first;
+            pc->select->get_table_list();
   }
 
   if (itemize_safe(pc, &opt_where_clause) ||
@@ -1200,10 +1264,24 @@ bool PT_query_specification::contextualize(Parse_context *pc) {
   if (contextualize_safe(pc, opt_window_clause)) return true;
   pc->select->parsing_place = CTX_NONE;
 
+  QueryLevel ql = pc->m_stack.back();
+  pc->m_stack.pop_back();
+  pc->m_stack.back().m_elts.push_back(pc->select);
   return (opt_hints != nullptr ? opt_hints->contextualize(pc) : false);
 }
 
-bool PT_table_value_constructor::contextualize(Parse_context *pc) {
+void PT_query_specification::add_json_info(Json_object *obj) {
+  std::string select_options;
+
+  get_select_options_str(options.query_spec_options, &select_options);
+  if (!select_options.empty())
+    obj->add_alias("query_spec_options",
+                   create_dom_ptr<Json_string>(select_options));
+}
+
+bool PT_table_value_constructor::do_contextualize(Parse_context *pc) {
+  pc->m_stack.push_back(QueryLevel(pc->mem_root, SC_TABLE_VALUE_CONSTRUCTOR));
+
   if (row_value_list->contextualize(pc)) return true;
 
   pc->select->is_table_value_constructor = true;
@@ -1214,6 +1292,10 @@ bool PT_table_value_constructor::contextualize(Parse_context *pc) {
   for (Item *item : *pc->select->row_value_list->front()) {
     pc->select->fields.push_back(item);
   }
+
+  QueryLevel ql = pc->m_stack.back();
+  pc->m_stack.pop_back();
+  pc->m_stack.back().m_elts.push_back(pc->select);
 
   return false;
 }
@@ -1229,47 +1311,9 @@ bool PT_query_expression::contextualize_order_and_limit(Parse_context *pc) {
                                          m_limit != nullptr)) {
     if (contextualize_safe(pc, m_order, m_limit)) return true;
   } else {
-    auto lex = pc->thd->lex;
-    auto unit = pc->select->master_query_expression();
-    if (unit->fake_query_block == nullptr) {
-      if (unit->add_fake_query_block(lex->thd)) {
-        return true;  // OOM
-      }
-    } else if (unit->fake_query_block->has_limit() ||
-               unit->fake_query_block->is_ordered()) {
-      /*
-        Make sure that we don't silently overwrite intermediate ORDER BY
-        and/or LIMIT clauses, but reject unsupported levels of nesting
-        instead.
-
-        We are here since we support syntax like this:
-
-          (SELECT ... ORDER BY ... LIMIT) ORDER BY ... LIMIT ...
-
-        where the second pair of ORDER BY and LIMIT goes to "global parameters"
-        A.K.A. fake_query_block. I.e. this syntax works like a degenerate case
-        of unions: a union of one query block with no trailing clauses.
-
-        Such an implementation is unable to process more than one external
-        level of ORDER BY/LIMIT like this:
-
-          ( (SELECT ...
-              ORDER BY ... LIMIT)
-            ORDER BY ... LIMIT ...)
-          ORDER BY ... LIMIT ...
-
-        TODO: Don't use fake_query_block code (that is designed for unions)
-              for parenthesized query blocks. Reimplement this syntax with
-              e.g. equivalent derived tables to support any level of nesting.
-      */
-      my_error(ER_NOT_SUPPORTED_YET, MYF(0),
-               "parenthesized query expression with more than one external "
-               "level of ORDER/LIMIT operations");
-      return true;
-    }
-
-    auto orig_query_block = pc->select;
-    pc->select = unit->fake_query_block;
+    LEX *lex = pc->thd->lex;
+    Query_block *orig_query_block = pc->select;
+    pc->select = nullptr;
     lex->push_context(&pc->select->context);
     assert(pc->select->parsing_place == CTX_NONE);
 
@@ -1283,8 +1327,8 @@ bool PT_query_expression::contextualize_order_and_limit(Parse_context *pc) {
   return false;
 }
 
-bool PT_table_factor_function::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || m_expr->itemize(pc, &m_expr)) return true;
+bool PT_table_factor_function::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || m_expr->itemize(pc, &m_expr)) return true;
 
   if (m_path->itemize(pc, &m_path)) return true;
 
@@ -1314,44 +1358,43 @@ bool PT_table_factor_function::contextualize(Parse_context *pc) {
   auto ti = new (pc->mem_root) Table_ident(alias, jtf);
   if (ti == nullptr) return true;
 
-  value = pc->select->add_table_to_list(pc->thd, ti, m_table_alias.str, 0,
-                                        TL_READ, MDL_SHARED_READ);
-  if (value == nullptr || pc->select->add_joined_table(value)) return true;
+  m_table_ref = pc->select->add_table_to_list(pc->thd, ti, m_table_alias.str, 0,
+                                              TL_READ, MDL_SHARED_READ);
+  if (m_table_ref == nullptr || pc->select->add_joined_table(m_table_ref))
+    return true;
 
   return false;
 }
 
-PT_derived_table::PT_derived_table(bool lateral, PT_subquery *subquery,
+PT_derived_table::PT_derived_table(const POS &pos, bool lateral,
+                                   PT_subquery *subquery,
                                    const LEX_CSTRING &table_alias,
                                    Create_col_name_list *column_names)
-    : m_lateral(lateral),
+    : super(pos),
+      m_lateral(lateral),
       m_subquery(subquery),
       m_table_alias(table_alias.str),
       column_names(*column_names) {
   m_subquery->m_is_derived_table = true;
 }
 
-bool PT_derived_table::contextualize(Parse_context *pc) {
+bool PT_derived_table::do_contextualize(Parse_context *pc) {
   Query_block *outer_query_block = pc->select;
 
   outer_query_block->parsing_place = CTX_DERIVED;
   assert(outer_query_block->linkage != GLOBAL_OPTIONS_TYPE);
 
   /*
-    Determine the first outer context to try for the derived table:
+    Determine the immediate outer context for the derived table:
     - if lateral: context of query which owns the FROM i.e. outer_query_block
     - if not lateral: context of query outer to query which owns the FROM.
-    This is just a preliminary decision. Name resolution
-    {Item_field,Item_ref}::fix_fields() may use or ignore this outer context
-    depending on where the derived table is placed in it.
+    For a lateral derived table. this is just a preliminary decision.
+    Name resolution {Item_field,Item_ref}::fix_fields() may use or ignore this
+    outer context depending on where the derived table is placed in it.
   */
-  if (!m_lateral)
-    pc->thd->lex->push_context(
-        outer_query_block->master_query_expression()->outer_query_block()
-            ? &outer_query_block->master_query_expression()
-                   ->outer_query_block()
-                   ->context
-            : nullptr);
+  if (!m_lateral) {
+    pc->thd->lex->push_context(outer_query_block->context.outer_context);
+  }
 
   if (m_subquery->contextualize(pc)) return true;
 
@@ -1363,53 +1406,368 @@ bool PT_derived_table::contextualize(Parse_context *pc) {
 
   Query_expression *unit = pc->select->first_inner_query_expression();
   pc->select = outer_query_block;
-  Table_ident *ti = new (pc->thd->mem_root) Table_ident(unit);
+  Table_ident *ti = new (pc->mem_root) Table_ident(unit);
   if (ti == nullptr) return true;
 
-  value = pc->select->add_table_to_list(pc->thd, ti, m_table_alias, 0, TL_READ,
-                                        MDL_SHARED_READ);
-  if (value == nullptr) return true;
-  if (column_names.size()) value->set_derived_column_names(&column_names);
+  m_table_ref = pc->select->add_table_to_list(pc->thd, ti, m_table_alias, 0,
+                                              TL_READ, MDL_SHARED_READ);
+  if (m_table_ref == nullptr) return true;
+  if (column_names.size()) m_table_ref->set_derived_column_names(&column_names);
   if (m_lateral) {
     // Mark the unit as LATERAL, by turning on one bit in the map:
-    value->derived_query_expression()->m_lateral_deps = OUTER_REF_TABLE_BIT;
+    m_table_ref->derived_query_expression()->m_lateral_deps =
+        OUTER_REF_TABLE_BIT;
   }
-  if (pc->select->add_joined_table(value)) return true;
+  if (pc->select->add_joined_table(m_table_ref)) return true;
 
   return false;
 }
 
-bool PT_table_factor_joined_table::contextualize(Parse_context *pc) {
-  if (Parse_tree_node::contextualize(pc)) return true;
+void PT_derived_table::add_json_info(Json_object *obj) {
+  if (m_table_alias != nullptr) {
+    obj->add_alias("table_alias", create_dom_ptr<Json_string>(m_table_alias));
+  }
+  if (column_names.size() != 0) {
+    String column_names_str;
+    print_derived_column_names(nullptr, &column_names_str, &column_names);
+    obj->add_alias("table_columns",
+                   create_dom_ptr<Json_string>(column_names_str.ptr(),
+                                               column_names_str.length()));
+  }
+  obj->add_alias("lateral", create_dom_ptr<Json_boolean>(m_lateral));
+}
+
+bool PT_table_factor_joined_table::do_contextualize(Parse_context *pc) {
+  if (Parse_tree_node::do_contextualize(pc)) return true;
 
   Query_block *outer_query_block = pc->select;
   if (outer_query_block->init_nested_join(pc->thd)) return true;
 
   if (m_joined_table->contextualize(pc)) return true;
-  value = m_joined_table->value;
+  m_table_ref = m_joined_table->m_table_ref;
 
   if (outer_query_block->end_nested_join() == nullptr) return true;
 
   return false;
 }
 
-bool PT_union::contextualize(Parse_context *pc) {
-  if (PT_query_expression_body::contextualize(pc)) return true;
+static Surrounding_context qt2sc(Query_term_type qtt) {
+  switch (qtt) {
+    case QT_UNION:
+      return SC_UNION_ALL;
+    case QT_EXCEPT:
+      return SC_EXCEPT_ALL;
+    case QT_INTERSECT:
+      return SC_INTERSECT_ALL;
+    default:
+      assert(false);
+  }
+  return SC_TOP;
+}
+
+/**
+  Possibly merge lower syntactic levels of set operations (UNION, INTERSECT and
+  EXCEPT) into setop, and set new last DISTINCT index for setop. We only ever
+  merge set operations of the same kind, but even that, not always: we prefer
+  streaming of UNIONs when possible, and merging UNIONs with a mix of DISTINCT
+  and ALL at the top level may lead to inefficient evaluation. Streaming only
+  makes sense when the result set is sent from the server, i.e. not further
+  materialized, e.g. for ORDER BY or windowing.
+
+  For example, the query:
+
+           EXPLAIN FORMAT=tree
+           SELECT * FROM t1 UNION DISTINCT
+           SELECT * FROM t2 UNION ALL
+           SELECT * FROM t3;
+
+    will yield the plan:
+
+        -> Append
+           -> Stream results
+               -> Table scan on \<union temporary\>
+                   -> Union materialize with deduplication
+                       -> Table scan on t1
+                       -> Table scan on t2
+           -> Stream results
+               -> Table scan on t3
+
+    but
+           EXPLAIN FORMAT=tree
+           SELECT * FROM t1 UNION DISTINCT
+           SELECT * FROM t2 UNION DISTINCT
+           SELECT * FROM t3;
+
+    will yield the following plan, i.e. we merge the two syntactic levels. The
+    former case could also be merged, but the we'd need to write the rows of t3
+    to the temporary table, which gives a performance penalty, so we don't
+    merge.
+
+        -> Table scan on \<union temporary\>
+            -> Union materialize with deduplication
+                -> Table scan on t1
+                -> Table scan on t2
+                -> Table scan on t3
+
+    If have an outer ORDER BY, we will see how this would look (with merge):
+
+           EXPLAIN FORMAT=tree
+           SELECT * FROM t1 UNION DISTINCT
+           SELECT * FROM t2 UNION ALL
+           SELECT * FROM t3
+           ORDER BY a;
+
+   will yield
+
+       -> Sort: a
+           -> Table scan on \<union temporary\>
+               -> Union materialize with deduplication
+                   -> Table scan on t1
+                   -> Table scan on t2
+                   -> Disable deduplication
+                       -> Table scan on t3
+
+    since in this case, merging is advantageous, in that we need only one
+    temporary file. Another interesting case is when the upper level is
+    DISTINCT:
+
+           EXPLAIN FORMAT=tree
+           SELECT * FROM t1 UNION DISTINCT
+           ( SELECT * FROM t2 UNION ALL
+             SELECT * FROM t3 );
+
+    will merge and remove the lower ALL level:
+
+        -> Table scan on <union temporary>
+            -> Union materialize with deduplication
+                -> Table scan on t1
+                -> Table scan on t2
+                -> Table scan on t3
+
+  For INTERSECT, the presence of one DISTINCT operator effectively
+  makes any INTERSECT ALL equivalent to DISTINCT, so we only retain ALL if
+  all operators are ALL, i.e. for a N-ary INTERSECT with at least one DISTINCT,
+  has_mixed_distinct_operators always returns false.
+  We aggressively merge up all sub-nests for INTERSECT.
+
+  INTERSECT ALL is only binary due to current implementation method, no merge
+  up.
+
+  EXCEPT [ALL] is not right associative, so be careful when merging: we only
+  merge up a left-most nested EXCEPT into an outer level EXCEPT, since we
+  evaluate from left to right.  Note that for an N-ary EXCEPT operation, a mix
+  of ALL and DISTINCT is meaningful and supported. After the first operator
+  with DISTINCT, further ALL operators are moot since no duplicates are
+  left. Example explain:
+
+      SELECT * FROM r EXCEPT ALL SELECT * FROM s EXCEPT SELECT * FROM t
+
+  -> Table scan on \<except temporary\>  (cost=..)
+    -> Except materialize with deduplication  (cost=..)
+        -> Table scan on r  (cost=..)
+        -> Disable deduplication
+            -> Table scan on s  (cost=..)
+        -> Table scan on t  (cost=..)
+
+  We can see that the first two operand tables are compared with ALL ("disable
+  de-duplication"), whereas the final one, t, is DISTINCT.
+
+  @param      pc   the parse context
+  @param      setop the set operation query term to be filled in with children
+  @param      ql   parsing query level
+*/
+void PT_set_operation::merge_descendants(Parse_context *pc,
+                                         Query_term_set_op *setop,
+                                         QueryLevel &ql) {
+  // If a child is a Query_block, include it in this set op list as is.  If a
+  // child is itself a set operation, include its members in this set
+  // operation's descendant list if allowed.
+
+  int count = 0;  /// computes number for members if we collapse
+
+  // last_distinct is used by UNION and INTERSECT. For N-ary intersect, if
+  // DISTINCT is present at all, its final value will be N-1, since ALL is
+  // irrelevant once we have one DISTINCT for INTERSECT. Note that the
+  // computation of last_distinct may be wrong for EXCEPT, but it doesn't rely
+  // on it so we don't care.
+  int64_t last_distinct = 0;
+
+  // first_distinct is used by EXCEPT only, so its computation for UNION and
+  // DISTINCT may be wrong/misleading.
+  int64_t first_distinct = std::numeric_limits<int64_t>::max();
+
+  const Query_term_type op = setop->term_type();
+  Surrounding_context sc = qt2sc(op);
+
+  if (m_is_distinct) {
+    for (Query_term *elt : ql.m_elts) {
+      // We only merge same kind, and only if no LIMIT on it
+      if (elt->term_type() == QT_QUERY_BLOCK || /* 1 */
+          elt->term_type() != op ||             /* 2 */
+          (op == QT_EXCEPT && count > 0)) {     /* 3 */
+        // (1) Nothing nested in this operand position, or (2) it's another
+        // kind of set operation or (3) EXCEPT in non-left position (EXCEPT is
+        // not right associative), hence no merge.
+        count++;
+        if (first_distinct == std::numeric_limits<int64_t>::max())
+          first_distinct = 1;
+        last_distinct = count - 1;
+        setop->m_children.push_back(elt);
+      } else if (Query_term_set_op *lower = down_cast<Query_term_set_op *>(elt);
+                 elt->query_block()->select_limit == nullptr /* 4 */) {
+        // (4) we have no LIMIT in the nest, so we can merge, proceed.
+        if (lower->m_first_distinct < std::numeric_limits<int64_t>::max() &&
+            lower->m_first_distinct + count < first_distinct) {
+          assert(op != QT_EXCEPT || count == 0);
+          first_distinct = count + lower->m_first_distinct;
+        } else if (first_distinct == std::numeric_limits<int64_t>::max()) {
+          first_distinct = lower->m_children.size();
+        }
+        // upper DISTINCT trumps lower ALL or DISTINCT, so ignore nest's last
+        // distinct
+        last_distinct = count + lower->m_children.size() - 1;
+        count = count + lower->m_children.size();
+        // fold in children
+        for (auto child : lower->m_children) setop->m_children.push_back(child);
+      } else {
+        // similar kind of set operation, but contains limit, so do not merge
+        count++;
+        last_distinct = count - 1;
+        setop->m_children.push_back(elt);
+      }
+    }
+  } else {
+    for (Query_term *elt : ql.m_elts) {
+      // We only collapse same kind, and only if no LIMIT on it. Also, we do
+      // not collapse INTERSECT ALL due to difficulty in computing it if we
+      // do, cf. logic in MaterializeIterator<Profiler>::MaterializeQueryBlock.
+      if (elt->term_type() == QT_QUERY_BLOCK || /* 1 */
+          elt->term_type() != op ||             /* 2 */
+          (op == QT_EXCEPT && count > 0) ||     /* 3 */
+          elt->query_block()->select_limit != nullptr) {
+        // (1) Nothing nested in this operand position, or (2) it's another kind
+        // of set operation, or non-left EXCEPT (3), hence no merge
+        count++;
+        setop->m_children.push_back(elt);
+      } else if (Query_term_set_op *lower = down_cast<Query_term_set_op *>(elt);
+                 (count == 0 ||  // first operand can always be merged
+                                 // upper, lower are ALL, so ok:
+                  lower->m_last_distinct == 0 ||
+                  op == QT_INTERSECT /* maybe merge */)) {
+        if (lower->m_last_distinct > 0) {
+          if (pc->is_top_level_union_all(sc)) {
+            // If we merge we lose the chance to stream the right table,
+            // so don't.
+            setop->m_children.push_back(elt);
+            count++;
+          } else {
+            if (lower->m_first_distinct < std::numeric_limits<int64_t>::max() &&
+                first_distinct == std::numeric_limits<int64_t>::max()) {
+              first_distinct = count + lower->m_first_distinct;
+            }
+            last_distinct = count + lower->m_last_distinct;
+            count = count + lower->m_children.size();
+            for (auto child : lower->m_children)
+              setop->m_children.push_back(child);
+          }
+        } else {
+          // upper and lower level are both ALL, so ok to merge, unless we have
+          // INTERSECT
+          if (op != QT_INTERSECT) {
+            if (lower->m_first_distinct < std::numeric_limits<int64_t>::max() &&
+                first_distinct == std::numeric_limits<int64_t>::max()) {
+              first_distinct = count + lower->m_first_distinct;
+            }
+            count = count + lower->m_children.size();
+            for (auto child : lower->m_children)
+              setop->m_children.push_back(child);
+          } else {
+            // do not merge INTERSECT ALL: the execution time logic can only
+            // handle binary INTERSECT ALL.
+            count++;
+            setop->m_children.push_back(elt);
+          }
+        }
+      } else if (!pc->is_top_level_union_all(sc) &&
+                 lower->m_last_distinct == 0) {
+        // We have a higher and lower level setop ALL, so ok to merge
+        // unless we have a top level UNION ALL in which case we prefer
+        // streaming.
+        if (count + lower->m_first_distinct <
+                std::numeric_limits<int64_t>::max() &&
+            first_distinct == std::numeric_limits<int64_t>::max()) {
+          first_distinct = count + lower->m_first_distinct;
+        }
+        count = count + lower->m_children.size();
+        for (auto child : lower->m_children) setop->m_children.push_back(child);
+      } else {
+        // do not merge
+        count++;
+        setop->m_children.push_back(elt);
+      }
+    }
+  }
+  if (last_distinct > 0 && op == QT_INTERSECT)  // distinct always wins
+    last_distinct = setop->m_children.size() - 1;
+  setop->m_last_distinct = last_distinct;
+  setop->m_first_distinct = first_distinct;
+}
+
+bool PT_set_operation::contextualize_setop(Parse_context *pc,
+                                           Query_term_type setop_type,
+                                           Surrounding_context context) {
+  pc->m_stack.push_back(QueryLevel(pc->mem_root, context));
+  if (super::do_contextualize(pc)) return true;
 
   if (m_lhs->contextualize(pc)) return true;
 
-  pc->select = pc->thd->lex->new_union_query(pc->select, m_is_distinct);
+  pc->select = pc->thd->lex->new_set_operation_query(pc->select);
 
   if (pc->select == nullptr || m_rhs->contextualize(pc)) return true;
 
-  if (m_rhs->is_union()) {
-    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
-             "nesting of unions at the right-hand side");
-    return true;
-  }
-
   pc->thd->lex->pop_context();
+
+  QueryLevel ql = pc->m_stack.back();
+  pc->m_stack.pop_back();
+
+  Query_term_set_op *setop = nullptr;
+  switch (setop_type) {
+    case QT_UNION:
+      setop = new (pc->mem_root) Query_term_union(pc->mem_root);
+      break;
+    case QT_EXCEPT:
+      setop = new (pc->mem_root) Query_term_except(pc->mem_root);
+      break;
+    case QT_INTERSECT:
+      setop = new (pc->mem_root) Query_term_intersect(pc->mem_root);
+      break;
+    default:
+      assert(false);
+  }
+  if (setop == nullptr) return true;
+
+  merge_descendants(pc, setop, ql);
+
+  Query_expression *qe = pc->select->master_query_expression();
+  if (setop->set_block(qe->create_post_processing_block(setop))) return true;
+  pc->m_stack.back().m_elts.push_back(setop);
   return false;
+}
+
+bool PT_union::do_contextualize(Parse_context *pc) {
+  return contextualize_setop(pc, QT_UNION,
+                             m_is_distinct ? SC_UNION_DISTINCT : SC_UNION_ALL);
+}
+
+bool PT_except::do_contextualize(Parse_context *pc [[maybe_unused]]) {
+  return contextualize_setop(
+      pc, QT_EXCEPT, m_is_distinct ? SC_EXCEPT_DISTINCT : SC_EXCEPT_ALL);
+}
+
+bool PT_intersect::do_contextualize(Parse_context *pc [[maybe_unused]]) {
+  return contextualize_setop(
+      pc, QT_INTERSECT,
+      m_is_distinct ? SC_INTERSECT_DISTINCT : SC_INTERSECT_ALL);
 }
 
 static bool setup_index(keytype key_type, const LEX_STRING name,
@@ -1486,8 +1844,8 @@ Sql_cmd *PT_create_index_stmt::make_cmd(THD *thd) {
   return new (thd->mem_root) Sql_cmd_create_index(&m_alter_info);
 }
 
-bool PT_inline_index_definition::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_inline_index_definition::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   if (setup_index(m_keytype, m_name, m_type, m_columns, m_options, pc))
     return true;
@@ -1498,8 +1856,8 @@ bool PT_inline_index_definition::contextualize(Table_ddl_parse_context *pc) {
   return false;
 }
 
-bool PT_foreign_key_definition::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_foreign_key_definition::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *const thd = pc->thd;
   LEX *const lex = thd->lex;
@@ -1535,7 +1893,7 @@ bool PT_foreign_key_definition::contextualize(Table_ddl_parse_context *pc) {
     if (pc->alter_info->new_db_name.str) {
       db = orig_db = pc->alter_info->new_db_name;
     } else {
-      TABLE_LIST *child_table = lex->query_block->get_table_list();
+      Table_ref *child_table = lex->query_block->get_table_list();
       db = orig_db = LEX_CSTRING{child_table->db, child_table->db_length};
     }
   }
@@ -1626,10 +1984,11 @@ bool PT_with_list::push_back(PT_common_table_expr *el) {
 }
 
 PT_common_table_expr::PT_common_table_expr(
-    const LEX_STRING &name, const LEX_STRING &subq_text, uint subq_text_offs,
-    PT_subquery *subq_node, const Create_col_name_list *column_names,
-    MEM_ROOT *mem_root)
-    : m_name(name),
+    const POS &pos, const LEX_STRING &name, const LEX_STRING &subq_text,
+    uint subq_text_offs, PT_subquery *subq_node,
+    const Create_col_name_list *column_names, MEM_ROOT *mem_root)
+    : super(pos),
+      m_name(name),
       m_subq_text(subq_text),
       m_subq_text_offset(subq_text_offs),
       m_subq_node(subq_node),
@@ -1642,10 +2001,35 @@ PT_common_table_expr::PT_common_table_expr(
   m_postparse.name = m_name;
 }
 
-bool PT_with_clause::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true; /* purecov: inspected */
+bool PT_common_table_expr::do_contextualize(Parse_context *pc) {
+  // The subquery node is reparsed and contextualized under the table, not
+  // here. But for showing parse tree, we need to show it at it's originally
+  // supplied place, i.e. under the WITH clause.
+  if (pc->m_show_parse_tree != nullptr && m_subq_node != nullptr)
+    return m_subq_node->contextualize(pc);
+  return false;
+}
+
+void PT_common_table_expr::add_json_info(Json_object *obj) {
+  obj->add_alias("cte_name",
+                 create_dom_ptr<Json_string>(m_name.str, m_name.length));
+  if (m_column_names.size() != 0) {
+    String column_names_str;
+    print_derived_column_names(nullptr, &column_names_str, &m_column_names);
+    obj->add_alias("cte_columns",
+                   create_dom_ptr<Json_string>(column_names_str.ptr(),
+                                               column_names_str.length()));
+  }
+}
+
+bool PT_with_clause::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true; /* purecov: inspected */
   // WITH complements a query expression (a unit).
   pc->select->master_query_expression()->m_with_clause = this;
+
+  for (auto *el : m_list->elements())
+    if (el->contextualize(pc)) return true;
+
   return false;
 }
 
@@ -1706,8 +2090,9 @@ void PT_common_table_expr::print(const THD *thd, String *str,
   if (!found) str->length(len);  // don't print a useless CTE definition
 }
 
-bool PT_create_table_engine_option::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_create_table_engine_option::do_contextualize(
+    Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   pc->create_info->used_fields |= HA_CREATE_USED_ENGINE;
   const bool is_temp_table = pc->create_info->options & HA_LEX_CREATE_TMP_TABLE;
@@ -1715,18 +2100,18 @@ bool PT_create_table_engine_option::contextualize(Table_ddl_parse_context *pc) {
                         &pc->create_info->db_type);
 }
 
-bool PT_create_table_secondary_engine_option::contextualize(
+bool PT_create_table_secondary_engine_option::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   pc->create_info->used_fields |= HA_CREATE_USED_SECONDARY_ENGINE;
   pc->create_info->secondary_engine = m_secondary_engine;
   return false;
 }
 
-bool PT_create_stats_auto_recalc_option::contextualize(
+bool PT_create_stats_auto_recalc_option::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   switch (value) {
     case Ternary_option::ON:
@@ -1745,24 +2130,25 @@ bool PT_create_stats_auto_recalc_option::contextualize(
   return false;
 }
 
-bool PT_create_stats_stable_pages::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_create_stats_stable_pages::do_contextualize(
+    Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   pc->create_info->stats_sample_pages = value;
   pc->create_info->used_fields |= HA_CREATE_USED_STATS_SAMPLE_PAGES;
   return false;
 }
 
-bool PT_create_union_option::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_create_union_option::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *const thd = pc->thd;
   LEX *const lex = thd->lex;
   const Yacc_state *yyps = &thd->m_parser_state->m_yacc;
 
-  TABLE_LIST **exclude_merge_engine_tables = lex->query_tables_last;
-  SQL_I_List<TABLE_LIST> save_list;
-  lex->query_block->table_list.save_and_clear(&save_list);
+  Table_ref **exclude_merge_engine_tables = lex->query_tables_last;
+  SQL_I_List<Table_ref> save_list;
+  lex->query_block->m_table_list.save_and_clear(&save_list);
   if (pc->select->add_tables(thd, tables, TL_OPTION_UPDATING, yyps->m_lock_type,
                              yyps->m_mdl_type))
     return true;
@@ -1770,8 +2156,8 @@ bool PT_create_union_option::contextualize(Table_ddl_parse_context *pc) {
     Move the union list to the merge_list and exclude its tables
     from the global list.
   */
-  pc->create_info->merge_list = lex->query_block->table_list;
-  lex->query_block->table_list = save_list;
+  pc->create_info->merge_list = lex->query_block->m_table_list;
+  lex->query_block->m_table_list = save_list;
   /*
     When excluding union list from the global list we assume that
     elements of the former immediately follow elements which represent
@@ -1803,9 +2189,9 @@ bool set_default_charset(HA_CREATE_INFO *create_info,
   return false;
 }
 
-bool PT_create_table_default_charset::contextualize(
+bool PT_create_table_default_charset::do_contextualize(
     Table_ddl_parse_context *pc) {
-  return (super::contextualize(pc) ||
+  return (super::do_contextualize(pc) ||
           set_default_charset(pc->create_info, value));
 }
 
@@ -1824,13 +2210,13 @@ bool set_default_collation(HA_CREATE_INFO *create_info,
   return false;
 }
 
-bool PT_create_table_default_collation::contextualize(
+bool PT_create_table_default_collation::do_contextualize(
     Table_ddl_parse_context *pc) {
-  return (super::contextualize(pc) ||
+  return (super::do_contextualize(pc) ||
           set_default_collation(pc->create_info, value));
 }
 
-bool PT_locking_clause::contextualize(Parse_context *pc) {
+bool PT_locking_clause::do_contextualize(Parse_context *pc) {
   LEX *lex = pc->thd->lex;
 
   if (lex->is_explain()) return false;
@@ -1847,14 +2233,14 @@ bool PT_locking_clause::contextualize(Parse_context *pc) {
 }
 
 using Local_tables_iterator =
-    IntrusiveListIterator<TABLE_LIST, &TABLE_LIST::next_local>;
+    IntrusiveListIterator<Table_ref, &Table_ref::next_local>;
 
-/// A list interface over the TABLE_LIST::next_local pointer.
+/// A list interface over the Table_ref::next_local pointer.
 using Local_tables_list = IteratorContainer<Local_tables_iterator>;
 
 bool PT_query_block_locking_clause::set_lock_for_tables(Parse_context *pc) {
-  Local_tables_list local_tables(pc->select->table_list.first);
-  for (TABLE_LIST *table_list : local_tables)
+  Local_tables_list local_tables(pc->select->get_table_list());
+  for (Table_ref *table_list : local_tables)
     if (!table_list->is_derived()) {
       if (table_list->lock_descriptor().type != TL_READ_DEFAULT) {
         my_error(ER_DUPLICATE_TABLE_LOCK, MYF(0), table_list->alias);
@@ -1866,7 +2252,7 @@ bool PT_query_block_locking_clause::set_lock_for_tables(Parse_context *pc) {
   return false;
 }
 
-bool PT_column_def::contextualize(Table_ddl_parse_context *pc) {
+bool PT_column_def::do_contextualize(Table_ddl_parse_context *pc) {
   // Since Alter_info objects are allocated on a mem_root and never
   // destroyed we (move)-assign an empty vector to cf_appliers to
   // ensure any dynamic memory is released. This must be done whenever
@@ -1876,7 +2262,7 @@ bool PT_column_def::contextualize(Table_ddl_parse_context *pc) {
     pc->alter_info->cf_appliers = decltype(pc->alter_info->cf_appliers)();
   });
 
-  if (super::contextualize(pc) || field_def->contextualize(pc) ||
+  if (super::do_contextualize(pc) || field_def->contextualize(pc) ||
       contextualize_safe(pc, opt_column_constraint))
     return true;
 
@@ -1903,11 +2289,11 @@ Sql_cmd *PT_create_table_stmt::make_cmd(THD *thd) {
 
   Parse_context pc(thd, lex->current_query_block());
 
-  TABLE_LIST *table = pc.select->add_table_to_list(
+  Table_ref *table = pc.select->add_table_to_list(
       thd, table_name, nullptr, TL_OPTION_UPDATING, TL_WRITE, MDL_SHARED);
   if (table == nullptr) return nullptr;
 
-  table->open_strategy = TABLE_LIST::OPEN_FOR_CREATE;
+  table->open_strategy = Table_ref::OPEN_FOR_CREATE;
 
   lex->create_info = &m_create_info;
   Table_ddl_parse_context pc2(thd, pc.select, &m_alter_info);
@@ -1922,12 +2308,12 @@ Sql_cmd *PT_create_table_stmt::make_cmd(THD *thd) {
   lex->name.str = nullptr;
   lex->name.length = 0;
 
-  TABLE_LIST *qe_tables = nullptr;
+  Table_ref *qe_tables = nullptr;
 
   if (opt_like_clause != nullptr) {
     pc2.create_info->options |= HA_LEX_CREATE_TABLE_LIKE;
-    TABLE_LIST **like_clause_table = &lex->query_tables->next_global;
-    TABLE_LIST *src_table = pc.select->add_table_to_list(
+    Table_ref **like_clause_table = &lex->query_tables->next_global;
+    Table_ref *src_table = pc.select->add_table_to_list(
         thd, opt_like_clause, nullptr, 0, TL_READ, MDL_SHARED_READ);
     if (!src_table) return nullptr;
     /* CREATE TABLE ... LIKE is not allowed for views. */
@@ -1946,7 +2332,7 @@ Sql_cmd *PT_create_table_stmt::make_cmd(THD *thd) {
     }
 
     if (opt_partitioning) {
-      TABLE_LIST **exclude_part_tables = lex->query_tables_last;
+      Table_ref **exclude_part_tables = lex->query_tables_last;
       if (opt_partitioning->contextualize(&pc)) return nullptr;
       /*
         Remove all tables used in PARTITION clause from the global table
@@ -1971,7 +2357,7 @@ Sql_cmd *PT_create_table_stmt::make_cmd(THD *thd) {
     }
 
     if (opt_query_expression) {
-      TABLE_LIST **query_expression_tables = &lex->query_tables->next_global;
+      Table_ref **query_expression_tables = &lex->query_tables->next_global;
       /*
         In CREATE TABLE t ... SELECT the table_list initially contains
         here a table entry for the destination table `t'.
@@ -1985,17 +2371,18 @@ Sql_cmd *PT_create_table_stmt::make_cmd(THD *thd) {
         The following work only with the local list, the global list
         is created correctly in this case
       */
-      SQL_I_List<TABLE_LIST> save_list;
+      SQL_I_List<Table_ref> save_list;
       Query_block *const save_query_block = pc.select;
-      save_query_block->table_list.save_and_clear(&save_list);
+      save_query_block->m_table_list.save_and_clear(&save_list);
 
       if (opt_query_expression->contextualize(&pc)) return nullptr;
+      if (pc.finalize_query_expression()) return nullptr;
 
       /*
         The following work only with the local list, the global list
         is created correctly in this case
       */
-      save_query_block->table_list.push_front(&save_list);
+      save_query_block->m_table_list.push_front(&save_list);
       qe_tables = *query_expression_tables;
     }
   }
@@ -2024,7 +2411,7 @@ bool PT_table_locking_clause::set_lock_for_tables(Parse_context *pc) {
   for (Table_ident *table_ident : m_tables) {
     Query_block *select = pc->select;
 
-    TABLE_LIST *table_list = select->find_table_by_name(table_ident);
+    Table_ref *table_list = select->find_table_by_name(table_ident);
 
     THD *thd = pc->thd;
 
@@ -2046,11 +2433,11 @@ bool PT_show_table_base::make_table_base_cmd(THD *thd, bool *temporary) {
 
   lex->sql_command = m_sql_command;
 
-  // Create empty query block and add user specfied table.
-  TABLE_LIST **query_tables_last = lex->query_tables_last;
+  // Create empty query block and add user specified table.
+  Table_ref **query_tables_last = lex->query_tables_last;
   Query_block *schema_query_block = lex->new_empty_query_block();
   if (schema_query_block == nullptr) return true;
-  TABLE_LIST *tbl = schema_query_block->add_table_to_list(
+  Table_ref *tbl = schema_query_block->add_table_to_list(
       thd, m_table_ident, nullptr, 0, TL_READ, MDL_SHARED_READ);
   if (tbl == nullptr) return true;
   lex->query_tables_last = query_tables_last;
@@ -2075,7 +2462,7 @@ bool PT_show_table_base::make_table_base_cmd(THD *thd, bool *temporary) {
                                                : SCH_TMP_TABLE_KEYS;
     if (make_schema_query_block(thd, query_block, schema_table)) return true;
 
-    TABLE_LIST *table_list = query_block->table_list.first;
+    Table_ref *table_list = query_block->get_table_list();
     table_list->schema_query_block = schema_query_block;
     table_list->schema_table_reformed = true;
   } else {
@@ -2097,7 +2484,7 @@ bool PT_show_table_base::make_table_base_cmd(THD *thd, bool *temporary) {
 
     if (sel == nullptr) return true;
 
-    TABLE_LIST *table_list = sel->table_list.first;
+    Table_ref *table_list = sel->get_table_list();
     table_list->schema_query_block = schema_query_block;
   }
 
@@ -2621,7 +3008,8 @@ Sql_cmd *PT_show_warnings::make_cmd(THD *thd) {
   return &m_sql_cmd;
 }
 
-bool PT_alter_table_change_column::contextualize(Table_ddl_parse_context *pc) {
+bool PT_alter_table_change_column::do_contextualize(
+    Table_ddl_parse_context *pc) {
   // Since Alter_info objects are allocated on a mem_root and never
   // destroyed we (move)-assign an empty vector to cf_appliers to
   // ensure any dynamic memory is released. This must be done whenever
@@ -2631,7 +3019,8 @@ bool PT_alter_table_change_column::contextualize(Table_ddl_parse_context *pc) {
     pc->alter_info->cf_appliers = decltype(pc->alter_info->cf_appliers)();
   });
 
-  if (super::contextualize(pc) || m_field_def->contextualize(pc)) return true;
+  if (super::do_contextualize(pc) || m_field_def->contextualize(pc))
+    return true;
   pc->alter_info->flags |= m_field_def->alter_info_flags;
   dd::Column::enum_hidden_type field_hidden_type =
       (m_field_def->type_flags & FIELD_IS_INVISIBLE)
@@ -2649,8 +3038,8 @@ bool PT_alter_table_change_column::contextualize(Table_ddl_parse_context *pc) {
       field_hidden_type);
 }
 
-bool PT_alter_table_rename::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;  // OOM
+bool PT_alter_table_rename::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;  // OOM
 
   if (m_ident->db.str) {
     LEX_STRING db_str = to_lex_string(m_ident->db);
@@ -2675,9 +3064,9 @@ bool PT_alter_table_rename::contextualize(Table_ddl_parse_context *pc) {
   return false;
 }
 
-bool PT_alter_table_convert_to_charset::contextualize(
+bool PT_alter_table_convert_to_charset::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;  // OOM
+  if (super::do_contextualize(pc)) return true;  // OOM
 
   const CHARSET_INFO *const cs =
       m_charset ? m_charset : pc->thd->variables.collation_database;
@@ -2707,9 +3096,9 @@ bool PT_alter_table_convert_to_charset::contextualize(
   return false;
 }
 
-bool PT_alter_table_add_partition_def_list::contextualize(
+bool PT_alter_table_add_partition_def_list::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   Partition_parse_context part_pc(pc->thd, &m_part_info,
                                   is_add_or_reorganize_partition());
@@ -2721,9 +3110,9 @@ bool PT_alter_table_add_partition_def_list::contextualize(
   return false;
 }
 
-bool PT_alter_table_reorganize_partition_into::contextualize(
+bool PT_alter_table_reorganize_partition_into::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   LEX *const lex = pc->thd->lex;
   lex->no_write_to_binlog = m_no_write_to_binlog;
@@ -2742,9 +3131,9 @@ bool PT_alter_table_reorganize_partition_into::contextualize(
   return false;
 }
 
-bool PT_alter_table_exchange_partition::contextualize(
+bool PT_alter_table_exchange_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   pc->alter_info->with_validation = m_validation;
 
@@ -2788,8 +3177,8 @@ static bool init_alter_table_stmt(Table_ddl_parse_context *pc,
   pc->create_info->row_type = ROW_TYPE_NOT_USED;
 
   pc->alter_info->new_db_name =
-      LEX_CSTRING{lex->query_block->table_list.first->db,
-                  lex->query_block->table_list.first->db_length};
+      LEX_CSTRING{lex->query_block->get_table_list()->db,
+                  lex->query_block->get_table_list()->db_length};
   lex->no_write_to_binlog = false;
   pc->create_info->storage_media = HA_SM_DEFAULT;
 
@@ -2882,8 +3271,8 @@ Sql_cmd *PT_analyze_table_stmt::make_cmd(THD *thd) {
     return nullptr;
 
   thd->lex->alter_info = &m_alter_info;
-  auto cmd = new (thd->mem_root)
-      Sql_cmd_analyze_table(thd, &m_alter_info, m_command, m_num_buckets);
+  auto cmd = new (thd->mem_root) Sql_cmd_analyze_table(
+      thd, &m_alter_info, m_command, m_num_buckets, m_data);
   if (cmd == nullptr) return nullptr;
   if (m_command != Sql_cmd_analyze_table::Histogram_command::NONE) {
     if (cmd->set_histogram_fields(m_columns)) return nullptr;
@@ -2958,8 +3347,8 @@ Sql_cmd *PT_truncate_table_stmt::make_cmd(THD *thd) {
   return &m_cmd_truncate_table;
 }
 
-bool PT_assign_to_keycache::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_assign_to_keycache::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   if (!pc->select->add_table_to_list(pc->thd, m_table, nullptr, 0, TL_READ,
                                      MDL_SHARED_READ, m_index_hints))
@@ -2967,7 +3356,7 @@ bool PT_assign_to_keycache::contextualize(Table_ddl_parse_context *pc) {
   return false;
 }
 
-bool PT_adm_partition::contextualize(Table_ddl_parse_context *pc) {
+bool PT_adm_partition::do_contextualize(Table_ddl_parse_context *pc) {
   pc->alter_info->flags |= Alter_info::ALTER_ADMIN_PARTITION;
 
   assert(pc->alter_info->partition_names.is_empty());
@@ -3078,26 +3467,27 @@ Item *PT_border::build_addop(Item_cache *order_expr, bool prec, bool asc,
 }
 
 PT_json_table_column_for_ordinality::PT_json_table_column_for_ordinality(
-    LEX_STRING name)
-    : m_name(name.str) {}
+    const POS &pos, LEX_STRING name)
+    : super(pos), m_name(name.str) {}
 
 PT_json_table_column_for_ordinality::~PT_json_table_column_for_ordinality() =
     default;
 
-bool PT_json_table_column_for_ordinality::contextualize(Parse_context *pc) {
+bool PT_json_table_column_for_ordinality::do_contextualize(Parse_context *pc) {
   assert(m_column == nullptr);
   m_column = make_unique_destroy_only<Json_table_column>(
       pc->mem_root, enum_jt_column::JTC_ORDINALITY);
   if (m_column == nullptr) return true;
   m_column->init_for_tmp_table(MYSQL_TYPE_LONGLONG, 10, 0, true, true, 8,
                                m_name);
-  return super::contextualize(pc);
+  return super::do_contextualize(pc);
 }
 
 PT_json_table_column_with_path::PT_json_table_column_with_path(
-    unique_ptr_destroy_only<Json_table_column> column, LEX_STRING name,
-    PT_type *type, const CHARSET_INFO *collation)
-    : m_column(std::move(column)),
+    const POS &pos, unique_ptr_destroy_only<Json_table_column> column,
+    LEX_STRING name, PT_type *type, const CHARSET_INFO *collation)
+    : super(pos),
+      m_column(std::move(column)),
       m_name(name.str),
       m_type(type),
       m_collation(collation) {}
@@ -3121,8 +3511,8 @@ static bool check_unsupported_json_table_default(const Item *item) {
   return false;
 }
 
-bool PT_json_table_column_with_path::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || m_type->contextualize(pc)) return true;
+bool PT_json_table_column_with_path::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || m_type->contextualize(pc)) return true;
 
   if (m_column->m_path_string->itemize(pc, &m_column->m_path_string))
     return true;
@@ -3162,8 +3552,9 @@ bool PT_json_table_column_with_path::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_json_table_column_with_nested_path::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;  // OOM
+bool PT_json_table_column_with_nested_path::do_contextualize(
+    Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;  // OOM
 
   if (m_path->itemize(pc, &m_path)) return true;
 
@@ -3193,6 +3584,10 @@ Sql_cmd *PT_explain_for_connection::make_cmd(THD *thd) {
     my_error(ER_NOT_SUPPORTED_YET, MYF(0), "EXPLAIN ANALYZE FOR CONNECTION");
     return nullptr;
   }
+  if (thd->lex->explain_format->is_explain_into()) {
+    my_error(ER_EXPLAIN_INTO_FOR_CONNECTION_NOT_SUPPORTED, MYF(0));
+    return nullptr;
+  }
   return &m_cmd;
 }
 
@@ -3200,23 +3595,41 @@ Sql_cmd *PT_explain::make_cmd(THD *thd) {
   LEX *const lex = thd->lex;
   switch (m_format) {
     case Explain_format_type::TRADITIONAL:
-      lex->explain_format = new (thd->mem_root) Explain_format_traditional;
+    case Explain_format_type::TRADITIONAL_STRICT:
+      /*
+        With no format specified:
+        - With ANALYZE, convert TRADITIONAL[_STRICT] to TREE unconditionally.
+        - With hypergraph, convert TRADITIONAL to TREE. Don't convert
+          TRADITIONAL_STRICT, because it's purpose is to prevent exactly this
+          silent conversion with hypergraph. TRADITIONAL_STRICT will throw an
+          error, later.
+      */
+      if (!m_explicit_format &&
+          (m_analyze ||
+           (thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER) &&
+            m_format == Explain_format_type::TRADITIONAL))) {
+        lex->explain_format = new (thd->mem_root) Explain_format_tree;
+      } else {
+        lex->explain_format = new (thd->mem_root) Explain_format_traditional;
+      }
       break;
-    case Explain_format_type::JSON:
-      lex->explain_format = new (thd->mem_root) Explain_format_JSON;
+    case Explain_format_type::JSON: {
+      lex->explain_format = new (thd->mem_root) Explain_format_JSON(
+          thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER)
+              ? Explain_format_JSON::FormatVersion::kIteratorBased
+              : Explain_format_JSON::FormatVersion::kLinear,
+          m_explain_into_variable_name);
       break;
+    }
     case Explain_format_type::TREE:
       lex->explain_format = new (thd->mem_root) Explain_format_tree;
-      break;
-    case Explain_format_type::TREE_WITH_EXECUTE:
-      lex->explain_format = new (thd->mem_root) Explain_format_tree;
-      lex->is_explain_analyze = true;
       break;
     default:
       assert(false);
       lex->explain_format = new (thd->mem_root) Explain_format_traditional;
   }
   if (lex->explain_format == nullptr) return nullptr;  // OOM
+  lex->is_explain_analyze = m_analyze;
 
   Sql_cmd *ret = m_explainable_stmt->make_cmd(thd);
   if (ret == nullptr) return nullptr;  // OOM
@@ -3229,6 +3642,59 @@ Sql_cmd *PT_explain::make_cmd(THD *thd) {
   }
 
   return ret;
+}
+
+/**
+  Build a parsed tree for :
+  SELECT '...json tree string...' as show_parse_tree.
+  Essentially the SHOW PARSE_TREE statement is converted into the above
+  SQL and passed to the executor.
+*/
+static Query_block *build_query_for_show_parse(
+    const POS &pos, THD *thd, const std::string_view &json_tree) {
+  // No query options.
+  static const Query_options options = {0 /* query_spec_options */};
+
+  /* '<json_tree>' */
+  LEX_STRING json_tree_copy;
+  if (lex_string_strmake(thd->mem_root, &json_tree_copy, json_tree.data(),
+                         json_tree.length()))
+    return nullptr;
+  PTI_text_literal_text_string *literal_string = new (thd->mem_root)
+      PTI_text_literal_text_string(pos, false, json_tree_copy);
+  if (literal_string == nullptr) return nullptr;
+
+  /* Literal string with alias ('<json_tree>' AS show_parse_tree ...) */
+  PTI_expr_with_alias *expr_name = new (thd->mem_root) PTI_expr_with_alias(
+      pos, literal_string, pos.cpp, {STRING_WITH_LEN("Show_parse_tree")});
+  if (expr_name == nullptr) return nullptr;
+
+  PT_select_item_list *item_list = new (thd->mem_root) PT_select_item_list(pos);
+  if (item_list == nullptr) return nullptr;
+  item_list->push_back(expr_name);
+
+  PT_query_primary *query_specification =
+      new (thd->mem_root) PT_query_specification(
+          pos, options, item_list,
+          Mem_root_array<PT_table_reference *>() /* Empty FROM list */,
+          nullptr /*where*/);
+  if (query_specification == nullptr) return nullptr;
+
+  PT_query_expression *query_expression =
+      new (thd->mem_root) PT_query_expression(pos, query_specification);
+  if (query_expression == nullptr) return nullptr;
+
+  LEX *lex = thd->lex;
+  Query_block *current_query_block = lex->current_query_block();
+  Parse_context pc(thd, current_query_block);
+  if (thd->is_error()) return nullptr;
+
+  lex->sql_command = SQLCOM_SELECT;
+  if (query_expression->contextualize(&pc)) return nullptr;
+  if (pc.finalize_query_expression()) return nullptr;
+  lex->sql_command = SQLCOM_SHOW_PARSE_TREE;
+
+  return current_query_block;
 }
 
 Sql_cmd *PT_load_table::make_cmd(THD *thd) {
@@ -3288,14 +3754,14 @@ Sql_cmd *PT_load_table::make_cmd(THD *thd) {
   return &m_cmd;
 }
 
-bool PT_select_item_list::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_select_item_list::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
   pc->select->fields = value;
   return false;
 }
 
-bool PT_limit_clause::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_limit_clause::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   if (limit_options.is_offset_first && limit_options.opt_offset != nullptr &&
       limit_options.opt_offset->itemize(pc, &limit_options.opt_offset))
@@ -3314,90 +3780,146 @@ bool PT_limit_clause::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_table_factor_table_ident::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_table_factor_table_ident::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   Yacc_state *yyps = &thd->m_parser_state->m_yacc;
 
-  value = pc->select->add_table_to_list(
+  m_table_ref = pc->select->add_table_to_list(
       thd, table_ident, opt_table_alias, 0, yyps->m_lock_type, yyps->m_mdl_type,
       opt_key_definition, opt_use_partition, nullptr, pc);
-  if (value == nullptr) return true;
-  if (pc->select->add_joined_table(value)) return true;
+  if (m_table_ref == nullptr) return true;
+  if (pc->select->add_joined_table(m_table_ref)) return true;
+
   return false;
 }
 
-bool PT_table_reference_list_parens::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || contextualize_array(pc, &table_list))
+void PT_table_factor_table_ident::add_json_info(Json_object *obj) {
+  String s;
+
+  print_table_ident(nullptr, table_ident, &s);
+  obj->add_alias("table_ident",
+                 create_dom_ptr<Json_string>(s.ptr(), s.length()));
+
+  if (opt_table_alias != nullptr)
+    obj->add_alias("table_alias", create_dom_ptr<Json_string>(opt_table_alias));
+}
+
+bool PT_table_reference_list_parens::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || contextualize_array(pc, &table_list))
     return true;
 
   assert(table_list.size() >= 2);
-  value = pc->select->nest_last_join(pc->thd, table_list.size());
-  return value == nullptr;
+  m_table_ref = pc->select->nest_last_join(pc->thd, table_list.size());
+  return m_table_ref == nullptr;
 }
 
-bool PT_joined_table::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || contextualize_tabs(pc)) return true;
+bool PT_joined_table::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || contextualize_tabs(pc)) return true;
 
-  if (m_type & JTT_NATURAL) tr1->add_join_natural(tr2);
+  if (m_type & JTT_NATURAL)
+    m_left_table_ref->add_join_natural(m_right_table_ref);
 
-  if (m_type & JTT_STRAIGHT) tr2->straight = true;
+  if (m_type & JTT_STRAIGHT) m_right_table_ref->straight = true;
 
   return false;
 }
 
-bool PT_cross_join::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
-  value = pc->select->nest_last_join(pc->thd);
-  return value == nullptr;
+void PT_joined_table::add_json_info(Json_object *obj) {
+  std::string type_string;
+
+  // Join nodes can re-stucture their child trees (see add_cross_join). It's
+  // not worth changing the corresponding text of the modified join tree. Users
+  // can anyway generate the text using the join type and leaf table
+  // references. So just omit the text field.
+  obj->remove("text");
+
+  if (m_type & JTT_STRAIGHT)
+    type_string += "STRAIGHT_JOIN";
+  else {
+    if (m_type & JTT_NATURAL) type_string += "NATURAL ";
+
+    // Join type can't be both inner and outer.
+    assert(!((m_type & JTT_INNER) &&
+             ((m_type & JTT_LEFT) || (m_type & JTT_RIGHT))));
+
+    if (m_type & JTT_INNER)
+      type_string += "INNER ";
+    else if (m_type & JTT_LEFT)
+      type_string += "LEFT OUTER ";
+    else if (m_type & JTT_RIGHT)
+      type_string += "RIGHT OUTER ";
+    else
+      assert(0);  // Has to be inner or outer.
+
+    type_string += "JOIN";
+  }
+
+  obj->add_alias("join_type", create_dom_ptr<Json_string>(type_string));
 }
 
-bool PT_joined_table_on::contextualize(Parse_context *pc) {
+bool PT_cross_join::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
+  m_table_ref = pc->select->nest_last_join(pc->thd);
+  return m_table_ref == nullptr;
+}
+
+bool PT_joined_table_on::do_contextualize(Parse_context *pc) {
   if (this->contextualize_tabs(pc)) return true;
 
-  if (push_new_name_resolution_context(pc, this->tr1, this->tr2)) {
-    this->error(pc, this->join_pos);
+  if (push_new_name_resolution_context(pc, this->m_left_table_ref,
+                                       this->m_right_table_ref)) {
+    this->error(pc, this->m_join_pos);
     return true;
   }
 
   Query_block *sel = pc->select;
   sel->parsing_place = CTX_ON;
 
-  if (super::contextualize(pc) || on->itemize(pc, &on)) return true;
+  if (super::do_contextualize(pc) || on->itemize(pc, &on)) return true;
   if (!on->is_bool_func()) {
     on = make_condition(pc, on);
     if (on == nullptr) return true;
   }
   assert(sel == pc->select);
 
-  add_join_on(this->tr2, on);
+  add_join_on(this->m_right_table_ref, on);
   pc->thd->lex->pop_context();
   assert(sel->parsing_place == CTX_ON);
   sel->parsing_place = CTX_NONE;
-  value = pc->select->nest_last_join(pc->thd);
-  return value == nullptr;
+  m_table_ref = pc->select->nest_last_join(pc->thd);
+
+  return m_table_ref == nullptr;
 }
 
-bool PT_joined_table_using::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_joined_table_using::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
-  tr1->add_join_natural(tr2);
-  value = pc->select->nest_last_join(pc->thd);
-  if (value == nullptr) return true;
-  value->join_using_fields = using_fields;
+  m_left_table_ref->add_join_natural(m_right_table_ref);
+  m_table_ref = pc->select->nest_last_join(pc->thd);
+  if (m_table_ref == nullptr) return true;
+  m_table_ref->join_using_fields = using_fields;
 
   return false;
 }
 
-void PT_table_locking_clause::print_table_ident(const THD *thd,
-                                                const Table_ident *ident,
-                                                String *s) {
-  if (ident->db.length > 0) {
-    append_identifier(thd, s, ident->db.str, ident->db.length);
-    s->append('.');
+void PT_joined_table_using::add_json_info(Json_object *obj) {
+  super::add_json_info(obj);
+
+  if (using_fields == nullptr || using_fields->is_empty()) return;
+
+  List_iterator<String> using_fields_it(*using_fields);
+  String using_fields_str;
+
+  for (String *curr_str = using_fields_it++;;) {
+    append_identifier(&using_fields_str, curr_str->ptr(), curr_str->length());
+    if ((curr_str = using_fields_it++) == nullptr) break;
+    using_fields_str.append(",", 1, system_charset_info);
   }
-  append_identifier(thd, s, ident->table.str, ident->table.length);
+  obj->add_alias("using_fields",
+                 create_dom_ptr<Json_string>(using_fields_str.ptr(),
+                                             using_fields_str.length()));
 }
 
 bool PT_table_locking_clause::raise_error(THD *thd, const Table_ident *name,
@@ -3413,9 +3935,15 @@ bool PT_table_locking_clause::raise_error(int error) {
   return true;
 }
 
-bool PT_set_scoped_system_variable::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || itemize_safe(pc, &m_opt_expr)) {
+bool PT_set_scoped_system_variable::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || itemize_safe(pc, &m_opt_expr)) {
     return true;
+  }
+
+  // Remove deprecation warning when FULL is used as keyword.
+  THD *thd = pc->thd;
+  if (thd->get_stmt_da()->has_sql_condition(ER_WARN_DEPRECATED_IDENT)) {
+    thd->get_stmt_da()->reset_condition_info(thd);
   }
 
   const bool is_1d_name = m_opt_prefix.str == nullptr;
@@ -3426,7 +3954,7 @@ bool PT_set_scoped_system_variable::contextualize(Parse_context *pc) {
         {"GLOBAL" | "SESSION" | "PERSIST" | ...} {"NEW" | "OLD"} "."  <name>
   */
   if (is_any_transition_variable_prefix(*pc, m_opt_prefix)) {
-    error(pc, m_pos);
+    error(pc, m_varpos);
     return true;
   }
 
@@ -3441,7 +3969,7 @@ bool PT_set_scoped_system_variable::contextualize(Parse_context *pc) {
           variables is too strict, so a warning may be a better alternative.
   */
   if (is_1d_name && find_sp_variable(*pc, m_name) != nullptr) {
-    error(pc, m_pos);
+    error(pc, m_varpos);
     return true;
   }
 
@@ -3449,8 +3977,9 @@ bool PT_set_scoped_system_variable::contextualize(Parse_context *pc) {
                                         pc->thd->lex->option_type, m_opt_expr);
 }
 
-bool PT_option_value_no_option_type_user_var::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || expr->itemize(pc, &expr)) return true;
+bool PT_option_value_no_option_type_user_var::do_contextualize(
+    Parse_context *pc) {
+  if (super::do_contextualize(pc) || expr->itemize(pc, &expr)) return true;
 
   THD *thd = pc->thd;
   Item_func_set_user_var *item =
@@ -3461,9 +3990,15 @@ bool PT_option_value_no_option_type_user_var::contextualize(Parse_context *pc) {
   return thd->lex->var_list.push_back(var);
 }
 
-bool PT_set_system_variable::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || itemize_safe(pc, &m_opt_expr)) {
+bool PT_set_system_variable::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || itemize_safe(pc, &m_opt_expr)) {
     return true;
+  }
+
+  // Remove deprecation warning when FULL is used as keyword.
+  THD *thd = pc->thd;
+  if (thd->get_stmt_da()->has_sql_condition(ER_WARN_DEPRECATED_IDENT)) {
+    thd->get_stmt_da()->reset_condition_info(thd);
   }
 
   /*
@@ -3474,17 +4009,17 @@ bool PT_set_system_variable::contextualize(Parse_context *pc) {
     return true;
   }
 
-  return add_system_variable_assignment(pc->thd, m_opt_prefix, m_name, m_scope,
+  return add_system_variable_assignment(thd, m_opt_prefix, m_name, m_scope,
                                         m_opt_expr);
 }
 
-bool PT_option_value_type::contextualize(Parse_context *pc) {
+bool PT_option_value_type::do_contextualize(Parse_context *pc) {
   pc->thd->lex->option_type = type;
-  return super::contextualize(pc) || value->contextualize(pc);
+  return super::do_contextualize(pc) || value->contextualize(pc);
 }
 
-bool PT_option_value_list_head::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_option_value_list_head::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
 #ifndef NDEBUG
@@ -3493,7 +4028,8 @@ bool PT_option_value_list_head::contextualize(Parse_context *pc) {
 
   sp_create_assignment_lex(thd, delimiter_pos.raw.end);
   assert(thd->lex->query_block == thd->lex->current_query_block());
-  Parse_context inner_pc(pc->thd, thd->lex->query_block);
+  Parse_context inner_pc(pc->thd, thd->lex->query_block,
+                         pc->m_show_parse_tree.get());
 
   if (value->contextualize(&inner_pc)) return true;
 
@@ -3503,8 +4039,8 @@ bool PT_option_value_list_head::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_start_option_value_list_no_type::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || head->contextualize(pc)) return true;
+bool PT_start_option_value_list_no_type::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || head->contextualize(pc)) return true;
 
   if (sp_create_assignment_instr(pc->thd, head_pos.raw.end)) return true;
   assert(pc->thd->lex->query_block == pc->thd->lex->current_query_block());
@@ -3515,8 +4051,8 @@ bool PT_start_option_value_list_no_type::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_transaction_characteristic::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_transaction_characteristic::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -3534,8 +4070,9 @@ bool PT_transaction_characteristic::contextualize(Parse_context *pc) {
   return lex->var_list.push_back(var);
 }
 
-bool PT_start_option_value_list_transaction::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_start_option_value_list_transaction::do_contextualize(
+    Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   thd->lex->option_type = OPT_DEFAULT;
@@ -3548,9 +4085,9 @@ bool PT_start_option_value_list_transaction::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_start_option_value_list_following_option_type_eq::contextualize(
+bool PT_start_option_value_list_following_option_type_eq::do_contextualize(
     Parse_context *pc) {
-  if (super::contextualize(pc) || head->contextualize(pc)) return true;
+  if (super::do_contextualize(pc) || head->contextualize(pc)) return true;
 
   if (sp_create_assignment_instr(pc->thd, head_pos.raw.end)) return true;
   assert(pc->thd->lex->query_block == pc->thd->lex->current_query_block());
@@ -3562,8 +4099,8 @@ bool PT_start_option_value_list_following_option_type_eq::contextualize(
 }
 
 bool PT_start_option_value_list_following_option_type_transaction::
-    contextualize(Parse_context *pc) {
-  if (super::contextualize(pc) || characteristics->contextualize(pc))
+    do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc) || characteristics->contextualize(pc))
     return true;
 
   if (sp_create_assignment_instr(pc->thd, characteristics_pos.raw.end))
@@ -3574,13 +4111,13 @@ bool PT_start_option_value_list_following_option_type_transaction::
   return false;
 }
 
-bool PT_start_option_value_list_type::contextualize(Parse_context *pc) {
+bool PT_start_option_value_list_type::do_contextualize(Parse_context *pc) {
   pc->thd->lex->option_type = type;
-  return super::contextualize(pc) || list->contextualize(pc);
+  return super::do_contextualize(pc) || list->contextualize(pc);
 }
 
-bool PT_set::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_set::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   THD *thd = pc->thd;
   LEX *lex = thd->lex;
@@ -3596,8 +4133,8 @@ bool PT_set::contextualize(Parse_context *pc) {
   return list->contextualize(pc);
 }
 
-bool PT_into_destination::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_into_destination::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   LEX *lex = pc->thd->lex;
   if (!pc->thd->lex->parsing_options.allows_select_into) {
@@ -3611,26 +4148,26 @@ bool PT_into_destination::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_into_destination_outfile::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_into_destination_outfile::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   LEX *lex = pc->thd->lex;
   lex->set_uncacheable(pc->select, UNCACHEABLE_SIDEEFFECT);
-  lex->result = new (pc->thd->mem_root) Query_result_export(&m_exchange);
+  lex->result = new (pc->mem_root) Query_result_export(&m_exchange);
   return lex->result == nullptr;
 }
 
-bool PT_into_destination_dumpfile::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_into_destination_dumpfile::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   LEX *lex = pc->thd->lex;
   lex->set_uncacheable(pc->select, UNCACHEABLE_SIDEEFFECT);
-  lex->result = new (pc->thd->mem_root) Query_result_dump(&m_exchange);
+  lex->result = new (pc->mem_root) Query_result_dump(&m_exchange);
   return lex->result == nullptr;
 }
 
-bool PT_select_var_list::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_select_var_list::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   List_iterator<PT_select_var> it(value);
   PT_select_var *var;
@@ -3649,24 +4186,132 @@ bool PT_select_var_list::contextualize(Parse_context *pc) {
   return false;
 }
 
-bool PT_query_expression::contextualize(Parse_context *pc) {
+bool PT_query_expression::do_contextualize(Parse_context *pc) {
+  pc->m_stack.push_back(
+      QueryLevel(pc->mem_root, SC_QUERY_EXPRESSION, m_order != nullptr));
   if (contextualize_safe(pc, m_with_clause))
     return true; /* purecov: inspected */
 
-  if (Parse_tree_node::contextualize(pc) || m_body->contextualize(pc))
+  if (Parse_tree_node::do_contextualize(pc) || m_body->contextualize(pc))
     return true;
 
-  if (contextualize_order_and_limit(pc)) return true;
+  QueryLevel ql = pc->m_stack.back();
+  Query_term *expr = ql.m_elts.back();
+  pc->m_stack.pop_back();
+
+  switch (expr->term_type()) {
+    case QT_UNARY: {
+      Query_term_unary *ex = down_cast<Query_term_unary *>(expr);
+      Query_expression *qe = pc->select->master_query_expression();
+
+      // The setting of no_table_names_allowed in the created post processing
+      // block below to false foreshadows our removing the parentheses in
+      // Query_term::pushdown_limit_order_by. We need to duplicate the logic
+      // here in order to allow a construction like
+      //
+      //   ( SELECT a FROM t ) ORDER BY t.a
+      //
+      // for which we remove the parentheses because the inner query expression
+      // has no LIMIT or ORDER BY of its own.
+      if (ex->set_block(qe->create_post_processing_block(ex))) return true;
+
+      if (m_order != nullptr)
+        ex->query_block()->order_list = m_order->order_list->value;
+
+      if (m_limit != nullptr) {
+        ex->query_block()->select_limit = m_limit->limit_options.limit;
+        ex->query_block()->offset_limit = m_limit->limit_options.opt_offset;
+      }
+
+      Query_block *orig_query_block = pc->select;
+      LEX *lex = pc->thd->lex;
+      pc->select = ex->query_block();
+      lex->push_context(&pc->select->context);
+      assert(pc->select->parsing_place == CTX_NONE);
+      if (contextualize_safe(pc, m_order, m_limit)) return true;
+      lex->pop_context();
+      pc->select = orig_query_block;
+
+      if (pc->m_stack.back().m_type == SC_QUERY_EXPRESSION) {  // 3 deep or more
+        expr = new (pc->mem_root) Query_term_unary(pc->mem_root, expr);
+        if (expr == nullptr) return true;
+      }
+      QueryLevel upper = pc->m_stack.back();
+      pc->m_stack.pop_back();
+      ql.m_elts.pop_back();
+      if (upper.m_type == SC_UNION_DISTINCT || upper.m_type == SC_UNION_ALL ||
+          upper.m_type == SC_EXCEPT_DISTINCT || upper.m_type == SC_EXCEPT_ALL ||
+          upper.m_type == SC_INTERSECT_DISTINCT ||
+          upper.m_type == SC_INTERSECT_ALL)
+        ql = upper;
+      ql.m_elts.push_back(expr);
+      pc->m_stack.push_back(ql);
+    } break;
+    case QT_QUERY_BLOCK: {
+      if (contextualize_order_and_limit(pc)) return true;
+      if (pc->m_stack.back().m_type == SC_QUERY_EXPRESSION) {  // 2 deep or more
+        expr = new (pc->mem_root) Query_term_unary(pc->mem_root, expr);
+        if (expr == nullptr) return true;
+      }
+      QueryLevel upper = pc->m_stack.back();
+      pc->m_stack.pop_back();
+      ql.m_elts.pop_back();
+      if (upper.m_type == SC_UNION_DISTINCT || upper.m_type == SC_UNION_ALL ||
+          upper.m_type == SC_EXCEPT_DISTINCT || upper.m_type == SC_EXCEPT_ALL ||
+          upper.m_type == SC_INTERSECT_DISTINCT ||
+          upper.m_type == SC_INTERSECT_ALL)
+        ql = upper;
+      ql.m_elts.push_back(expr);
+      pc->m_stack.push_back(ql);
+    } break;
+    case QT_UNION:
+    case QT_EXCEPT:
+    case QT_INTERSECT: {
+      auto ex = down_cast<Query_term_set_op *>(expr);
+      const bool already_decorated =
+          ex->query_block()->order_list.elements > 0 ||
+          ex->query_block()->select_limit != nullptr;
+      if (already_decorated) {
+        ex = new (pc->mem_root) Query_term_unary(pc->mem_root, ex);
+        if (ex == nullptr) return true;
+        Query_expression *qe = pc->select->master_query_expression();
+        if (ex->set_block(qe->create_post_processing_block(ex))) return true;
+      }
+      if (m_order != nullptr) {
+        ex->query_block()->order_list = m_order->order_list->value;
+      }
+      if (m_limit != nullptr) {
+        ex->query_block()->select_limit = m_limit->limit_options.limit;
+        ex->query_block()->offset_limit = m_limit->limit_options.opt_offset;
+      }
+
+      Query_block *orig_query_block = pc->select;
+      LEX *lex = pc->thd->lex;
+      pc->select = ex->query_block();
+      lex->push_context(&pc->select->context);
+      assert(pc->select->parsing_place == CTX_NONE);
+      if (contextualize_safe(pc, m_order, m_limit)) return true;
+      lex->pop_context();
+      pc->select = orig_query_block;
+
+      if (pc->m_stack.back().m_type == SC_QUERY_EXPRESSION) {  // 3 deep or more
+        ex = new (pc->mem_root) Query_term_unary(pc->mem_root, ex);
+        if (ex == nullptr) return true;
+      }
+
+      pc->m_stack.back().m_elts.push_back(ex);
+    } break;
+  }
 
   return false;
 }
 
-bool PT_subquery::contextualize(Parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_subquery::do_contextualize(Parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   LEX *lex = pc->thd->lex;
   if (!lex->expr_allows_subselect || lex->sql_command == SQLCOM_PURGE) {
-    error(pc, pos);
+    error(pc, m_pos);
     return true;
   }
 
@@ -3675,7 +4320,8 @@ bool PT_subquery::contextualize(Parse_context *pc) {
   Query_block *child = lex->new_query(pc->select);
   if (child == nullptr) return true;
 
-  Parse_context inner_pc(pc->thd, child);
+  Parse_context inner_pc(pc->thd, child, pc->m_show_parse_tree.get());
+  inner_pc.m_stack.push_back(QueryLevel(pc->mem_root, SC_SUBQUERY));
 
   if (m_is_derived_table) child->linkage = DERIVED_TABLE_TYPE;
 
@@ -3687,6 +4333,9 @@ bool PT_subquery::contextualize(Parse_context *pc) {
   }
 
   query_block = inner_pc.select->master_query_expression()->first_query_block();
+  if (inner_pc.finalize_query_expression()) return true;
+  inner_pc.m_stack.pop_back();
+  assert(inner_pc.m_stack.size() == 0);
 
   lex->pop_context();
   pc->select->n_child_sum_items += child->n_sum_items;
@@ -3727,7 +4376,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
     return nullptr;
   }
   MYSQL_LEX_STRING srs_name_utf8 = {nullptr, 0};
-  if (thd->convert_string(&srs_name_utf8, &my_charset_utf8_bin,
+  if (thd->convert_string(&srs_name_utf8, &my_charset_utf8mb3_bin,
                           m_attributes.srs_name.str,
                           m_attributes.srs_name.length, thd->charset())) {
     /* purecov: begin inspected */
@@ -3745,7 +4394,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
     return nullptr;
   }
   String srs_name_str(srs_name_utf8.str, srs_name_utf8.length,
-                      &my_charset_utf8_bin);
+                      &my_charset_utf8mb3_bin);
   if (srs_name_str.numchars() > 80) {
     my_error(ER_SRS_ATTRIBUTE_STRING_TOO_LONG, MYF(0), "NAME", 80);
     return nullptr;
@@ -3756,7 +4405,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
     return nullptr;
   }
   MYSQL_LEX_STRING definition_utf8 = {nullptr, 0};
-  if (thd->convert_string(&definition_utf8, &my_charset_utf8_bin,
+  if (thd->convert_string(&definition_utf8, &my_charset_utf8mb3_bin,
                           m_attributes.definition.str,
                           m_attributes.definition.length, thd->charset())) {
     /* purecov: begin inspected */
@@ -3765,7 +4414,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
     /* purecov: end */
   }
   String definition_str(definition_utf8.str, definition_utf8.length,
-                        &my_charset_utf8_bin);
+                        &my_charset_utf8mb3_bin);
   if (contains_control_char(definition_utf8.str, definition_utf8.length)) {
     my_error(ER_SRS_INVALID_CHARACTER_IN_ATTRIBUTE, MYF(0), "DEFINITION");
     return nullptr;
@@ -3777,7 +4426,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
 
   MYSQL_LEX_STRING organization_utf8 = {nullptr, 0};
   if (m_attributes.organization.str != nullptr) {
-    if (thd->convert_string(&organization_utf8, &my_charset_utf8_bin,
+    if (thd->convert_string(&organization_utf8, &my_charset_utf8mb3_bin,
                             m_attributes.organization.str,
                             m_attributes.organization.length, thd->charset())) {
       /* purecov: begin inspected */
@@ -3792,7 +4441,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
       return nullptr;
     }
     String organization_str(organization_utf8.str, organization_utf8.length,
-                            &my_charset_utf8_bin);
+                            &my_charset_utf8mb3_bin);
     if (contains_control_char(organization_utf8.str,
                               organization_utf8.length)) {
       my_error(ER_SRS_INVALID_CHARACTER_IN_ATTRIBUTE, MYF(0), "ORGANIZATION");
@@ -3814,7 +4463,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
 
   MYSQL_LEX_STRING description_utf8 = {nullptr, 0};
   if (m_attributes.description.str != nullptr) {
-    if (thd->convert_string(&description_utf8, &my_charset_utf8_bin,
+    if (thd->convert_string(&description_utf8, &my_charset_utf8mb3_bin,
                             m_attributes.description.str,
                             m_attributes.description.length, thd->charset())) {
       /* purecov: begin inspected */
@@ -3823,7 +4472,7 @@ Sql_cmd *PT_create_srs::make_cmd(THD *thd) {
       /* purecov: end */
     }
     String description_str(description_utf8.str, description_utf8.length,
-                           &my_charset_utf8_bin);
+                           &my_charset_utf8mb3_bin);
     if (contains_control_char(description_utf8.str, description_utf8.length)) {
       my_error(ER_SRS_INVALID_CHARACTER_IN_ATTRIBUTE, MYF(0), "DESCRIPTION");
       return nullptr;
@@ -3861,8 +4510,8 @@ Sql_cmd *PT_alter_instance::make_cmd(THD *thd) {
   return &sql_cmd;
 }
 
-bool PT_check_constraint::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc) ||
+bool PT_check_constraint::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc) ||
       cc_spec.check_expr->itemize(pc, &cc_spec.check_expr))
     return true;
 
@@ -3889,12 +4538,12 @@ Sql_cmd *PT_set_role::make_cmd(THD *thd) {
 }
 
 LEX_USER *PT_role_or_privilege::get_user(THD *thd) {
-  thd->syntax_error_at(pos, "Illegal authorization identifier");
+  thd->syntax_error_at(m_errpos, "Illegal authorization identifier");
   return nullptr;
 }
 
 Privilege *PT_role_or_privilege::get_privilege(THD *thd) {
-  thd->syntax_error_at(pos, "Illegal privilege identifier");
+  thd->syntax_error_at(m_errpos, "Illegal privilege identifier");
   return nullptr;
 }
 
@@ -3954,14 +4603,37 @@ Sql_cmd *PT_show_grants::make_cmd(THD *thd) {
   return &sql_cmd;
 }
 
-bool PT_alter_table_action::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+Sql_cmd *PT_show_parse_tree::make_cmd(THD *thd) {
+  LEX *lex = thd->lex;
+
+  std::string parse_tree_str = m_parse_tree_stmt->get_printable_parse_tree(thd);
+
+  if (parse_tree_str.empty()) return nullptr;
+
+  // get_printable_parse_tree() must have updated lex, and we want to
+  // start-over with a new query. So reset lex.
+  // 'result' may be non-null for an INTO clause. lex->reset() doesn't like
+  // non-null 'result'.
+  lex->result = nullptr;
+  lex_start(thd);
+
+  lex->sql_command = m_sql_command;
+
+  if (build_query_for_show_parse(m_pos, thd, parse_tree_str) == nullptr)
+    return nullptr;
+
+  lex->sql_command = SQLCOM_SHOW_PARSE_TREE;
+  return &m_sql_cmd;
+}
+
+bool PT_alter_table_action::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
   pc->alter_info->flags |= flag;
   return false;
 }
 
-bool PT_alter_table_set_default::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc) || itemize_safe(pc, &m_expr)) return true;
+bool PT_alter_table_set_default::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc) || itemize_safe(pc, &m_expr)) return true;
   Alter_column *alter_column;
   if (m_expr == nullptr || m_expr->basic_const_item()) {
     Item *actual_expr = m_expr;
@@ -3994,20 +4666,23 @@ bool PT_alter_table_set_default::contextualize(Table_ddl_parse_context *pc) {
   return false;
 }
 
-bool PT_alter_table_order::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc) || m_order->contextualize(pc)) return true;
+bool PT_alter_table_order::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc) || m_order->contextualize(pc)) return true;
   pc->select->order_list = m_order->value;
   return false;
 }
 
-bool PT_alter_table_partition_by::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc) || m_partition->contextualize(pc)) return true;
+bool PT_alter_table_partition_by::do_contextualize(
+    Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc) || m_partition->contextualize(pc))
+    return true;
   pc->thd->lex->part_info = &m_partition->part_info;
   return false;
 }
 
-bool PT_alter_table_add_partition::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_alter_table_add_partition::do_contextualize(
+    Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   LEX *const lex = pc->thd->lex;
   lex->no_write_to_binlog = m_no_write_to_binlog;
@@ -4016,38 +4691,39 @@ bool PT_alter_table_add_partition::contextualize(Table_ddl_parse_context *pc) {
   return false;
 }
 
-bool PT_alter_table_drop_partition::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+bool PT_alter_table_drop_partition::do_contextualize(
+    Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc)) return true;
 
   assert(pc->alter_info->partition_names.is_empty());
   pc->alter_info->partition_names = m_partitions;
   return false;
 }
 
-bool PT_alter_table_rebuild_partition::contextualize(
+bool PT_alter_table_rebuild_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
   pc->thd->lex->no_write_to_binlog = m_no_write_to_binlog;
   return false;
 }
 
-bool PT_alter_table_optimize_partition::contextualize(
+bool PT_alter_table_optimize_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
   pc->thd->lex->no_write_to_binlog = m_no_write_to_binlog;
   return false;
 }
 
-bool PT_alter_table_analyze_partition::contextualize(
+bool PT_alter_table_analyze_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
   pc->thd->lex->no_write_to_binlog = m_no_write_to_binlog;
   return false;
 }
 
-bool PT_alter_table_check_partition::contextualize(
+bool PT_alter_table_check_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   LEX *const lex = pc->thd->lex;
   lex->check_opt.flags |= m_flags;
@@ -4055,9 +4731,9 @@ bool PT_alter_table_check_partition::contextualize(
   return false;
 }
 
-bool PT_alter_table_repair_partition::contextualize(
+bool PT_alter_table_repair_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   LEX *const lex = pc->thd->lex;
   lex->no_write_to_binlog = m_no_write_to_binlog;
@@ -4068,31 +4744,31 @@ bool PT_alter_table_repair_partition::contextualize(
   return false;
 }
 
-bool PT_alter_table_coalesce_partition::contextualize(
+bool PT_alter_table_coalesce_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
 
   pc->thd->lex->no_write_to_binlog = m_no_write_to_binlog;
   pc->alter_info->num_parts = m_num_parts;
   return false;
 }
 
-bool PT_alter_table_truncate_partition::contextualize(
+bool PT_alter_table_truncate_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
   return false;
 }
 
-bool PT_alter_table_reorganize_partition::contextualize(
+bool PT_alter_table_reorganize_partition::do_contextualize(
     Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc)) return true;
+  if (super::do_contextualize(pc)) return true;
   pc->thd->lex->part_info = &m_partition_info;
   pc->thd->lex->no_write_to_binlog = m_no_write_to_binlog;
   return false;
 }
 
-bool PT_preload_keys::contextualize(Table_ddl_parse_context *pc) {
-  if (super::contextualize(pc) ||
+bool PT_preload_keys::do_contextualize(Table_ddl_parse_context *pc) {
+  if (super::do_contextualize(pc) ||
       !pc->select->add_table_to_list(
           pc->thd, m_table, nullptr,
           m_ignore_leaves ? TL_OPTION_IGNORE_LEAVES : 0, TL_READ,
@@ -4101,12 +4777,13 @@ bool PT_preload_keys::contextualize(Table_ddl_parse_context *pc) {
   return false;
 }
 
-Alter_tablespace_parse_context::Alter_tablespace_parse_context(THD *thd)
-    : thd(thd), mem_root(thd->mem_root) {}
+Alter_tablespace_parse_context::Alter_tablespace_parse_context(
+    THD *thd, bool show_parse_tree)
+    : Parse_context_base(show_parse_tree), thd(thd), mem_root(thd->mem_root) {}
 
-bool PT_alter_tablespace_option_nodegroup::contextualize(
+bool PT_alter_tablespace_option_nodegroup::do_contextualize(
     Alter_tablespace_parse_context *pc) {
-  if (super::contextualize(pc)) return true; /* purecov: inspected */  // OOM
+  if (super::do_contextualize(pc)) return true; /* purecov: inspected */  // OOM
 
   if (pc->nodegroup_id != UNDEF_NODEGROUP) {
     my_error(ER_FILEGROUP_OPTION_ONLY_ONCE, MYF(0), "NODEGROUP");
@@ -4176,7 +4853,7 @@ Sql_cmd *PT_restart_server::make_cmd(THD *thd) {
 
 /**
    Generic attribute node that can be used with different base types
-   and corrsponding parse contexts. CFP (Contextualizer Function
+   and corresponding parse contexts. CFP (Contextualizer Function
    Pointer) argument implements a suitable contextualize action in the
    given context. Value is typically a decayed captureless lambda.
  */
@@ -4187,9 +4864,9 @@ class PT_attribute : public BASE {
   CFP m_cfp;
 
  public:
-  PT_attribute(ATTRIBUTE a, CFP cfp) : m_attr{a}, m_cfp{cfp} {}
-  bool contextualize(typename BASE::context_t *pc) override {
-    return BASE::contextualize(pc) || m_cfp(m_attr, pc);
+  PT_attribute(ATTRIBUTE a, CFP cfp) : BASE(POS()), m_attr{a}, m_cfp{cfp} {}
+  bool do_contextualize(typename BASE::context_t *pc) override {
+    return BASE::do_contextualize(pc) || m_cfp(m_attr, pc);
   }
 };
 
@@ -4356,4 +5033,61 @@ PT_base_index_option *make_index_secondary_engine_attribute(MEM_ROOT *mem_root,
         pc->key_create_info->m_secondary_engine_attribute = a;
         return false;
       });
+}
+
+PT_install_component::PT_install_component(
+    const POS &pos, THD *thd, const Mem_root_array_YY<LEX_STRING> urns,
+    List<PT_install_component_set_element> *set_elements)
+    : Parse_tree_root(pos), m_urns(urns), m_set_elements(set_elements) {
+  const char *prefix = "file://component_";
+  const auto prefix_len = sizeof("file://component_") - 1;
+
+  if (m_urns.size() == 1 &&
+      !thd->charset()->coll->strnncoll(
+          thd->charset(), pointer_cast<const uchar *>(m_urns[0].str),
+          m_urns[0].length, pointer_cast<const uchar *>(prefix), prefix_len,
+          true)) {
+    for (auto &elt : *m_set_elements) {
+      if (elt.name.prefix.length == 0) {
+        elt.name.prefix.str = m_urns[0].str + prefix_len;
+        elt.name.prefix.length = m_urns[0].length - prefix_len;
+      }
+    }
+  }
+}
+
+Sql_cmd *PT_install_component::make_cmd(THD *thd) {
+  thd->lex->sql_command = SQLCOM_INSTALL_COMPONENT;
+
+  if (!m_set_elements->is_empty()) {
+    Parse_context pc(thd, thd->lex->current_query_block());
+    for (auto &elt : *m_set_elements) {
+      if (elt.expr->itemize(&pc, &elt.expr)) return nullptr;
+      /*
+        If the SET value is a field, change it to a string to allow things
+        SET variable = OFF
+      */
+      if (elt.expr->type() == Item::FIELD_ITEM) {
+        Item_field *item_field = down_cast<Item_field *>(elt.expr);
+        if (item_field->table_name != nullptr) {
+          // Reject a dot-separated identified at the RHS of:
+          //    SET <variable_name> = <table_name>.<field_name>
+          my_error(ER_WRONG_TYPE_FOR_VAR, MYF(0), elt.name.name.str);
+          return nullptr;
+        }
+        assert(item_field->field_name != nullptr);
+        elt.expr = new (thd->mem_root)
+            Item_string(item_field->field_name, strlen(item_field->field_name),
+                        system_charset_info);     // names are utf8
+        if (elt.expr == nullptr) return nullptr;  // OOM
+      }
+      if (elt.expr->has_subquery() || elt.expr->has_stored_program() ||
+          elt.expr->has_aggregation()) {
+        my_error(ER_SET_CONSTANTS_ONLY, MYF(0));
+        return nullptr;
+      }
+    }
+  }
+
+  return new (thd->mem_root) Sql_cmd_install_component(m_urns, m_set_elements);
 }

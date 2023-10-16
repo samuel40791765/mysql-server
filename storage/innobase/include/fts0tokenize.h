@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -30,13 +30,17 @@ this program; if not, write to the Free Software Foundation, Inc.,
  Created 2014/11/17 Shaohua Wang
  ***********************************************************************/
 
+#include <cstdint>
+
 #include "ft_global.h"
-#include "m_ctype.h"
 #include "mysql/plugin_ftparser.h"
+#include "mysql/strings/m_ctype.h"
 
 /* Macros and structs below are from ftdefs.h in MyISAM */
 /** Check a char is true word */
-#define true_word_char(c, ch) ((c) & (_MY_U | _MY_L | _MY_NMR) || (ch) == '_')
+inline bool true_word_char(int c, uint8_t ch) {
+  return ((c & (MY_CHAR_U | MY_CHAR_L | MY_CHAR_NMR)) != 0) || ch == '_';
+}
 
 /** Boolean search syntax */
 static const char *fts_boolean_syntax = DEFAULT_FTB_SYNTAX;
@@ -76,7 +80,6 @@ inline uchar fts_get_word(const CHARSET_INFO *cs, uchar **start, uchar *end,
                           FT_WORD *word, MYSQL_FTPARSER_BOOLEAN_INFO *info) {
   uchar *doc = *start;
   int ctype;
-  uint length;
   int mbl;
 
   info->yesno = (FTB_YES == ' ') ? 1 : (info->quot != nullptr);
@@ -140,9 +143,8 @@ inline uchar fts_get_word(const CHARSET_INFO *cs, uchar **start, uchar *end,
       info->weight_adjust = info->wasign = 0;
     }
 
-    length = 0;
     for (word->pos = doc; doc < end;
-         length++, doc += (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1))) {
+         doc += (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1))) {
       mbl = cs->cset->ctype(cs, &ctype, doc, end);
 
       if (!true_word_char(ctype, *doc)) {

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -45,11 +45,14 @@ dberr_t File_reader::prepare() noexcept {
     return DB_END_OF_INDEX;
   }
 
-  if (!m_aligned_buffer.allocate(m_buffer_size)) {
+  m_aligned_buffer = ut::make_unique_aligned<byte[]>(
+      ut::make_psi_memory_key(mem_key_ddl), UNIV_SECTOR_SIZE, m_buffer_size);
+
+  if (!m_aligned_buffer) {
     return DB_OUT_OF_MEMORY;
   }
 
-  m_io_buffer = m_aligned_buffer.io_buffer();
+  m_io_buffer = {m_aligned_buffer.get(), m_buffer_size};
 
   m_mrec = m_io_buffer.first;
   m_bounds.first = m_io_buffer.first;

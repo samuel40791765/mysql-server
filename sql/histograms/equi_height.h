@@ -1,7 +1,7 @@
 #ifndef HISTOGRAMS_EQUI_HEIGHT_INCLUDED
 #define HISTOGRAMS_EQUI_HEIGHT_INCLUDED
 
-/* Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -210,6 +210,15 @@ class Equi_height : public Histogram {
   bool histogram_to_json(Json_object *json_object) const override;
 
   /**
+    Get the buckets of the histogram. Exposed for unit testing.
+
+    @return A const reference to the collection of buckets.
+  */
+  const Mem_root_array<equi_height::Bucket<T>> &get_buckets() const {
+    return m_buckets;
+  }
+
+  /**
     Returns the histogram type as a readable string.
 
     @return a readable string representation of the histogram type
@@ -220,11 +229,13 @@ class Equi_height : public Histogram {
   /**
     Populate this histogram with contents from a JSON object.
 
-    @param json_object A JSON object that represents an Equi-height histogram.
+    @param json_object  a JSON object that represents an Equi-height histogram
+    @param context      error context for validation
 
     @return True on error, false otherwise.
   */
-  bool json_to_histogram(const Json_object &json_object) override;
+  bool json_to_histogram(const Json_object &json_object,
+                         Error_context *context) override;
 
  private:
   /// String representation of the histogram type EQUI-HEIGHT.
@@ -265,10 +276,13 @@ class Equi_height : public Histogram {
     the provided JSON array. Contents are allocated as needed on the current
     histograms MEM_ROOT.
 
-    @param json_bucket a JSON array containing the histogram buckets.
-    @return true on error, false otherwise.
-  */
-  bool add_bucket_from_json(const Json_array *json_bucket);
+    @param json_bucket  a JSON array containing the histogram buckets
+    @param context      error context for validation
+
+    @return true on error, false otherwise
+   */
+  bool add_bucket_from_json(const Json_array *json_bucket,
+                            Error_context *context);
 
   /// The buckets for this histogram.
   Mem_root_array<equi_height::Bucket<T>> m_buckets;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -75,11 +75,9 @@ class Object_table {
 
     The new instance has the predefined options that all DD tables share:
 
-    TODO(Bug #33688509) This should be "DEFAULT CHARSET=utf8mb3".
-
       ENGINE=INNODB
-      DEFAULT CHARSET=utf8
-      COLLATE=utf8_bin
+      DEFAULT CHARSET=utf8mb3
+      COLLATE=utf8mb3_bin
       ROW_FORMAT=DYNAMIC
       STATS_PERSISTENT=0
       TABLESPACE=mysql

@@ -2,7 +2,7 @@
 #define OPT_COSTMODEL_INCLUDED
 
 /*
-   Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -63,7 +63,7 @@ class Cost_model_server {
   }
 
   /**
-    Desctructor for Cost_model_server objects.
+    Destructor for Cost_model_server objects.
 
     @note This is declared virtual in order to make it easier to implement
     stubs for this class for use in unit tests.
@@ -139,7 +139,7 @@ class Cost_model_server {
   }
 
   /**
-    Cost of storing or retriving a row using a disk based storage engine.
+    Cost of storing or retrieving a row using a disk based storage engine.
   */
 
   double disk_tmptable_row_cost() const {

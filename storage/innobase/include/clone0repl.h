@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -310,7 +310,7 @@ class Clone_persist_gtid {
   int write_to_table(uint64_t flush_list_number, Gtid_set &table_gtid_set,
                      Sid_map &sid_map);
 
-  /** Update transaction number upto which GTIDs are flushed to table.
+  /** Update transaction number up to which GTIDs are flushed to table.
   @param[in]    new_gtid_trx_no GTID transaction number */
   void update_gtid_trx_no(trx_id_t new_gtid_trx_no);
 

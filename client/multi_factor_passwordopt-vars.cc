@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,6 +28,7 @@
 #include "my_getopt.h"
 #include "mysql.h"
 #include "mysql/service_mysql_alloc.h"  // my_free, my_strdup
+#include "nulls.h"
 
 char *opt_password[MAX_AUTH_FACTORS] = {nullptr};
 bool tty_password[MAX_AUTH_FACTORS] = {false};
@@ -74,11 +75,10 @@ void parse_command_line_password_option(const struct my_option *opt,
 void set_password_options(MYSQL *mysql) {
   for (unsigned int factor = 1; factor <= MAX_AUTH_FACTORS; factor++) {
     /**
-     If opt_password is not populated and tty_password is true
-     get password from terminal and update in opt_password
-     and set tty_password to false
+     If tty_password is true get password from terminal and update in
+     opt_password and set tty_password to false
     */
-    if (tty_password[factor - 1] && !opt_password[factor - 1]) {
+    if (tty_password[factor - 1]) {
       opt_password[factor - 1] = get_tty_password(NullS);
       tty_password[factor - 1] = false;
     }

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -49,7 +49,7 @@ external tools. */
 void dict_index_add_col(dict_index_t *index, const dict_table_t *table,
                         dict_col_t *col, ulint prefix_len, bool is_ascending) {
   dict_field_t *field;
-  const char *col_name;
+  const char *col_name = nullptr;
 
 #ifndef UNIV_LIBRARY
   if (col->is_virtual()) {

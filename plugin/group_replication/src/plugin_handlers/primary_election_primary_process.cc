@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -68,7 +68,7 @@ bool Primary_election_primary_process::is_election_process_terminating() {
 
 int Primary_election_primary_process::launch_primary_election_process(
     enum_primary_election_mode mode, std::string &primary_to_elect,
-    std::vector<Group_member_info *> *group_members_info) {
+    Group_member_info_list *group_members_info) {
   DBUG_TRACE;
 
   mysql_mutex_lock(&election_lock);
@@ -240,7 +240,7 @@ int Primary_election_primary_process::primary_election_process_handler() {
       primary changes we do enabled `super_read_only` on all members and
       then run the member actions on the new primary.
     */
-    if (enable_server_read_mode(PSESSION_USE_THREAD)) {
+    if (enable_server_read_mode()) {
       /* purecov: begin inspected */
       LogPluginErr(WARNING_LEVEL, ER_GRP_RPL_ENABLE_READ_ONLY_FAILED);
       /* purecov: end */

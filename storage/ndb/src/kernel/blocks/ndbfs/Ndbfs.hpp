@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -88,7 +88,7 @@ private:
   Ndbfs(Ndbfs & );
   void operator = (Ndbfs &);
   
-  // Used for uniqe number generation
+  // Used for unique number generation
   Uint16 theLastId;
 
   // Communication from/to files
@@ -178,7 +178,7 @@ private:
   VoidFs(VoidFs & );
   void operator = (VoidFs &);
   
-  // Used for uniqe number generation
+  // Used for unique number generation
   Uint32 c_maxFileNo;
 };
 

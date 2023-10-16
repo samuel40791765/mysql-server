@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -36,7 +36,6 @@
 #include <mysql/components/minimal_chassis.h>
 #include <mysql/components/services/dynamic_loader_scheme_file.h>
 #include "lex_string.h"
-#include "m_ctype.h"
 #include "my_command.h"
 #include "my_compress.h"
 #include "my_getopt.h"
@@ -60,6 +59,7 @@
 #include "mysql/components/services/bits/psi_statement_bits.h"
 #include "mysql/components/services/bits/psi_thread_bits.h"
 #include "mysql/status_var.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"  // SERVER_VERSION_LENGTH
 #ifdef _WIN32
 #include "sql/nt_servc.h"
@@ -135,9 +135,9 @@ ulong sql_rnd_with_mutex();
 struct System_status_var *get_thd_status_var(THD *thd, bool *aggregated);
 
 #ifndef NDEBUG
-bool thd_mem_cnt_alloc(THD *thd, size_t size, const char *key_name);
+void thd_mem_cnt_alloc(THD *thd, size_t size, const char *key_name);
 #else
-bool thd_mem_cnt_alloc(THD *thd, size_t size);
+void thd_mem_cnt_alloc(THD *thd, size_t size);
 #endif
 
 void thd_mem_cnt_free(THD *thd, size_t size);
@@ -150,15 +150,10 @@ bool gtid_server_init();
 void gtid_server_cleanup();
 void clean_up_mysqld_mutexes();
 
-extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *files_charset_info;
-extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *national_charset_info;
-extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *table_alias_charset;
-extern CHARSET_INFO *character_set_filesystem;
-
 enum enum_server_operational_state {
   SERVER_BOOTING,      /* Server is not operational. It is starting */
   SERVER_OPERATING,    /* Server is fully initialized and operating */
-  SERVER_SHUTTING_DOWN /* erver is shutting down */
+  SERVER_SHUTTING_DOWN /* Server is shutting down */
 };
 enum_server_operational_state get_server_state();
 
@@ -301,6 +296,10 @@ extern char *opt_init_file;
 extern const char *opt_tc_log_file;
 extern char server_uuid[UUID_LENGTH + 1];
 extern const char *server_uuid_ptr;
+#if defined(HAVE_BUILD_ID_SUPPORT)
+extern char server_build_id[42];
+extern const char *server_build_id_ptr;
+#endif
 extern const double log_10[309];
 extern ulong binlog_cache_use, binlog_cache_disk_use;
 extern ulong binlog_stmt_cache_use, binlog_stmt_cache_disk_use;
@@ -646,6 +645,7 @@ extern PSI_stage_info stage_rpl_failover_fetching_source_member_details;
 extern PSI_stage_info stage_rpl_failover_updating_source_member_details;
 extern PSI_stage_info stage_rpl_failover_wait_before_next_fetch;
 extern PSI_stage_info stage_communication_delegation;
+extern PSI_stage_info stage_wait_on_commit_ticket;
 #ifdef HAVE_PSI_STATEMENT_INTERFACE
 /**
   Statement instrumentation keys (sql).

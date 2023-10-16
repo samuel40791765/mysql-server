@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -23,15 +23,16 @@
 */
 
 #include "trpman.hpp"
-#include <TransporterRegistry.hpp>
-#include <signaldata/CloseComReqConf.hpp>
-#include <signaldata/DisconnectRep.hpp>
-#include <signaldata/EnableCom.hpp>
-#include <signaldata/RouteOrd.hpp>
-#include <signaldata/DumpStateOrd.hpp>
+#include "TransporterRegistry.hpp"
+#include "signaldata/CloseComReqConf.hpp"
+#include "signaldata/DisconnectRep.hpp"
+#include "signaldata/EnableCom.hpp"
+#include "signaldata/RouteOrd.hpp"
+#include "signaldata/DumpStateOrd.hpp"
+#include "portlib/NdbTCP.h"
 
-#include <mt.hpp>
-#include <EventLogger.hpp>
+#include "mt.hpp"
+#include "EventLogger.hpp"
 
 #define JAM_FILE_ID 430
 
@@ -117,7 +118,7 @@ Trpman::handles_this_node(Uint32 nodeId, bool all)
 void
 Trpman::execOPEN_COMORD(Signal* signal)
 {
-  // Connect to the specifed NDB node, only QMGR allowed communication
+  // Connect to the specified NDB node, only QMGR allowed communication
   // so far with the node
 
   const BlockReference userRef = signal->theData[0];
@@ -357,6 +358,21 @@ Trpman::execENABLE_COMREQ(Signal* signal)
   jamEntry();
   const EnableComReq *enableComReq = (const EnableComReq *)signal->getDataPtr();
 
+  if (ERROR_INSERTED(9500) &&
+      signal->getSendersBlockRef() != reference())
+  {
+    jam();
+    g_eventLogger->info("TRPMAN %u delaying ENABLE_COMREQ %u for 5s",
+                        instance(),
+                        enableComReq->m_enableNodeId);
+    sendSignalWithDelay(reference(),
+                        GSN_ENABLE_COMREQ,
+                        signal,
+                        5000,
+                        signal->getLength());
+    return;
+  }
+
   /* Need to copy out signal data to not clobber it with sendSignal(). */
   BlockReference senderRef = enableComReq->m_senderRef;
   Uint32 senderData = enableComReq->m_senderData;
@@ -524,15 +540,13 @@ Trpman::execDBINFO_SCANREQ(Signal *signal)
         row.write_uint32(rnode); // Remote node id
         row.write_uint32(globalTransporterRegistry.getPerformState(rnode)); // State
 
-        struct in6_addr conn_addr = globalTransporterRegistry.get_connect_address(rnode);
+        ndb_sockaddr conn_addr = globalTransporterRegistry.get_connect_address(rnode);
         /* Connect address */
-        if (!IN6_IS_ADDR_UNSPECIFIED(&conn_addr))
+        if (!conn_addr.is_unspecified())
         {
           jam();
-          char *addr_str = Ndb_inet_ntop(AF_INET6,
-                                         static_cast<void*>(&conn_addr),
-                                         addr_buf,
-                                         sizeof(addr_buf));
+          char *addr_str =
+              Ndb_inet_ntop(&conn_addr, addr_buf, sizeof(addr_buf));
           row.write_string(addr_str);
         }
         else
@@ -583,6 +597,15 @@ Trpman::execNDB_TAMPER(Signal* signal)
 {
   jamEntry();
 #ifdef ERROR_INSERT
+  if (signal->getLength() == 1)
+  {
+    SET_ERROR_INSERT_VALUE(signal->theData[0]);
+  }
+  else
+  {
+    SET_ERROR_INSERT_VALUE2(signal->theData[0], signal->theData[1]);
+  }
+
   if (signal->theData[0] == 9003)
   {
     if (MAX_RECEIVED_SIGNALS < 1024)

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -63,8 +63,8 @@ struct st_persist_var final {
   st_persist_var(const std::string key, const std::string value,
                  const ulonglong timestamp, const std::string user,
                  const std::string host, const bool is_null);
-  /* This is custom comparision function used to make the unordered_set
-     to work with the default std::hash for userdefined types. */
+  /* This is custom comparison function used to make the unordered_set
+     work with the default std::hash for user defined types. */
   bool operator==(const st_persist_var &persist_var) const {
     return key == persist_var.key;
   }
@@ -74,7 +74,7 @@ struct st_persist_var final {
   STRUCT st_persist_var_hash
 
   This structure has a custom hasher function used to make the unordered_set
-  to work with the default std::hash for userdefined types.
+  to work with the default std::hash for user defined types.
 */
 struct st_persist_var_hash {
   size_t operator()(const st_persist_var &pv) const { return pv.key.length(); }
@@ -146,10 +146,9 @@ class Persisted_variables_cache final {
     Search for persisted config file and if found read persistent options
   */
   bool load_persist_file();
-  /**
-    Set persisted options
-  */
-  bool set_persisted_options(bool plugin_options);
+  bool set_persisted_options(bool plugin_options,
+                             const char *target_var_name = nullptr,
+                             int target_var_name_length = 0);
   /**
     Reset persisted options
   */
@@ -187,7 +186,8 @@ class Persisted_variables_cache final {
   */
   bool append_read_only_variables(int *argc, char ***argv,
                                   bool arg_separator_added = false,
-                                  bool plugin_options = false);
+                                  bool plugin_options = false,
+                                  MEM_ROOT *root_to_use = nullptr);
 
   /**
     append PARSE EARLY read only persisted variables to command
@@ -247,6 +247,9 @@ class Persisted_variables_cache final {
 
   /** Helper to set source information for PARSE_EARLY variables */
   void set_parse_early_sources();
+
+  /** Helper function to handle changes in option type */
+  void handle_option_type_change();
 
  private:
   /* Helper functions for file IO */

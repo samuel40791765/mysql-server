@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2009, 2023, Oracle and/or its affiliates.
  
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License, version 2.0,
@@ -162,7 +162,6 @@
 /* Code tests*/
 #cmakedefine HAVE_CLOCK_GETTIME 1
 #cmakedefine HAVE_CLOCK_REALTIME 1
-#cmakedefine STACK_DIRECTION @STACK_DIRECTION@
 #cmakedefine TIME_WITH_SYS_TIME 1
 #cmakedefine NO_FCNTL_NONBLOCK 1
 #cmakedefine HAVE_PAUSE_INSTRUCTION 1
@@ -201,6 +200,7 @@
 /* This should mean case insensitive file system */
 #cmakedefine FN_NO_CASE_SENSE 1
 #cmakedefine APPLE_ARM 1
+#cmakedefine HAVE_BUILD_ID_SUPPORT
 
 /*
  * From main CMakeLists.txt
@@ -220,6 +220,7 @@
 #cmakedefine SCRAM_LIB_CONFIGURED
 #cmakedefine WITH_HYPERGRAPH_OPTIMIZER
 #cmakedefine KERBEROS_LIB_SSPI
+#cmakedefine WITH_SHOW_PARSE_TREE
 
 /* Lock Order */
 #cmakedefine WITH_LOCK_ORDER 1
@@ -291,6 +292,7 @@
 #cmakedefine DISABLE_PSI_METADATA 1
 #cmakedefine DISABLE_PSI_MEMORY 1
 #cmakedefine DISABLE_PSI_TRANSACTION 1
+#cmakedefine DISABLE_PSI_SERVER_TELEMETRY_TRACES 1
 
 /*
  * MySQL version
@@ -358,5 +360,8 @@
 
 /* ARM crc32 support */
 #cmakedefine HAVE_ARMV8_CRC32_INTRINSIC @HAVE_ARMV8_CRC32_INTRINSIC@
+
+/* sasl_client_done support */
+#cmakedefine SASL_CLIENT_DONE_SUPPORTED @SASL_CLIENT_DONE_SUPPORTED@
 
 #endif

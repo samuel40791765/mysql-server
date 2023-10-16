@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -70,14 +70,7 @@ static void rec_init_offsets_new(const rec_t *rec, const dict_index_t *index,
   ut_ad(!rec_new_is_versioned(rec));
 
   const byte *nulls = rec - (REC_N_NEW_EXTRA_BYTES + 1);
-  size_t nullable_cols;
-  if (index->has_row_versions()) {
-    nullable_cols = index->get_nullable_in_version(0);
-  } else if (index->has_instant_cols()) {
-    nullable_cols = index->get_instant_nullable();
-  } else {
-    nullable_cols = index->n_nullable;
-  }
+  const size_t nullable_cols = index->get_nullable_before_instant_add_drop();
 
   const byte *lens = nulls - UT_BITS_IN_BYTES(nullable_cols);
   ulint offs = 0;
@@ -169,7 +162,7 @@ stored in 1 byte.
 static void rec_init_offset_old_1byte(const rec_t *rec,
                                       const dict_index_t *index, ulint *offsets,
                                       uint8_t row_version) {
-  ut_ad(row_version <= MAX_ROW_VERSION);
+  ut_ad(is_valid_row_version(row_version));
 
   ulint offs = REC_N_OLD_EXTRA_BYTES;
   /* 1 byte for row version */
@@ -249,7 +242,7 @@ stored in 2 byte.
 static void rec_init_offset_old_2byte(const rec_t *rec,
                                       const dict_index_t *index, ulint *offsets,
                                       uint8_t row_version) {
-  ut_ad(row_version <= MAX_ROW_VERSION);
+  ut_ad(is_valid_row_version(row_version));
 
   ulint offs = REC_N_OLD_EXTRA_BYTES;
   /* 1 byte for row version */
@@ -339,7 +332,7 @@ static void rec_init_offsets_old(const rec_t *rec, const dict_index_t *index,
     ut_ad(index->is_clustered());
     /* Read the version information */
     row_version = rec_get_instant_row_version_old(rec);
-    ut_ad(row_version <= MAX_ROW_VERSION);
+    ut_ad(is_valid_row_version(row_version));
     ut_ad(index->has_row_versions() ||
           (index->table->is_upgraded_instant() && row_version == 0));
   }
@@ -362,10 +355,9 @@ void rec_init_offsets(const rec_t *rec, const dict_index_t *index,
   }
 }
 
-ulint *rec_get_offsets_func(const rec_t *rec, const dict_index_t *index,
-                            ulint *offsets, ulint n_fields,
-                            IF_DEBUG(ut::Location location, )
-                                mem_heap_t **heap) {
+ulint *rec_get_offsets(const rec_t *rec, const dict_index_t *index,
+                       ulint *offsets, ulint n_fields, ut::Location location,
+                       mem_heap_t **heap) {
   ulint n;
 
   ut_ad(rec);
@@ -406,7 +398,7 @@ ulint *rec_get_offsets_func(const rec_t *rec, const dict_index_t *index,
   if (UNIV_UNLIKELY(!offsets) ||
       UNIV_UNLIKELY(rec_offs_get_n_alloc(offsets) < size)) {
     if (UNIV_UNLIKELY(!*heap)) {
-      *heap = mem_heap_create_at(size * sizeof(ulint) IF_DEBUG(, location));
+      *heap = mem_heap_create(size * sizeof(ulint), location);
     }
     offsets = static_cast<ulint *>(mem_heap_alloc(*heap, size * sizeof(ulint)));
 
@@ -547,33 +539,33 @@ void rec_init_offsets_comp_ordinary(const rec_t *rec, bool temp,
   const byte *nulls = nullptr;
   const byte *lens = nullptr;
   uint16_t n_null = 0;
-  uint16_t ret;
-  if (temp) {
-    ret = rec_init_null_and_len_temp(rec, index, &nulls, &lens, &n_null);
-  } else {
-    ret = rec_init_null_and_len_comp(rec, index, &nulls, &lens, &n_null);
-  }
-
-  uint8_t row_version = 0;
+  enum REC_INSERT_STATE rec_insert_state = REC_INSERT_STATE::NONE;
+  uint8_t row_version = UINT8_UNDEFINED;
   uint16_t non_default_fields = 0;
 
-  if (ret == 0) {
-    row_version = 0;
-  } else if ((!temp && rec_new_is_versioned(rec)) ||
-             (temp && index->has_row_versions() &&
-              rec_new_temp_is_versioned(rec))) {
-    ut_ad(ret <= MAX_ROW_VERSION);
-    row_version = (uint8_t)ret;
+  if (temp) {
+    rec_insert_state = rec_init_null_and_len_temp(
+        rec, index, &nulls, &lens, &n_null, non_default_fields, row_version);
   } else {
-    non_default_fields = ret;
+    rec_insert_state = rec_init_null_and_len_comp(
+        rec, index, &nulls, &lens, &n_null, non_default_fields, row_version);
   }
 
   ut_ad(temp || dict_table_is_comp(index->table));
 
-  if (temp && dict_table_is_comp(index->table)) {
-    /* No need to do adjust fixed_len=0. We only need to
-    adjust it for ROW_FORMAT=REDUNDANT. */
-    temp = false;
+  if (temp) {
+    if (dict_table_is_comp(index->table)) {
+      /* No need to do adjust fixed_len=0. We only need to
+      adjust it for ROW_FORMAT=REDUNDANT. */
+      temp = false;
+    } else {
+      /* Redundant temp row. Old instant record is logged as version 0. */
+      if (rec_insert_state == INSERTED_BEFORE_INSTANT_ADD_OLD_IMPLEMENTATION ||
+          rec_insert_state == INSERTED_AFTER_INSTANT_ADD_OLD_IMPLEMENTATION) {
+        rec_insert_state = INSERTED_BEFORE_INSTANT_ADD_NEW_IMPLEMENTATION;
+        ut_ad(row_version == UINT8_UNDEFINED);
+      }
+    }
   }
 
   /* read the lengths of fields 0..n */
@@ -588,23 +580,21 @@ void rec_init_offsets_comp_ordinary(const rec_t *rec, bool temp,
     const dict_col_t *col = field->col;
     uint64_t len;
 
-    if (index->has_instant_cols_or_row_versions()) {
-      if (non_default_fields > 0) { /* Record is in V1 */
-        ut_ad(index->has_instant_cols());
-        ut_ad(row_version == 0);
+    switch (rec_insert_state) {
+      case INSERTED_INTO_TABLE_WITH_NO_INSTANT_NO_VERSION:
+        ut_ad(!index->has_instant_cols_or_row_versions());
+        break;
 
-        if (i >= non_default_fields) {
-          /* This would be the case when column doesn't exists in the row. In
-          this case we need not to store the length. Instead we store only if
-          the column is NULL or DEFAULT value. */
-          len = rec_get_instant_offset(index, i, offs);
-
-          goto resolved;
-        }
-
-        /* Note : Even if the column has been dropped, this row in V1 would
-        definitely have the value of this column. */
-      } else { /* Record is in V2 */
+      case INSERTED_BEFORE_INSTANT_ADD_NEW_IMPLEMENTATION: {
+        ut_ad(row_version == UINT8_UNDEFINED || row_version == 0);
+        ut_ad(index->has_row_versions() || temp);
+        /* Record has to be interpreted in v0. */
+        row_version = 0;
+      }
+        [[fallthrough]];
+      case INSERTED_AFTER_UPGRADE_BEFORE_INSTANT_ADD_NEW_IMPLEMENTATION:
+      case INSERTED_AFTER_INSTANT_ADD_NEW_IMPLEMENTATION: {
+        ut_ad(is_valid_row_version(row_version));
         /* A record may have version=0 if it's from upgrade table */
         ut_ad(index->has_row_versions() ||
               (index->table->is_upgraded_instant() && row_version == 0));
@@ -629,7 +619,29 @@ void rec_init_offsets_comp_ordinary(const rec_t *rec, bool temp,
 
           goto resolved;
         }
-      }
+      } break;
+
+      case INSERTED_BEFORE_INSTANT_ADD_OLD_IMPLEMENTATION:
+      case INSERTED_AFTER_INSTANT_ADD_OLD_IMPLEMENTATION: {
+        ut_ad(non_default_fields > 0);
+        ut_ad(index->has_instant_cols());
+        ut_ad(!is_valid_row_version(row_version));
+
+        if (i >= non_default_fields) {
+          /* This would be the case when column doesn't exists in the row. In
+          this case we need not to store the length. Instead we store only if
+          the column is NULL or DEFAULT value. */
+          len = rec_get_instant_offset(index, i, offs);
+
+          goto resolved;
+        }
+
+        /* Note : Even if the column has been dropped, this row in V1 would
+        definitely have the value of this column. */
+      } break;
+
+      default:
+        ut_ad(false);
     }
 
     if (!(col->prtype & DATA_NOT_NULL)) {

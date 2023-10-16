@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -23,6 +23,8 @@
 #include "plugin/group_replication/include/sql_service/sql_service_context.h"
 
 #include "my_dbug.h"
+
+struct CHARSET_INFO;
 
 int Sql_service_context::start_result_metadata(uint ncols, uint,
                                                const CHARSET_INFO *resultcs) {

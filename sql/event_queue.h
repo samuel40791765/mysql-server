@@ -1,6 +1,6 @@
 #ifndef _EVENT_QUEUE_H_
 #define _EVENT_QUEUE_H_
-/* Copyright (c) 2004, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -88,8 +88,8 @@ struct Event_queue_less {
 
     if (right->m_status == Event_parse_data::DISABLED) return 1;
 
-    my_time_t lhs = left->m_execute_at;
-    my_time_t rhs = right->m_execute_at;
+    const my_time_t lhs = left->m_execute_at;
+    const my_time_t rhs = right->m_execute_at;
     return (lhs < rhs ? -1 : (lhs > rhs ? 1 : 0));
   }
 };

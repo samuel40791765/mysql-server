@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2021, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -202,7 +202,7 @@ static inline ulint rw_lock_get_sx_lock_count(
 
 /** Two different implementations for decrementing the lock_word of a rw_lock:
  one for systems supporting atomic operations, one for others. This does
- does not support recusive x-locks: they should be handled by the caller and
+ does not support recursive x-locks: they should be handled by the caller and
  need not be atomic since they are performed by the current lock holder.
  Returns true if the decrement was made, false if not.
  @return true if decr occurs */
@@ -465,17 +465,15 @@ static inline void rw_lock_sx_unlock_func(IF_DEBUG(ulint pass, )
 #ifdef UNIV_PFS_RWLOCK
 
 static inline void pfs_rw_lock_create_func(mysql_pfs_key_t key, rw_lock_t *lock,
-                                           IF_DEBUG(latch_level_t level,
-                                                    const char *cmutex_name, )
-                                               const char *cfile_name,
-                                           ulint cline) {
+                                           IF_DEBUG(latch_id_t id, )
+                                               ut::Location clocation) {
   new (lock) rw_lock_t{};
 
   /* Initialize the rwlock for performance schema */
   lock->pfs_psi = PSI_RWLOCK_CALL(init_rwlock)(key.m_value, lock);
 
   /* The actual function to initialize an rwlock */
-  rw_lock_create_func(lock, IF_DEBUG(level, cmutex_name, ) cfile_name, cline);
+  rw_lock_create_func(lock, IF_DEBUG(id, ) clocation);
 }
 /** Performance schema instrumented wrap function for rw_lock_x_lock_func()
  NOTE! Please use the corresponding macro rw_lock_x_lock(), not directly
@@ -514,7 +512,7 @@ static inline void pfs_rw_lock_x_lock_func(rw_lock_t *lock, ulint pass,
  NOTE! Please use the corresponding macro rw_lock_x_lock_func(),
  not directly this function!
  @return true if success */
-static inline bool pfs_rw_lock_x_lock_func_nowait(
+[[nodiscard]] static inline bool pfs_rw_lock_x_lock_func_nowait(
     rw_lock_t *lock,       /*!< in: pointer to rw-lock */
     ut::Location location) /*!< in: line where requested */
 {
@@ -535,7 +533,8 @@ static inline bool pfs_rw_lock_x_lock_func_nowait(
       ret = rw_lock_x_lock_func_nowait(lock, location);
 
       if (locker != nullptr) {
-        PSI_RWLOCK_CALL(end_rwlock_wrwait)(locker, static_cast<int>(ret));
+        const int rc = (ret ? 0 : 1);
+        PSI_RWLOCK_CALL(end_rwlock_wrwait)(locker, rc);
       }
 
       return ret;
@@ -622,8 +621,9 @@ static inline void pfs_rw_lock_sx_lock_func(rw_lock_t *lock, ulint pass,
 
   rw_lock_sx_lock_func(lock, pass, location);
 }
-static inline bool pfs_rw_lock_s_lock_low(rw_lock_t *lock, ulint pass,
-                                          ut::Location location) {
+[[nodiscard]] static inline bool pfs_rw_lock_s_lock_low(rw_lock_t *lock,
+                                                        ulint pass,
+                                                        ut::Location location) {
   bool ret;
 
   if (lock->pfs_psi != nullptr) {
@@ -639,7 +639,8 @@ static inline bool pfs_rw_lock_s_lock_low(rw_lock_t *lock, ulint pass,
       ret = rw_lock_s_lock_low(lock, pass, location);
 
       if (locker != nullptr) {
-        PSI_RWLOCK_CALL(end_rwlock_rdwait)(locker, static_cast<int>(ret));
+        const int rc = (ret ? 0 : 1);
+        PSI_RWLOCK_CALL(end_rwlock_rdwait)(locker, rc);
       }
 
       return ret;
@@ -658,8 +659,8 @@ static inline bool pfs_rw_lock_s_lock_low(rw_lock_t *lock, ulint pass,
  to unlock
  @param[in] location location where requested
  @return true if success */
-static inline bool pfs_rw_lock_sx_lock_low(rw_lock_t *lock, ulint pass,
-                                           ut::Location location) {
+[[nodiscard]] static inline bool pfs_rw_lock_sx_lock_low(
+    rw_lock_t *lock, ulint pass, ut::Location location) {
   bool ret;
 
   if (lock->pfs_psi != nullptr) {
@@ -676,7 +677,8 @@ static inline bool pfs_rw_lock_sx_lock_low(rw_lock_t *lock, ulint pass,
       ret = rw_lock_sx_lock_low(lock, pass, location);
 
       if (locker != nullptr) {
-        PSI_RWLOCK_CALL(end_rwlock_rdwait)(locker, static_cast<int>(ret));
+        const int rc = (ret ? 0 : 1);
+        PSI_RWLOCK_CALL(end_rwlock_rdwait)(locker, rc);
       }
 
       return (ret);

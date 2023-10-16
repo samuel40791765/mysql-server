@@ -1,4 +1,4 @@
-# Copyright (c) 2006, 2021, Oracle and/or its affiliates.
+# Copyright (c) 2006, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -23,6 +23,8 @@
 # This is the CMakeLists for InnoDB
 
 INCLUDE(innodb.cmake)
+
+MSVC_CPPCHECK_DISABLE()
 
 ADD_DEFINITIONS(-DLOG_SUBSYSTEM_TAG="InnoDB")
 
@@ -172,9 +174,18 @@ SET(INNOBASE_SOURCES
   lock/lock0wait.cc
   log/log0buf.cc
   log/log0chkp.cc
+  log/log0consumer.cc
   log/log0ddl.cc
+  log/log0encryption.cc
+  log/log0files_capacity.cc
+  log/log0files_dict.cc
+  log/log0files_finder.cc
+  log/log0files_governor.cc
+  log/log0files_io.cc
   log/log0log.cc
   log/log0meb.cc
+  log/log0pfs.cc
+  log/log0pre_8_0_30.cc
   log/log0recv.cc
   log/log0test.cc
   log/log0write.cc
@@ -235,6 +246,7 @@ SET(INNOBASE_SOURCES
   usr/usr0sess.cc
   ut/ut0dbg.cc
   ut/ut0list.cc
+  ut/ut0math.cc
   ut/ut0mem.cc
   ut/ut0new.cc
   ut/ut0rbt.cc
@@ -249,6 +261,25 @@ IF(MY_COMPILER_IS_GNU AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
   ADD_COMPILE_FLAGS(
     pars/pars0grm.cc
     COMPILE_FLAGS "-Wno-free-nonheap-object")
+ENDIF()
+
+# The combination of
+# ut_ad(strlen(dir_path) + 1 + strlen(dir_name) + 1 < sizeof(path))
+# and
+# snprintf(path, sizeof(path), "%s%c%s", dir_path, OS_PATH_SEPARATOR, dir_name);
+# gives a warning: -Werror=format-truncation=
+IF(MY_COMPILER_IS_GNU AND
+    CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11 AND
+    CMAKE_BUILD_TYPE_UPPER STREQUAL "DEBUG" AND
+    "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG}" MATCHES " -O2")
+  ADD_COMPILE_FLAGS(arch/arch0arch.cc COMPILE_FLAGS "-Wformat-truncation=0")
+ENDIF()
+
+IF(MSVC)
+  # TODO(Bug#33985941): update the code and remove the disabled warnings
+  MY_ADD_COMPILE_DEFINITIONS(os/os0file.cc
+    COMPILE_DEFINITIONS "_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING"
+    )
 ENDIF()
 
 IF(MSVC AND NOT WIN32_CLANG)
@@ -289,7 +320,9 @@ ENDIF()
 
 ADD_LIBRARY(innodb_zipdecompress STATIC ${INNOBASE_ZIP_DECOMPRESS_SOURCES})
 TARGET_COMPILE_DEFINITIONS(
-    innodb_zipdecompress PRIVATE DISABLE_PSI_MEMORY UNIV_LIBRARY UNIV_NO_ERR_MSGS)
+  innodb_zipdecompress PRIVATE DISABLE_PSI_MEMORY UNIV_LIBRARY UNIV_NO_ERR_MSGS)
+TARGET_LINK_LIBRARIES(innodb_zipdecompress
+  PRIVATE extra::rapidjson ext::lz4 ext::zlib)
 ADD_DEPENDENCIES(innodb_zipdecompress GenError)
 
 MY_CHECK_CXX_COMPILER_WARNING("-Wmissing-profile" HAS_MISSING_PROFILE)
@@ -307,7 +340,8 @@ MYSQL_ADD_PLUGIN(innobase
   ${INNOBASE_SOURCES} ${INNOBASE_ZIP_DECOMPRESS_SOURCES} STORAGE_ENGINE
   MANDATORY
   MODULE_OUTPUT_NAME ha_innodb
-  LINK_LIBRARIES sql_dd sql_gis ${ZLIB_LIBRARY} ${LZ4_LIBRARY} ${NUMA_LIBRARY})
+  LINK_LIBRARIES sql_dd sql_gis ext::zlib ext::lz4 ${NUMA_LIBRARY}
+                 extra::rapidjson)
 
 # On linux: /usr/include/stdio.h:#define BUFSIZ 8192
 # On Solaris: /usr/include/iso/stdio_iso.h:#define    BUFSIZ  1024
@@ -326,6 +360,11 @@ IF(HAS_WARN_FLAG)
     COMPILE_FLAGS "${HAS_WARN_FLAG}")
 ENDIF()
 MY_CHECK_CXX_COMPILER_WARNING("-Wcast-function-type" HAS_WARN_FLAG)
+IF(HAS_WARN_FLAG)
+  ADD_COMPILE_FLAGS(fts/fts0pars.cc
+    COMPILE_FLAGS "${HAS_WARN_FLAG}")
+ENDIF()
+MY_CHECK_CXX_COMPILER_WARNING("-Wunused-but-set-variable" HAS_WARN_FLAG)
 IF(HAS_WARN_FLAG)
   ADD_COMPILE_FLAGS(fts/fts0pars.cc
     COMPILE_FLAGS "${HAS_WARN_FLAG}")

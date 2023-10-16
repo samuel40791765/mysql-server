@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -23,11 +23,10 @@
 #include "sql/join_optimizer/graph_simplification.h"
 
 #include <assert.h>
-#include <math.h>
 #include <stdint.h>
 
 #include <algorithm>
-#include <memory>
+#include <cmath>
 #include <new>
 #include <string>
 #include <type_traits>
@@ -60,7 +59,6 @@ using hypergraph::NodeMap;
 using std::fill;
 using std::max;
 using std::min;
-using std::move;
 using std::string;
 using std::swap;
 using std::vector;
@@ -69,7 +67,7 @@ namespace {
 
 /**
   Returns whether A is already a part of B, ie., whether it is impossible to
-  execute A before B. E.g., for t1 LEFT JOIN (t2 JOIN t3), the t2-t3 join
+  execute B before A. E.g., for t1 LEFT JOIN (t2 JOIN t3), the t2-t3 join
   will be part of the t1-{t2,t3} hyperedge, and this will return true.
 
   Note that this definition is much more lenient than the one in the paper
@@ -228,8 +226,11 @@ double GetCardinality(NodeMap tables_to_join, const JoinHypergraph &graph,
   for (int node_idx : BitsSetIn(tables_to_join)) {
     components[num_components] = NodeMap{1} << node_idx;
     in_component[node_idx] = num_components;
+    // Assume we have to read at least one row from each table, so that we don't
+    // end up with zero costs in the rudimentary cost model used by the graph
+    // simplification.
     component_cardinality[num_components] =
-        graph.nodes[node_idx].table->file->stats.records;
+        max(ha_rows{1}, graph.nodes[node_idx].table->file->stats.records);
     ++num_components;
   }
 
@@ -302,7 +303,7 @@ double GetCardinality(NodeMap tables_to_join, const JoinHypergraph &graph,
     active_components &= ~(uint64_t{1} << right_component);
     return active_components == 0b1;
   };
-  ConnectComponentsThroughJoins(graph, cycles, move(func), components,
+  ConnectComponentsThroughJoins(graph, cycles, std::move(func), components,
                                 in_component);
 
   // In rare situations, we could be left in a situation where an edge
@@ -393,12 +394,11 @@ double GetCardinalitySingleJoin(NodeMap left, NodeMap right, double left_rows,
  */
 OnlineCycleFinder FindJoinDependencies(const Hypergraph &graph,
                                        MEM_ROOT *mem_root) {
-  const vector<Hyperedge> &edges = graph.edges;
+  const Mem_root_array<Hyperedge> &edges = graph.edges;
   OnlineCycleFinder cycles(mem_root, edges.size() / 2);
-  for (size_t edge1_idx = 0; edge1_idx < graph.edges.size() / 2; ++edge1_idx) {
+  for (size_t edge1_idx = 0; edge1_idx < edges.size() / 2; ++edge1_idx) {
     const Hyperedge edge1 = edges[edge1_idx * 2];
-    for (size_t edge2_idx = 0; edge2_idx < graph.edges.size() / 2;
-         ++edge2_idx) {
+    for (size_t edge2_idx = 0; edge2_idx < edges.size() / 2; ++edge2_idx) {
       const Hyperedge edge2 = edges[edge2_idx * 2];
       if (edge1_idx != edge2_idx && IsSubjoin(edge1, edge2)) {
         bool added_cycle [[maybe_unused]] =
@@ -429,18 +429,6 @@ bool IsQueryGraphSimpleEnough(THD *thd [[maybe_unused]],
   return !error;
 }
 
-void SetNumberOfSimplifications(int num_simplifications,
-                                GraphSimplifier *simplifier) {
-  while (simplifier->num_steps_done() < num_simplifications) {
-    GraphSimplifier::SimplificationResult error [[maybe_unused]] =
-        simplifier->DoSimplificationStep();
-    assert(error != GraphSimplifier::NO_SIMPLIFICATION_POSSIBLE);
-  }
-  while (simplifier->num_steps_done() > num_simplifications) {
-    simplifier->UndoSimplificationStep();
-  }
-}
-
 struct JoinStatus {
   double cost;
   double num_output_rows;
@@ -454,7 +442,7 @@ struct JoinStatus {
 
   The paper generally uses merge join as the cost function heuristic,
   but since we don't have merge join, and nested-loop joins are heavily
-  depdendent on context such as available indexes, we use instead our standard
+  dependent on context such as available indexes, we use instead our standard
   hash join estimation here. When we get merge joins, we should probably
   have a look to see whether switching to its cost function here makes sense.
   (Of course, we don't know what join type we will _actually_ be using until
@@ -464,16 +452,13 @@ struct JoinStatus {
  */
 JoinStatus SimulateJoin(JoinStatus left, JoinStatus right,
                         const JoinPredicate &pred) {
-  static_assert(
-      kHashBuildOneRowCost == kHashBuildOneRowCost,
-      "If build and probe cost factors are different, we'll need to add "
-      "swapping to get the smallest table on the right-hand side here "
-      "(for inner joins)");  // Remove the if (false) below.
-  if (false) {
-    if (pred.expr->type == RelationalExpression::INNER_JOIN &&
-        left.cost < right.cost) {
-      swap(left, right);
-    }
+  // If the build cost per row is higher than the probe cost per row, it is
+  // beneficial to use the smaller table as build table. Reorder to get the
+  // lower cost if the join is commutative and allows reordering.
+  static_assert(kHashBuildOneRowCost >= kHashProbeOneRowCost);
+  if (OperatorIsCommutative(*pred.expr) &&
+      left.num_output_rows < right.num_output_rows) {
+    swap(left, right);
   }
 
   double num_output_rows =
@@ -545,7 +530,7 @@ bool GraphIsJoinable(const JoinHypergraph &graph,
     }
     return false;
   };
-  ConnectComponentsThroughJoins(graph, cycles, move(func), components,
+  ConnectComponentsThroughJoins(graph, cycles, std::move(func), components,
                                 in_component);
   return num_in_component0 == graph.nodes.size();
 }
@@ -578,6 +563,7 @@ GraphSimplifier::GraphSimplifier(JoinHypergraph *graph, MEM_ROOT *mem_root)
 
 void GraphSimplifier::UpdatePQ(size_t edge_idx) {
   NeighborCache &cache = m_cache[edge_idx];
+  assert(!std::isnan(cache.best_step.benefit));
   if (cache.index_in_pq == -1) {
     if (cache.best_neighbor != -1) {
       // Push into the queue for the first time.
@@ -749,6 +735,14 @@ bool GraphSimplifier::EdgesAreNeighboring(
     // Not neighboring.
     return false;
   }
+
+  // Assume the costs are finite and positive. Otherwise, the ratios calculated
+  // below might not make sense and return NaN.
+  assert(std::isfinite(cost_e1_before_e2));
+  assert(std::isfinite(cost_e2_before_e1));
+  assert(cost_e1_before_e2 > 0);
+  assert(cost_e2_before_e1 > 0);
+
   if (cost_e1_before_e2 > cost_e2_before_e1) {
     *step = {cost_e1_before_e2 / cost_e2_before_e1, static_cast<int>(edge2_idx),
              static_cast<int>(edge1_idx)};
@@ -849,15 +843,18 @@ GraphSimplifier::SimplificationResult GraphSimplifier::DoSimplificationStep() {
 
   SimplificationStep full_step = ConcretizeSimplificationStep(best_step);
 
-  m_cycles.AddEdge(best_step.before_edge_idx, best_step.after_edge_idx);
+  bool added_cycle [[maybe_unused]] =
+      m_cycles.AddEdge(best_step.before_edge_idx, best_step.after_edge_idx);
+  assert(!added_cycle);
   m_graph->graph.ModifyEdge(best_step.after_edge_idx * 2,
                             full_step.new_edge.left, full_step.new_edge.right);
-  if (!forced && !GraphIsJoinable(*m_graph, m_cycles)) {
+
+  if (!GraphIsJoinable(*m_graph, m_cycles)) {
     // The change we did introduced an impossibility; we made the graph
     // unjoinable. This happens very rarely, but it does, since our
     // happens-before join detection is incomplete (see GraphIsJoinable()
-    // comments for more details). When this happens, we need to first
-    // undo what we just did:
+    // and FindJoinDependencies() comments for more details). When this
+    // happens, we need to first undo what we just did:
     m_cycles.DeleteEdge(best_step.before_edge_idx, best_step.after_edge_idx);
     m_graph->graph.ModifyEdge(best_step.after_edge_idx * 2,
                               full_step.old_edge.left,
@@ -899,6 +896,20 @@ void GraphSimplifier::UndoSimplificationStep() {
   // or any of the cardinalities here.
 }
 
+void SetNumberOfSimplifications(int num_simplifications,
+                                GraphSimplifier *simplifier) {
+  assert(simplifier->num_steps_done() + simplifier->num_steps_undone() >=
+         num_simplifications);
+  while (simplifier->num_steps_done() < num_simplifications) {
+    GraphSimplifier::SimplificationResult error [[maybe_unused]] =
+        simplifier->DoSimplificationStep();
+    assert(error != GraphSimplifier::NO_SIMPLIFICATION_POSSIBLE);
+  }
+  while (simplifier->num_steps_done() > num_simplifications) {
+    simplifier->UndoSimplificationStep();
+  }
+}
+
 /**
   Repeatedly apply simplifications (in the order of most to least safe) to the
   given hypergraph, until it is below “subgraph_pair_limit” subgraph pairs
@@ -917,22 +928,22 @@ void GraphSimplifier::UndoSimplificationStep() {
   afresh.
  */
 void SimplifyQueryGraph(THD *thd, int subgraph_pair_limit,
-                        JoinHypergraph *graph, string *trace) {
+                        JoinHypergraph *graph, GraphSimplifier *simplifier,
+                        string *trace) {
   if (trace != nullptr) {
     *trace +=
         "\nQuery became too complicated, doing heuristic graph "
         "simplification.\n";
   }
 
-  GraphSimplifier simplifier(graph, thd->mem_root);
   MEM_ROOT counting_mem_root;
 
   int lower_bound = 0, upper_bound = 1;
   int num_subgraph_pairs_upper = -1;
   for (;;) {  // Termination condition within loop.
     bool hit_upper_limit = false;
-    while (simplifier.num_steps_done() < upper_bound) {
-      if (simplifier.DoSimplificationStep() ==
+    while (simplifier->num_steps_done() < upper_bound) {
+      if (simplifier->DoSimplificationStep() ==
           GraphSimplifier::NO_SIMPLIFICATION_POSSIBLE) {
         if (!IsQueryGraphSimpleEnough(thd, *graph, subgraph_pair_limit,
                                       &counting_mem_root,
@@ -948,7 +959,7 @@ void SimplifyQueryGraph(THD *thd, int subgraph_pair_limit,
           return;
         }
 
-        upper_bound = simplifier.num_steps_done();
+        upper_bound = simplifier->num_steps_done();
         hit_upper_limit = true;
         break;
       }
@@ -983,7 +994,7 @@ void SimplifyQueryGraph(THD *thd, int subgraph_pair_limit,
   // is enough.
   while (upper_bound - lower_bound > 1) {
     int mid = (lower_bound + upper_bound) / 2;
-    SetNumberOfSimplifications(mid, &simplifier);
+    SetNumberOfSimplifications(mid, simplifier);
     if (IsQueryGraphSimpleEnough(thd, *graph, subgraph_pair_limit,
                                  &counting_mem_root,
                                  &num_subgraph_pairs_upper)) {
@@ -994,7 +1005,7 @@ void SimplifyQueryGraph(THD *thd, int subgraph_pair_limit,
   }
 
   // Now upper_bound is the correct number of steps to use.
-  SetNumberOfSimplifications(upper_bound, &simplifier);
+  SetNumberOfSimplifications(upper_bound, simplifier);
 
   if (trace != nullptr) {
     *trace += StringPrintf(

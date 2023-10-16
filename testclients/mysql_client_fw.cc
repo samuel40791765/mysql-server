@@ -1,4 +1,4 @@
-/* Copyright (c) 2002, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2002, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,15 +27,16 @@
 #include <algorithm>
 
 #include "errmsg.h"
-#include "m_ctype.h"
-#include "m_string.h"
 #include "my_alloc.h"
 #include "my_default.h"
 #include "my_getopt.h"
 #include "my_sys.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
+#include "nulls.h"
 #include "print_version.h"
 #include "sql_common.h"
+#include "strxmov.h"
 #include "welcome_copyright_notice.h" /* ORACLE_WELCOME_COPYRIGHT_NOTICE */
 
 #define MAX_TEST_QUERY_LENGTH 300 /* MAX QUERY BUFFER LENGTH */
@@ -109,11 +110,10 @@ static void print_error(MYSQL *l_mysql, const char *msg);
 static void print_st_error(MYSQL_STMT *stmt, const char *msg);
 static void client_disconnect(MYSQL *mysql);
 static void get_options(int *argc, char ***argv);
-static void die(const char *file, int line, const char *expr)
-    MY_ATTRIBUTE((noreturn));
+[[noreturn]] static void die(const char *file, int line, const char *expr);
 
 /*
-Abort unless given experssion is non-zero.
+Abort unless given expression is non-zero.
 
 SYNOPSIS
 DIE_UNLESS(expr)
@@ -141,14 +141,14 @@ static void die(const char *file, int line, const char *expr) {
 
 #define myquery(RES)      \
   {                       \
-    int r = (RES);        \
+    const int r = (RES);  \
     if (r) myerror(NULL); \
     DIE_UNLESS(r == 0);   \
   }
 
 #define myquery2(L_MYSQL, RES)      \
   {                                 \
-    int r = (RES);                  \
+    const int r = (RES);            \
     if (r) myerror2(L_MYSQL, NULL); \
     DIE_UNLESS(r == 0);             \
   }
@@ -192,6 +192,12 @@ static void die(const char *file, int line, const char *expr) {
   if ((x)) {           \
     myerror(NULL);     \
     DIE_UNLESS(false); \
+  }
+
+#define mytest2(lmysql, x)  \
+  if (!(x)) {               \
+    myerror2(lmysql, NULL); \
+    DIE_UNLESS(false);      \
   }
 
 /* Silence unused function warnings for some of the static functions. */
@@ -752,7 +758,7 @@ static void do_verify_prepare_field(MYSQL_RES *result, unsigned int no,
   DIE_UNLESS(strcmp(field->db, db) == 0);
   /*
   Character set should be taken into account for multibyte encodings, such
-  as utf8. Field length is calculated as number of characters * maximum
+  as utf8mb4. Field length is calculated as number of characters * maximum
   number of bytes a character can occupy.
   */
   if (length && (field->length != expected_field_length)) {
@@ -969,8 +975,7 @@ bool fetch_n(const char **query_list, unsigned query_count,
              enum fetch_type fetch_type) {
   unsigned open_statements = query_count;
   int rc, error_count = 0;
-  Stmt_fetch *fetch_array =
-      (Stmt_fetch *)calloc(1, sizeof(Stmt_fetch) * query_count);
+  auto *fetch_array = (Stmt_fetch *)calloc(1, sizeof(Stmt_fetch) * query_count);
   Stmt_fetch *fetch;
   DBUG_TRACE;
 
@@ -1114,7 +1119,7 @@ static struct my_option client_test_long_options[] = {
     {nullptr, 0, nullptr, nullptr, nullptr, nullptr, GET_NO_ARG, NO_ARG, 0, 0,
      0, nullptr, 0, nullptr}};
 
-static void usage(void) {
+static void usage() {
   /* show the usage string when the user asks for this */
   print_version();
   puts(ORACLE_WELCOME_COPYRIGHT_NOTICE("2002"));
@@ -1185,7 +1190,6 @@ static void get_options(int *argc, char ***argv) {
     exit(ho_error);
 
   if (tty_password) opt_password = get_tty_password(NullS);
-  return;
 }
 
 /*

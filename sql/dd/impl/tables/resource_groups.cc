@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,6 +25,8 @@
 #include "sql/dd/impl/raw/object_keys.h"  // dd::Global_name_key
 #include "sql/dd/impl/types/object_table_definition_impl.h"  // dd::Raw_record
 #include "sql/dd/impl/types/resource_group_impl.h"  // dd::Resource_group_impl
+
+struct CHARSET_INFO;
 
 namespace dd {
 namespace tables {
@@ -60,7 +62,7 @@ const Resource_groups &Resource_groups::instance() {
 }
 
 const CHARSET_INFO *Resource_groups::name_collation() {
-  return &my_charset_utf8_general_ci;
+  return &my_charset_utf8mb3_general_ci;
 }
 
 bool Resource_groups::update_object_key(Global_name_key *key,

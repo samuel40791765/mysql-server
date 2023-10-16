@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
    as published by the Free Software Foundation.
@@ -356,8 +356,8 @@ error:
 }
 
 /**
-  Helper method to sort nth factor methods in Multi factor authentication
-  interface such that 2nd factor method always preceeds 3rd factor method.
+  Helper method to sort nth factor methods in multi-factor authentication
+  interface such that 2nd factor method always precedes 3rd factor method.
 */
 void Multi_factor_auth_list::sort_mfa() {
   assert(m_factor.size() == 2);
@@ -812,10 +812,10 @@ bool Multi_factor_auth_info::deserialize(uint nth_factor, Json_dom *mfa_dom) {
     @retval true  Failure
 */
 bool Multi_factor_auth_info::init_registration(THD *thd, uint nth_factor) {
-  /* check if we are registerting correct Multi factor authentication method */
+  /* check if we are registerting correct multi-factor authentication method */
   if (get_nth_factor() != nth_factor) return false;
   /*
-    incase init registration is done, then server challenge will be
+    in case init registration is done, then server challenge will be
     in auth string
   */
   if (get_auth_str_len()) return false;
@@ -857,11 +857,11 @@ bool Multi_factor_auth_info::init_registration(THD *thd, uint nth_factor) {
   }
   srv_registry->release(h_reg_svc);
 
-  size_t user_name_len = thd->security_context()->user().length +
-                         thd->security_context()->host().length;
+  const size_t user_name_len = thd->security_context()->user().length +
+                               thd->security_context()->host().length;
 
   /* append user name to random challenge(32bit salt + RP id). */
-  size_t buflen =
+  const size_t buflen =
       plugin_buf_len + user_name_len + net_length_size(user_name_len);
   unsigned char *buf = new unsigned char[buflen];
   unsigned char *pos = buf;

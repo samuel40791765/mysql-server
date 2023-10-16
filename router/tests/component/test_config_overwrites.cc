@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -120,7 +120,7 @@ TEST_P(BootstrapDebugLevelOkTest, BootstrapDebugLevelOk) {
   cmdline.push_back(overwrite_param);
   auto &router = launch_router_for_bootstrap(cmdline, EXIT_SUCCESS);
 
-  check_exit_code(router, EXIT_SUCCESS, 5s);
+  check_exit_code(router, EXIT_SUCCESS);
 
   // check that bootstrap outputs debug logs
   EXPECT_TRUE(router.output_contains(debug_level_output));
@@ -167,7 +167,7 @@ TEST_P(BootstrapOverwriteErrorTest, BootstrapOverwriteError) {
 
   auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
 
-  check_exit_code(router, EXIT_FAILURE, 5s);
+  check_exit_code(router, EXIT_FAILURE);
   EXPECT_TRUE(router.output_contains(param.expected_error_msg));
 }
 
@@ -201,7 +201,7 @@ class OverwriteLogLevelTest
  * overwrite works as expected */
 TEST_P(OverwriteLogLevelTest, OverwriteLogLevel) {
   const std::string debug_level_log_entry =
-      ".* main DEBUG .* Ready, signaling notify socket";
+      ".* main DEBUG .* Starting: keepalive.";
 
   const std::string keepalive_section = get_keepalive_section();
   const std::string conf_file =
@@ -277,7 +277,7 @@ TEST_F(RouterConfigOwerwriteTest, OverwriteLoggingFolder) {
 }
 
 /* @test Sunny-day scenario, we check that overwriting an option in the
- * configuration file with a commnad line parameter works */
+ * configuration file with a command line parameter works */
 TEST_F(RouterConfigOwerwriteTest, OverwriteRoutingPort) {
   const auto router_port = port_pool_.get_next_available();
   const auto server_port = port_pool_.get_next_available();
@@ -361,8 +361,8 @@ class OverwriteErrorTest
     : public RouterConfigOwerwriteTest,
       public ::testing::WithParamInterface<OverwriteErrorTestParam> {};
 
-/* @test Check that overwriten option is validated properly if it is used and is
- * not going to be ignored */
+/* @test Check that overwritten option is validated properly if it is used and
+ * is not going to be ignored */
 TEST_P(OverwriteErrorTest, OverwriteError) {
   auto default_section = get_DEFAULT_defaults();
   init_keyring(default_section, conf_dir.name());
@@ -381,7 +381,7 @@ TEST_P(OverwriteErrorTest, OverwriteError) {
   // logger issues will be reported on the console, the other in the logfile so
   // we merge them both when looking for error messages
   const std::string router_out =
-      router.get_full_logfile() + "\n" + router.get_full_output();
+      router.get_logfile_content() + "\n" + router.get_full_output();
   EXPECT_THAT(router_out, ::testing::HasSubstr(GetParam().expected_error_msg));
 }
 
@@ -492,13 +492,11 @@ TEST_P(MetadataConfigTest, MetadataConfig) {
 
   const std::string metadata_cache_section =
       mysql_harness::ConfigBuilder::build_section(
-          "metadata_cache:test",
-          {
-              {"cluster_type", "gr"},
-              {"bootstrap_server_addresses",
-               "mysql://localhost:" + std::to_string(md_server_port)},
-              {"metadata_cluster", "test"},
-          });
+          "metadata_cache:test", {
+                                     {"cluster_type", "gr"},
+                                     {"router_id", "1"},
+                                     {"metadata_cluster", "test"},
+                                 });
 
   const std::string routing_section =
       mysql_harness::ConfigBuilder::build_section(
@@ -511,6 +509,11 @@ TEST_P(MetadataConfigTest, MetadataConfig) {
 
   auto default_section = get_DEFAULT_defaults();
   init_keyring(default_section, conf_dir.name());
+
+  const std::string state_file = create_state_file(
+      get_test_temp_dir_name(),
+      create_state_file_content("uuid", "", {md_server_port}, 0));
+  default_section["dynamic_state"] = state_file;
 
   const std::string conf_file = create_config_file(
       conf_dir.name(), routing_section + metadata_cache_section,

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -323,7 +323,7 @@ enum dict_fld_sys_virtual_enum {
 };
 
 /* A number of the columns above occur in multiple tables.  These are the
-length of thos fields. */
+length of those fields. */
 constexpr uint32_t DICT_FLD_LEN_SPACE = 4;
 constexpr uint32_t DICT_FLD_LEN_FLAGS = 4;
 

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -37,9 +37,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "sql/dd/object_id.h"
 #include "sql/dd/types/column.h"
 #include "univ.i"
-#ifdef UNIV_HOTBACKUP
+#if defined UNIV_COMPILE_TEST_FUNCS || defined UNIV_HOTBACKUP
 #include "sql/dd/types/spatial_reference_system.h"
-#endif /* UNIV_HOTBACKUP */
+#endif /* UNIV_COMPILE_TEST_FUNCS || UNIV_HOTBACKUP */
 #include "btr0types.h"
 #include "data0type.h"
 #include "dict0types.h"
@@ -79,6 +79,10 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 /* Forward declaration. */
 struct ib_rbt_t;
+
+/** Format of INSTANTLY DROPPED column names. */
+constexpr char INSTANT_DROP_SUFFIX_8_0_29[] = "_dropped_v";
+constexpr char INSTANT_DROP_PREFIX_8_0_32[] = "!hidden!_dropped_";
 
 /** index/table name used while applying REDO logs during recovery */
 constexpr char RECOVERY_INDEX_TABLE_NAME[] = "LOG_DUMMY";
@@ -419,6 +423,16 @@ reasonably unique temporary file name.
 char *dict_mem_create_temporary_tablename(mem_heap_t *heap, const char *dbtab,
                                           table_id_t id);
 
+static inline bool is_valid_row_version(const uint8_t version) {
+  /* NOTE : 0 is also a valid row versions for rows which are inserted after
+  upgrading from earlier INSTANT implemenation */
+  if (version <= MAX_ROW_VERSION) {
+    return true;
+  }
+
+  return false;
+}
+
 /** Initialize dict memory variables */
 void dict_mem_init(void);
 
@@ -580,7 +594,7 @@ struct dict_col_t {
   }
 
   void set_version_added(uint8_t version) {
-    ut_ad(version == UINT8_UNDEFINED || version <= MAX_ROW_VERSION);
+    ut_ad(version == UINT8_UNDEFINED || is_valid_row_version(version));
     version_added = version;
   }
 
@@ -609,7 +623,7 @@ struct dict_col_t {
   }
 
   void set_version_dropped(uint8_t version) {
-    ut_ad(version == UINT8_UNDEFINED || version <= MAX_ROW_VERSION);
+    ut_ad(version == UINT8_UNDEFINED || is_valid_row_version(version));
     version_dropped = version;
   }
 
@@ -723,7 +737,7 @@ struct dict_col_t {
   @param[in]    version row version
   @return true if the column is dropped before or in the version. */
   bool is_dropped_in_or_before(uint8_t version) const {
-    ut_ad(version <= MAX_ROW_VERSION);
+    ut_ad(is_valid_row_version(version));
 
     if (!is_instant_dropped()) {
       return false;
@@ -736,7 +750,7 @@ struct dict_col_t {
   @param[in]    version row version
   @return true if column is added after the current row version. */
   bool is_added_after(uint8_t version) const {
-    ut_ad(version <= MAX_ROW_VERSION);
+    ut_ad(is_valid_row_version(version));
 
     if (!is_instant_added()) {
       return false;
@@ -749,7 +763,7 @@ struct dict_col_t {
   @param[in]      version         row version
   return true if column is visible in version. */
   bool is_visible_in_version(uint8_t version) const {
-    ut_ad(version <= MAX_ROW_VERSION);
+    ut_ad(is_valid_row_version(version));
     return (!is_added_after(version) && !is_dropped_in_or_before(version));
   }
 
@@ -768,6 +782,16 @@ struct dict_col_t {
 #endif /* !UNIV_HOTBACKUP */
 
     return true;
+  }
+
+  /** Check if a column name resembles format for dropped column.
+  param[in] type                column name
+  @return true if column name resembles dropped column. */
+  static bool is_instant_dropped_name(const std::string col_name) {
+    if (col_name.find(INSTANT_DROP_SUFFIX_8_0_29) != std::string::npos ||
+        col_name.find(INSTANT_DROP_PREFIX_8_0_32) != std::string::npos)
+      return true;
+    return false;
   }
 #endif /* UNIV_DEBUG */
 };
@@ -963,7 +987,7 @@ struct rec_cache_t {
 /** Cache position of last inserted or selected record by caching record
 and holding reference to the block where record resides.
 Note: We don't commit mtr and hold it beyond a transaction lifetime as this is
-a special case (intrinsic table) that are not shared accross connection. */
+a special case (intrinsic table) that are not shared across connection. */
 class last_ops_cur_t {
  public:
   /** Constructor */
@@ -1226,6 +1250,20 @@ struct dict_index_t {
   @return number of nullable fields before first INSTANT ADD */
   uint16_t get_instant_nullable() const { return n_instant_nullable; }
 
+  /** Get the nullable fields before any INSTANT ADD/DROP
+  @return number of nullable fields */
+  uint16_t get_nullable_before_instant_add_drop() const {
+    if (has_instant_cols()) {
+      return get_instant_nullable();
+    }
+
+    if (has_row_versions()) {
+      return get_nullable_in_version(0);
+    }
+
+    return n_nullable;
+  }
+
   /** Determine if the index has been committed to the
   data dictionary.
   @return whether the index definition has been committed */
@@ -1331,7 +1369,11 @@ struct dict_index_t {
     ut_ad(nth <= n_total_fields);
 
     for (size_t i = 0; i < nth; ++i) {
-      if (get_field(i)->col->is_nullable()) {
+      dict_col_t *col = get_field(i)->col;
+
+      ut_ad(!col->is_instant_dropped());
+
+      if (col->is_nullable()) {
         nullable++;
       }
     }
@@ -1349,13 +1391,49 @@ struct dict_index_t {
   needed only for V1 INSTANT ADD. */
   uint32_t get_instant_fields() const;
 
+  size_t calculate_n_instant_nullable(size_t _n_fields) const {
+    if (!has_row_versions()) {
+      ut_ad(has_instant_cols());
+      return get_n_nullable_before(_n_fields);
+    }
+
+    size_t n_drop_nullable_cols = 0;
+    size_t new_n_nullable = 0;
+    for (size_t i = 0; i < n_def; i++) {
+      const dict_field_t *field = &fields[i];
+      const dict_col_t *col = field->col;
+
+      if (col->is_instant_added()) {
+        continue;
+      }
+
+      if (col->is_instant_dropped()) {
+        if (col->get_col_phy_pos() < _n_fields && col->is_nullable()) {
+          n_drop_nullable_cols++;
+        }
+        continue;
+      }
+
+      /* This is regular column */
+      if (col->get_col_phy_pos() < _n_fields) {
+        if (col->is_nullable()) {
+          new_n_nullable++;
+        }
+      }
+    }
+
+    new_n_nullable += n_drop_nullable_cols;
+
+    return new_n_nullable;
+  }
+
   /** Create nullables array.
   @param[in]    current_row_version     current row version of table */
   void create_nullables(uint32_t current_row_version);
 
   /** Return nullable in a specific row version */
   uint32_t get_nullable_in_version(uint8_t version) const {
-    ut_ad(version <= MAX_ROW_VERSION);
+    ut_ad(is_valid_row_version(version));
 
     return nullables[version];
   }
@@ -1374,8 +1452,12 @@ struct dict_index_t {
   }
 
   void destroy_fields_array() {
-    fields_array.clear();
-    std::vector<uint16_t>().swap(fields_array);
+    /* The dict_index_t destructor is never called. The object is "destructed"
+    manually in dict_mem_index_free() and then the memory is just freed. This
+    method is called from the mentioned dict_mem_index_free(). Please note that
+    this vector is never constructed either - we just zero the memory and start
+    using it after calling a "constructor" dict_mem_fill_index_struct(). */
+    fields_array.~vector<uint16_t>();
   }
 
   /** Adds a field definition to an index. NOTE: does not take a copy
@@ -1400,7 +1482,7 @@ struct dict_index_t {
   }
 
   /** Gets the nth physical pos field.
-  @param[in]  pos  physocal position of the field
+  @param[in]  pos  physical position of the field
   @return pointer to the field object. */
   dict_field_t *get_physical_field(size_t pos) const {
     ut_ad(pos < n_def);
@@ -1421,6 +1503,19 @@ struct dict_index_t {
     ut_ad(magic_n == DICT_INDEX_MAGIC_N);
 
     return (fields + pos);
+  }
+
+  /** Given the physical position, find the logical position of field.
+  @param[in]	phy_pos	physical position of field
+  @return logical position of field */
+  uint16_t get_logical_pos(uint16_t phy_pos) const {
+    for (size_t i = 0; i < n_def; i++) {
+      if (get_field(i)->get_phy_pos() == phy_pos) {
+        return i;
+      }
+    }
+    ut_ad(false);
+    return UINT16_UNDEFINED;
   }
 
   /** Get the physical position of a field on a row. For table having INSTANT
@@ -1953,7 +2048,7 @@ struct dict_table_t {
   instant ADD clumns in V1. */
   unsigned n_instant_cols : 10;
 
-  /** Number of total columns (inlcude virtual and non-virtual) */
+  /** Number of total columns (include virtual and non-virtual) */
   unsigned n_t_cols : 10;
 
   /** Number of total columns defined so far. */
@@ -2037,7 +2132,7 @@ struct dict_table_t {
   uint32_t total_col_count{0};
 
   /** Set if table is upgraded instant table */
-  unsigned m_upgraded_instant : 1;
+  bool m_upgraded_instant{false};
 
   /** table dynamic metadata status, protected by dict_persist->mutex */
   std::atomic<table_dirty_status> dirty_status;
@@ -2335,12 +2430,6 @@ detect this and will eventually quit sooner. */
   columns */
   dict_vcol_templ_t *vc_templ;
 
-  /** encryption key, it's only for export/import */
-  byte *encryption_key;
-
-  /** encryption iv, it's only for export/import */
-  byte *encryption_iv;
-
   /** remove the dict_table_t from cache after DDL operation */
   bool discard_after_ddl;
 
@@ -2412,6 +2501,15 @@ detect this and will eventually quit sooner. */
     return static_cast<uint16_t>(n_instant_cols - get_n_sys_cols());
   }
 
+  size_t get_n_instant_added_col_v1() const {
+    size_t n_cols_dropped = get_n_instant_drop_cols();
+    size_t n_cols_added = get_n_instant_add_cols();
+    size_t n_instant_added_cols =
+        n_cols + n_cols_dropped - n_cols_added - n_instant_cols;
+
+    return (n_instant_added_cols);
+  }
+
   /** Get number of columns added instantly */
   uint32_t get_n_instant_add_cols() const {
     ut_ad(total_col_count >= initial_col_count);
@@ -2433,13 +2531,11 @@ detect this and will eventually quit sooner. */
   bool has_instant_drop_cols() const { return (get_n_instant_drop_cols() > 0); }
 
   /** Set table to be upgraded table with INSTANT ADD columns in V1. */
-  void set_upgraded_instant() { m_upgraded_instant = 1; }
+  void set_upgraded_instant() { m_upgraded_instant = true; }
 
   /** Checks if table is upgraded table with INSTANT ADD columns in V1.
   @return       true if it is, false otherwise */
-  bool is_upgraded_instant() const {
-    return (m_upgraded_instant == 1) ? true : false;
-  }
+  bool is_upgraded_instant() const { return m_upgraded_instant; }
 
   /** Check whether the table is corrupted.
   @return true if the table is corrupted, otherwise false */
@@ -2516,7 +2612,7 @@ detect this and will eventually quit sooner. */
 
   /** Gets the number of system columns in a table.
   For intrinsic table on ROW_ID column is added for all other
-  tables TRX_ID and ROLL_PTR are all also appeneded.
+  tables TRX_ID and ROLL_PTR are all also appended.
   @return number of system (e.g., ROW_ID) columns of a table */
   uint16_t get_n_sys_cols() const {
     ut_ad(magic_n == DICT_TABLE_MAGIC_N);
@@ -2714,7 +2810,7 @@ class PersistentTableMetadata {
 /** Interface for persistent dynamic table metadata. */
 class Persister {
  public:
-  /** Virtual desctructor */
+  /** Virtual destructor */
   virtual ~Persister() = default;
 
   /** Write the dynamic metadata of a table, we can pre-calculate
@@ -2745,6 +2841,13 @@ class Persister {
   is complete and we get everything, 0 if the buffer is incompleted */
   virtual ulint read(PersistentTableMetadata &metadata, const byte *buffer,
                      ulint size, bool *corrupt) const = 0;
+
+  /** Aggregate metadata entries into a single metadata instance, considering
+  version numbers
+  @param[in,out] metadata        metadata object to be modified
+  @param[in]     new_entry       metadata entry from logs */
+  virtual void aggregate(PersistentTableMetadata &metadata,
+                         const PersistentTableMetadata &new_entry) const = 0;
 
   /** Write MLOG_TABLE_DYNAMIC_META for persistent dynamic
   metadata of table
@@ -2785,6 +2888,9 @@ class CorruptedIndexPersister : public Persister {
   is complete and we get everything, 0 if the buffer is incompleted */
   ulint read(PersistentTableMetadata &metadata, const byte *buffer, ulint size,
              bool *corrupt) const override;
+
+  void aggregate(PersistentTableMetadata &metadata,
+                 const PersistentTableMetadata &new_entry) const override;
 
  private:
   /** The length of index_id_t we will write */
@@ -2828,6 +2934,9 @@ class AutoIncPersister : public Persister {
   is complete and we get everything, 0 if the buffer is incomplete */
   ulint read(PersistentTableMetadata &metadata, const byte *buffer, ulint size,
              bool *corrupt) const override;
+
+  void aggregate(PersistentTableMetadata &metadata,
+                 const PersistentTableMetadata &new_entry) const override;
 };
 
 /** Container of persisters used in the system. Currently we don't need

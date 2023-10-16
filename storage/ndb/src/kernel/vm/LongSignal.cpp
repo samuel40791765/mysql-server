@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -44,7 +44,7 @@ SectionSegmentPool::handleOutOfSegments(SectionSegment_basepool& pool)
 /**
  * verifySection
  * Assertion method to check that a segmented section is constructed
- * 'properly' where 'properly' is loosly defined.
+ * 'properly' where 'properly' is loosely defined.
  */
 bool
 verifySection(Uint32 firstIVal, SectionSegmentPool& thePool)
@@ -66,7 +66,7 @@ verifySection(Uint32 firstIVal, SectionSegmentPool& thePool)
    */
   //assert(totalSize != 0);
 #ifdef VM_TRACE
-  assert(lastSegIVal != RNIL); /* Should never be == RNIL */
+  require(lastSegIVal != RNIL); /* Should never be == RNIL */
 #endif
   /* We ignore m_ownerRef */
 
@@ -100,7 +100,7 @@ verifySection(Uint32 firstIVal, SectionSegmentPool& thePool)
      * Check that last segment is as stated in the first segment
      */
 #ifdef VM_TRACE
-    assert(currIVal == lastSegIVal);
+    require(currIVal == lastSegIVal);
 #endif
     // m_nextSegment not always set properly on last segment
     //assert(curr->m_nextSegment == RNIL);

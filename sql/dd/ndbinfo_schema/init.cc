@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -24,9 +24,9 @@
 
 #include <assert.h>
 #include "lex_string.h"
-#include "m_ctype.h"
 
 #include "mysql/components/services/log_builtins.h"  // LogErr
+#include "mysql/strings/m_ctype.h"
 #include "mysql/thread_type.h"
 #include "mysql_version.h"
 #include "sql/bootstrap.h"                   // bootstrap::run_bootstrap_thread

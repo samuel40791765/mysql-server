@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,9 +27,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <optional>
 
-#include "m_ctype.h"
-#include "m_string.h"
 #include "map_helpers.h"
 #include "mutex_lock.h"  // MUTEX_LOCK
 #include "my_alloc.h"
@@ -40,7 +39,6 @@
 #include "my_getopt.h"
 #include "my_inttypes.h"
 #include "my_list.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_psi_config.h"
 #include "my_sharedlib.h"
@@ -52,6 +50,7 @@
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
 #include "mysql/components/services/system_variable_source_type.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/plugin_audit.h"
 #include "mysql/plugin_auth.h"
 #include "mysql/plugin_clone.h"
@@ -64,9 +63,11 @@
 #include "mysql/psi/mysql_system.h"
 #include "mysql/psi/mysql_thread.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"
 #include "mysql_version.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "prealloced_array.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"  // check_table_access
@@ -113,6 +114,9 @@
 #include "sql/thr_malloc.h"
 #include "sql/transaction.h"  // trans_rollback_stmt
 #include "sql_string.h"
+#include "string_with_len.h"
+#include "strxmov.h"
+#include "strxnmov.h"
 #include "template_utils.h"  // pointer_cast
 #include "thr_lock.h"
 #include "thr_mutex.h"
@@ -259,7 +263,7 @@
 
   When that is filled in the plugin can use the newly set server structure
   through its local pointer to call into the service method pointers that point
-  to the server implementaiton functions.
+  to the server implementation functions.
 
   Once set to the server's structure, the plugin's service pointer value is
   never reset back to service version.
@@ -440,7 +444,7 @@ mysql_mutex_t LOCK_plugin_delete;
 
   LOCK_plugin must be acquired before accessing
   plugin_dl_array, plugin_array and plugin_hash.
-  We are always manipulating ref count, so a rwlock here is unneccessary.
+  We are always manipulating ref count, so a rwlock here is unnecessary.
   If it must be taken together with the LOCK_system_variables_hash then
   LOCK_plugin must be taken after LOCK_system_variables_hash.
 */
@@ -473,7 +477,8 @@ static bool plugin_load_list(MEM_ROOT *tmp_root, int *argc, char **argv,
 static bool check_if_option_is_deprecated(int optid,
                                           const struct my_option *opt,
                                           char *argument);
-static int test_plugin_options(MEM_ROOT *, st_plugin_int *, int *, char **);
+static int test_plugin_options(MEM_ROOT *, st_plugin_int *, int *, char **,
+                               std::optional<enum_plugin_load_option> = {});
 static bool register_builtin(st_mysql_plugin *, st_plugin_int *,
                              st_plugin_int **);
 static void unlock_variables(struct System_variables *vars);
@@ -483,7 +488,7 @@ static void plugin_var_memalloc_free(struct System_variables *vars);
 static void restore_pluginvar_names(sys_var *first);
 #define my_intern_plugin_lock(A, B) intern_plugin_lock(A, B)
 #define my_intern_plugin_lock_ci(A, B) intern_plugin_lock(A, B)
-static void reap_plugins(void);
+static void reap_plugins();
 
 // mysql.plugin table definition.
 static const int MYSQL_PLUGIN_TABLE_FIELD_COUNT = 2;
@@ -498,7 +503,7 @@ static const TABLE_FIELD_TYPE
 static const TABLE_FIELD_DEF mysql_plugin_table_def = {
     MYSQL_PLUGIN_TABLE_FIELD_COUNT, mysql_plugin_table_fields};
 
-malloc_unordered_map<std::string, st_bookmark *> *get_bookmark_hash(void) {
+malloc_unordered_map<std::string, st_bookmark *> *get_bookmark_hash() {
   return bookmark_hash;
 }
 
@@ -565,8 +570,8 @@ static void report_error(int where_to, uint error, ...) {
    @endcode
  */
 bool check_valid_path(const char *path, size_t len) {
-  size_t prefix = my_strcspn(files_charset_info, path, path + len, FN_DIRSEP,
-                             strlen(FN_DIRSEP));
+  const size_t prefix = my_strcspn(files_charset_info, path, path + len,
+                                   FN_DIRSEP, strlen(FN_DIRSEP));
   return prefix < len;
 }
 
@@ -658,7 +663,7 @@ static st_plugin_dl *plugin_dl_add(const LEX_STRING *dl, int report,
     This is done to ensure that only approved libraries from the
     plugin directory are used (to make this even remotely secure).
   */
-  LEX_CSTRING dl_cstr = {dl->str, dl->length};
+  const LEX_CSTRING dl_cstr = {dl->str, dl->length};
   if (check_valid_path(dl->str, dl->length) ||
       check_string_char_length(dl_cstr, "", NAME_CHAR_LEN, system_charset_info,
                                true) ||
@@ -684,7 +689,7 @@ static st_plugin_dl *plugin_dl_add(const LEX_STRING *dl, int report,
   mysql_mutex_assert_owner(&LOCK_plugin);
   if (!(plugin_dl.handle = dlopen(dlpath, RTLD_NOW))) {
     const char *errmsg;
-    int error_number = dlopen_errno;
+    const int error_number = dlopen_errno;
     /*
       Conforming applications should use a critical section to retrieve
       the error pointer and buffer...
@@ -739,7 +744,7 @@ static st_plugin_dl *plugin_dl_add(const LEX_STRING *dl, int report,
   /* link the services in */
   for (i = 0; i < array_elements(list_of_services); i++) {
     if ((sym = dlsym(plugin_dl.handle, list_of_services[i].name))) {
-      uint ver = (uint)(intptr) * (void **)sym;
+      const uint ver = (uint)(intptr) * (void **)sym;
       if ((*(void **)sym) !=
               list_of_services[i].service && /* already replaced */
           (ver > list_of_services[i].version ||
@@ -927,7 +932,7 @@ bool plugin_is_ready(const LEX_CSTRING &name, int type) {
 }
 
 SHOW_COMP_OPTION plugin_status(const char *name, size_t len, int type) {
-  LEX_CSTRING plugin_name = {name, len};
+  const LEX_CSTRING plugin_name = {name, len};
   return plugin_status(plugin_name, type);
 }
 
@@ -1045,7 +1050,7 @@ static bool plugin_add(MEM_ROOT *tmp_root, LEX_CSTRING name,
   if (!(tmp.plugin_dl = plugin_dl_add(dl, report, load_early))) return true;
   /* Find plugin by name */
   for (plugin = tmp.plugin_dl->plugins; plugin->info; plugin++) {
-    size_t name_len = strlen(plugin->name);
+    const size_t name_len = strlen(plugin->name);
     if (plugin->type >= 0 && plugin->type < MYSQL_MAX_PLUGIN_TYPE_NUM &&
         !my_strnncoll(system_charset_info,
                       pointer_cast<const uchar *>(name.str), name.length,
@@ -1073,7 +1078,7 @@ static bool plugin_add(MEM_ROOT *tmp_root, LEX_CSTRING name,
       tmp.name.length = name_len;
       tmp.ref_count = 0;
       tmp.state = PLUGIN_IS_UNINITIALIZED;
-      tmp.load_option = PLUGIN_ON;
+      /* tmp.load_option is set by test_plugin_options */
       if (test_plugin_options(tmp_root, &tmp, argc, argv))
         tmp.state = PLUGIN_IS_DISABLED;
 
@@ -1161,7 +1166,7 @@ static void plugin_del(st_plugin_int *plugin) {
   plugin->mem_root.Clear();
 }
 
-static void reap_plugins(void) {
+static void reap_plugins() {
   st_plugin_int *plugin, **reap, **list;
 
   mysql_mutex_assert_owner(&LOCK_plugin);
@@ -1574,13 +1579,18 @@ bool plugin_register_builtin_and_init_core_se(int *argc, char **argv) {
       mandatory = false;
       if (!*builtins) break;
     }
+    /* Process all plugins declared in same plugin declaration. */
+    bool disable_extra_plugins = false;
     for (struct st_mysql_plugin *plugin = *builtins; plugin->info; plugin++) {
       struct st_plugin_int tmp;
       tmp.plugin = plugin;
       tmp.name.str = plugin->name;
       tmp.name.length = strlen(plugin->name);
       tmp.state = 0;
-      tmp.load_option = mandatory ? PLUGIN_FORCE : PLUGIN_ON;
+      /* tmp.load_option is set by test_plugin_option call further down */
+
+      std::optional<enum_plugin_load_option> force_load_option;
+      if (mandatory) force_load_option = PLUGIN_FORCE;
 
       /*
         If the performance schema is compiled in,
@@ -1600,17 +1610,23 @@ bool plugin_register_builtin_and_init_core_se(int *argc, char **argv) {
       */
       if (!my_strcasecmp(&my_charset_latin1, plugin->name,
                          "PERFORMANCE_SCHEMA")) {
-        tmp.load_option = PLUGIN_FORCE;
+        force_load_option = PLUGIN_FORCE;
       }
 
+      if (disable_extra_plugins) force_load_option = PLUGIN_OFF;
+
       tmp_root.ClearForReuse();
-      if (test_plugin_options(&tmp_root, &tmp, argc, argv))
+      if (test_plugin_options(&tmp_root, &tmp, argc, argv, force_load_option))
         tmp.state = PLUGIN_IS_DISABLED;
       else
         tmp.state = PLUGIN_IS_UNINITIALIZED;
 
       struct st_plugin_int *plugin_ptr;  // Pointer to registered plugin
       if (register_builtin(plugin, &tmp, &plugin_ptr)) goto err_unlock;
+
+      if ((plugin->flags & PLUGIN_OPT_DEPENDENT_EXTRA_PLUGINS) &&
+          plugin_ptr->state == PLUGIN_IS_DISABLED)
+        disable_extra_plugins = true;
 
       /*
         Only initialize daemon_keyring_proxy, MyISAM, InnoDB and CSV at this
@@ -1619,11 +1635,11 @@ bool plugin_register_builtin_and_init_core_se(int *argc, char **argv) {
         table will not be read anyway, as indicated by the flag set when the
         plugin_init() function is called.
       */
-      bool is_daemon_keyring_proxy = !my_strcasecmp(
+      const bool is_daemon_keyring_proxy = !my_strcasecmp(
           &my_charset_latin1, plugin->name, "daemon_keyring_proxy_plugin");
-      bool is_myisam =
+      const bool is_myisam =
           !my_strcasecmp(&my_charset_latin1, plugin->name, "MyISAM");
-      bool is_innodb =
+      const bool is_innodb =
           !my_strcasecmp(&my_charset_latin1, plugin->name, "InnoDB");
       if ((!is_daemon_keyring_proxy || is_help_or_validate_option()) &&
           !is_myisam && (!is_innodb || is_help_or_validate_option()) &&
@@ -1721,9 +1737,9 @@ bool plugin_initialize_delayed_after_upgrade() {
     be deleted, so the plugins being initialized below should be only those
     that are in the submitted list of plugin names.
   */
-  Auto_THD fake_session;
-  Disable_autocommit_guard autocommit_guard(fake_session.thd);
-  dd::cache::Dictionary_client::Auto_releaser releaser(
+  const Auto_THD fake_session;
+  const Disable_autocommit_guard autocommit_guard(fake_session.thd);
+  const dd::cache::Dictionary_client::Auto_releaser releaser(
       fake_session.thd->dd_client());
   if (plugin_init_initialize_and_reap())
     return ::end_transaction(fake_session.thd, true);
@@ -1800,9 +1816,9 @@ bool plugin_register_dynamic_and_init_all(int *argc, char **argv, int flags) {
   /*
     Initialize plugins that are in state 'PLUGIN_IS_UNINITIALIZED'.
   */
-  Auto_THD fake_session;
-  Disable_autocommit_guard autocommit_guard(fake_session.thd);
-  dd::cache::Dictionary_client::Auto_releaser releaser(
+  const Auto_THD fake_session;
+  const Disable_autocommit_guard autocommit_guard(fake_session.thd);
+  const dd::cache::Dictionary_client::Auto_releaser releaser(
       fake_session.thd->dd_client());
   if (!(flags & PLUGIN_INIT_SKIP_INITIALIZATION))
     if (plugin_init_initialize_and_reap()) {
@@ -1846,10 +1862,10 @@ static void plugin_load(MEM_ROOT *tmp_root, int *argc, char **argv) {
   bool result;
   DBUG_TRACE;
 
-  TABLE_LIST tables("mysql", "plugin", TL_READ);
+  Table_ref tables("mysql", "plugin", TL_READ);
   new_thd->thread_stack = (char *)&tables;
   new_thd->store_globals();
-  LEX_CSTRING db_lex_cstr = {STRING_WITH_LEN("mysql")};
+  const LEX_CSTRING db_lex_cstr = {STRING_WITH_LEN("mysql")};
   new_thd->set_db(db_lex_cstr);
   thd.get_protocol_classic()->wipe_net();
 
@@ -1881,8 +1897,8 @@ static void plugin_load(MEM_ROOT *tmp_root, int *argc, char **argv) {
     get_field(tmp_root, table->field[0], &str_name);
     get_field(tmp_root, table->field[1], &str_dl);
 
-    LEX_CSTRING name = str_name.lex_cstring();
-    LEX_STRING dl = str_dl.lex_string();
+    const LEX_CSTRING name = str_name.lex_cstring();
+    const LEX_STRING dl = str_dl.lex_string();
 
     /*
       The whole locking sequence is not strictly speaking needed since this
@@ -2023,7 +2039,7 @@ error:
 /*
   Shutdown memcached plugin before binlog shuts down
 */
-void memcached_shutdown(void) {
+void memcached_shutdown() {
   if (initialized) {
     for (st_plugin_int **it = plugin_array->begin(); it != plugin_array->end();
          ++it) {
@@ -2052,7 +2068,7 @@ void memcached_shutdown(void) {
         are not unloaded in order to keep the call stack
         of the leaked objects.
 */
-void plugin_shutdown(void) {
+void plugin_shutdown() {
   size_t i;
   st_plugin_int **plugins, *plugin;
   st_plugin_dl **dl;
@@ -2065,6 +2081,8 @@ void plugin_shutdown(void) {
     mysql_mutex_lock(&LOCK_plugin);
 
     reap_needed = true;
+
+    if (!opt_initialize) LogErr(INFORMATION_LEVEL, ER_PLUGINS_SHUTDOWN_START);
 
     /*
       We want to shut down plugins in a reasonable order, this will
@@ -2107,6 +2125,9 @@ void plugin_shutdown(void) {
       if (plugins[i]->state == PLUGIN_IS_DELETED)
         plugins[i]->state = PLUGIN_IS_DYING;
     }
+
+    if (!opt_initialize) LogErr(INFORMATION_LEVEL, ER_PLUGINS_SHUTDOWN_END);
+
     mysql_mutex_unlock(&LOCK_plugin);
 
     /*
@@ -2220,10 +2241,8 @@ bool plugin_early_load_one(int *argc, char **argv, const char *plugin) {
 
   /* Make sure the internals are initialized */
   if (!initialized) {
-    if ((retval = plugin_init_internals()))
-      return retval;
-    else
-      initialized = true;
+    if ((retval = plugin_init_internals())) return retval;
+    initialized = true;
   }
   /* Allocate the temporary mem root, will be freed before returning */
   MEM_ROOT tmp_root(PSI_NOT_INSTRUMENTED, 4096);
@@ -2251,10 +2270,10 @@ static bool mysql_install_plugin(THD *thd, LEX_CSTRING name,
 
   DBUG_TRACE;
 
-  Disable_autocommit_guard autocommit_guard(thd);
-  dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+  const Disable_autocommit_guard autocommit_guard(thd);
+  const dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
 
-  TABLE_LIST tables("mysql", "plugin", TL_WRITE);
+  Table_ref tables("mysql", "plugin", TL_WRITE);
 
   if (!opt_noacl &&
       check_table_access(thd, INSERT_ACL, &tables, false, 1, false))
@@ -2313,7 +2332,6 @@ static bool mysql_install_plugin(THD *thd, LEX_CSTRING name,
   mysql_mutex_lock(&LOCK_plugin_install);
   mysql_rwlock_wrlock(&LOCK_system_variables_hash);
   mysql_mutex_lock(&LOCK_plugin);
-  DEBUG_SYNC(thd, "acquired_LOCK_plugin");
 
   {
     MEM_ROOT alloc{PSI_NOT_INSTRUMENTED, 512};
@@ -2390,7 +2408,7 @@ static bool mysql_install_plugin(THD *thd, LEX_CSTRING name,
     row based mode.
   */
   if (!error) {
-    Disable_binlog_guard binlog_guard(thd);
+    const Disable_binlog_guard binlog_guard(thd);
     table->use_all_columns();
     restore_record(table, s->default_values);
     table->field[0]->store(name.str, name.length, system_charset_info);
@@ -2467,12 +2485,12 @@ static bool mysql_uninstall_plugin(THD *thd, LEX_CSTRING name) {
   bool error = true;
   int rc = 0;
   bool remove_IS_metadata_from_dd = false;
-  dd::Schema_MDL_locker mdl_handler(thd);
+  const dd::Schema_MDL_locker mdl_handler(thd);
   dd::String_type orig_plugin_name;
 
   DBUG_TRACE;
 
-  TABLE_LIST tables("mysql", 5, "plugin", 6, "plugin", TL_WRITE);
+  Table_ref tables("mysql", 5, "plugin", 6, "plugin", TL_WRITE);
 
   if (!opt_noacl &&
       check_table_access(thd, DELETE_ACL, &tables, false, 1, false)) {
@@ -2484,8 +2502,8 @@ static bool mysql_uninstall_plugin(THD *thd, LEX_CSTRING name) {
       acquire_shared_backup_lock(thd, thd->variables.lock_wait_timeout))
     return true;
 
-  Disable_autocommit_guard autocommit_guard(thd);
-  dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+  const Disable_autocommit_guard autocommit_guard(thd);
+  const dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
   /* need to open before acquiring LOCK_plugin or it will deadlock */
   if (!(table =
             open_ltable(thd, &tables, TL_WRITE, MYSQL_LOCK_IGNORE_TIMEOUT))) {
@@ -2632,7 +2650,7 @@ static bool mysql_uninstall_plugin(THD *thd, LEX_CSTRING name) {
       row based mode.
     */
     assert(!thd->is_error());
-    Disable_binlog_guard binlog_guard(thd);
+    const Disable_binlog_guard binlog_guard(thd);
     rc = table->file->ha_delete_row(table->record[0]);
     if (rc) {
       assert(thd->is_error());
@@ -2681,7 +2699,7 @@ bool plugin_foreach_with_mask(THD *thd, plugin_foreach_func **funcs, int type,
                               uint state_mask, void *arg) {
   size_t idx, total;
   st_plugin_int *plugin, **plugins;
-  int version = plugin_array_version;
+  const int version = plugin_array_version;
   DBUG_TRACE;
 
   if (!initialized) return false;
@@ -2729,7 +2747,7 @@ bool plugin_foreach_with_mask(THD *thd, plugin_foreach_func **funcs, int type,
 
   for (; *funcs != nullptr; ++funcs) {
     /* Call binlog engine function first. This is required as GTID is generated
-    by binlog to be used by othe SE. */
+    by binlog to be used by other SE. */
     if (found_binlog) {
       assert(type == MYSQL_STORAGE_ENGINE_PLUGIN);
       plugin = plugins[binlog_index];
@@ -2768,13 +2786,14 @@ bool plugin_foreach_with_mask(THD *thd, plugin_foreach_func *func, int type,
 ****************************************************************************/
 
 /*
-  returns a bookmark for thd-local variables, creating if neccessary.
+  returns a bookmark for thd-local variables, creating if necessary.
   returns null for non thd-local variables.
   Requires that a write lock is obtained on LOCK_system_variables_hash
 */
 static st_bookmark *register_var(const char *plugin, const char *name,
                                  int flags) {
-  size_t length = strlen(plugin) + strlen(name) + 3, size = 0, offset, new_size;
+  const size_t length = strlen(plugin) + strlen(name) + 3;
+  size_t size = 0, offset, new_size;
   st_bookmark *result;
   char *varname, *p;
 
@@ -3167,12 +3186,6 @@ static void plugin_var_memalloc_free(struct System_variables *vars) {
   vars->dynamic_variables_allocs = nullptr;
 }
 
-extern "C" bool get_one_plugin_option(int, const struct my_option *, char *);
-
-bool get_one_plugin_option(int, const struct my_option *, char *) {
-  return false;
-}
-
 /**
   Creates a set of my_option objects associated with a specified plugin-
   handle.
@@ -3183,7 +3196,7 @@ bool get_one_plugin_option(int, const struct my_option *, char *) {
 
   The set is stored in the pre-allocated static array supplied to the function.
   The size of the array is calculated as (number_of_plugin_varaibles*2+3). The
-  reason is that each option can have a prefix '--plugin-' in addtion to the
+  reason is that each option can have a prefix '--plugin-' in addition to the
   shorter form '--&lt;plugin-name&gt;'. There is also space allocated for
   terminating NULL pointers.
 
@@ -3227,7 +3240,7 @@ static int construct_options(MEM_ROOT *mem_root, st_plugin_int *tmp,
     options[1].id = -1;
     options[0].var_type = options[1].var_type = GET_ENUM;
     options[0].arg_type = options[1].arg_type = OPT_ARG;
-    options[0].def_value = options[1].def_value = 1; /* ON */
+    options[0].def_value = options[1].def_value = tmp->load_option;
     options[0].typelib = options[1].typelib = &global_plugin_typelib;
 
     strxnmov(comment, max_comment_len, "Enable or disable ", plugin_name,
@@ -3280,8 +3293,7 @@ static int construct_options(MEM_ROOT *mem_root, st_plugin_int *tmp,
         // see struct System_variables
         // Except: plugin variables declared with MYSQL_THDVAR_INT,
         // which may actually be signed.
-        if (((thdvar_int_t *)opt)->offset == -1 &&
-            !(opt->flags & PLUGIN_VAR_UNSIGNED))
+        if (!(opt->flags & PLUGIN_VAR_UNSIGNED))
           ((thdvar_int_t *)opt)->resolve = mysql_sys_var_int;
         else
           ((thdvar_uint_t *)opt)->resolve = mysql_sys_var_uint;
@@ -3489,6 +3501,8 @@ static bool check_if_option_is_deprecated(int optid,
   @param[out] tmp Internal plugin structure
   @param argc Number of command line arguments
   @param argv Command line argument vector
+  @param force_load_option empty if not specified, otherwise one of @ref
+  enum_plugin_load_option
 
   The plugin will be updated with a policy on how to handle errors during
   initialization.
@@ -3500,12 +3514,11 @@ static bool check_if_option_is_deprecated(int optid,
     @retval  1 Plugin is disabled.
     @retval -1 An error has occurred.
 */
-
-static int test_plugin_options(MEM_ROOT *tmp_root, st_plugin_int *tmp,
-                               int *argc, char **argv) {
+static int test_plugin_options(
+    MEM_ROOT *tmp_root, st_plugin_int *tmp, int *argc, char **argv,
+    const std::optional<enum_plugin_load_option> force_load_option) {
   struct sys_var_chain chain = {nullptr, nullptr};
   bool disable_plugin;
-  enum_plugin_load_option plugin_load_option = tmp->load_option;
 
   /*
     We should use tmp->mem_root here instead of the global plugin_mem_root,
@@ -3525,18 +3538,21 @@ static int test_plugin_options(MEM_ROOT *tmp_root, st_plugin_int *tmp,
   DBUG_TRACE;
   assert(tmp->plugin && tmp->name.str);
 
-  /*
-    The 'federated' and 'ndbcluster' storage engines are always disabled by
-    default.
-  */
-  if (!(my_strcasecmp(&my_charset_latin1, tmp->name.str, "federated") &&
-        my_strcasecmp(&my_charset_latin1, tmp->name.str, "ndbcluster")))
-    plugin_load_option = PLUGIN_OFF;
+  const bool have_plugin_option =
+      (!force_load_option.has_value() ||
+       (force_load_option.value() != PLUGIN_FORCE &&
+        force_load_option.value() != PLUGIN_FORCE_PLUS_PERMANENT));
+
+  tmp->load_option = force_load_option.has_value()
+                         ? force_load_option.value()
+                         : (tmp->plugin->flags & PLUGIN_OPT_DEFAULT_OFF)
+                               ? PLUGIN_OFF
+                               : PLUGIN_ON;
 
   for (opt = tmp->plugin->system_vars; opt && *opt; opt++)
     count += 2; /* --{plugin}-{optname} and --plugin-{plugin}-{optname} */
 
-  if (count > EXTRA_OPTIONS || (*argc > 1)) {
+  if (have_plugin_option || count > EXTRA_OPTIONS || (*argc > 1)) {
     if (!(opts = (my_option *)tmp_root->Alloc(sizeof(my_option) * count))) {
       LogErr(ERROR_LEVEL, ER_PLUGIN_OOM, tmp->name.str);
       return -1;
@@ -3548,14 +3564,6 @@ static int test_plugin_options(MEM_ROOT *tmp_root, st_plugin_int *tmp,
       return -1;
     }
 
-    /*
-      We adjust the default value to account for the hardcoded exceptions
-      we have set for the federated and ndbcluster storage engines.
-    */
-    if (tmp->load_option != PLUGIN_FORCE &&
-        tmp->load_option != PLUGIN_FORCE_PLUS_PERMANENT)
-      opts[0].def_value = opts[1].def_value = plugin_load_option;
-
     error = handle_options(argc, &argv, opts, check_if_option_is_deprecated);
     (*argc)++; /* add back one for the program name */
 
@@ -3563,17 +3571,32 @@ static int test_plugin_options(MEM_ROOT *tmp_root, st_plugin_int *tmp,
       LogErr(ERROR_LEVEL, ER_PLUGIN_PARSING_OPTIONS_FAILED, tmp->name.str);
       goto err;
     }
-    /*
-     Set plugin loading policy from option value. First element in the option
-     list is always the <plugin name> option value.
-    */
-    if (tmp->load_option != PLUGIN_FORCE &&
-        tmp->load_option != PLUGIN_FORCE_PLUS_PERMANENT)
-      plugin_load_option = (enum_plugin_load_option) * (ulong *)opts[0].value;
+
+    if (have_plugin_option) {
+      /*
+       Set plugin loading policy from option value, unless there are an
+       enforced value. First element in the option list is always the
+       <plugin name> option value.
+      */
+      const enum_plugin_load_option user_value =
+          (enum_plugin_load_option) * (ulong *)opts[0].value;
+      if (!force_load_option.has_value()) {
+        tmp->load_option = user_value;
+      } else {
+        /* Ignore any setting from command line use, forced value */
+        enum_plugin_load_option forced_value = force_load_option.value();
+        if (user_value != forced_value) {
+          DBUG_PRINT(
+              "warning",
+              ("Plugin %s forced %s ignoring other setting %s.",
+               tmp->plugin->name, global_plugin_typelib_names[forced_value],
+               global_plugin_typelib_names[user_value]));
+        }
+      }
+    }
   }
 
-  disable_plugin = (plugin_load_option == PLUGIN_OFF);
-  tmp->load_option = plugin_load_option;
+  disable_plugin = (tmp->load_option == PLUGIN_OFF);
 
   /*
     If the plugin is disabled it should not be initialized.
@@ -3664,14 +3687,14 @@ st_plugin_int *plugin_find_by_type(const LEX_CSTRING &plugin, int type) {
 }
 
 bool Sql_cmd_install_plugin::execute(THD *thd) {
-  bool st = mysql_install_plugin(thd, m_comment, &m_ident);
+  const bool st = mysql_install_plugin(thd, m_comment, &m_ident);
   if (!st) my_ok(thd);
   mysql_audit_release(thd);
   return st;
 }
 
 bool Sql_cmd_uninstall_plugin::execute(THD *thd) {
-  bool st = mysql_uninstall_plugin(thd, m_comment);
+  const bool st = mysql_uninstall_plugin(thd, m_comment);
   if (!st) my_ok(thd);
   return st;
 }

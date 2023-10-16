@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2022, Oracle and/or its affiliates.
+Copyright (c) 2007, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -38,10 +38,13 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <optional>
 
 #include "dict0types.h"
+#include "lock0types.h"
 #include "trx0types.h"
 #include "univ.i"
 
 class PSI_server_data_lock_container;
+
+struct CHARSET_INFO;
 
 /** The maximum amount of memory that can be consumed by innodb_trx,
 innodb_locks and innodb_lock_waits information schema tables. */

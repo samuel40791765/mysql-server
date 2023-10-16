@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,11 +31,12 @@
 
 #include <errno.h>
 
-#include "m_ctype.h"
 #include "m_string.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_sys.h"  // IWYU pragma: keep
+#include "mysql/strings/m_ctype.h"
+#include "nulls.h"
 
 #ifdef _WIN32
 
@@ -172,7 +173,7 @@ int check_if_legal_tablename(const char *name) {
   @return true if the drive exists, false otherwise.
 */
 static bool does_drive_exists(char drive_letter) {
-  DWORD drive_mask = GetLogicalDrives();
+  const DWORD drive_mask = GetLogicalDrives();
   drive_letter = toupper(drive_letter);
 
   return (drive_letter >= 'A' && drive_letter <= 'Z') &&
@@ -221,7 +222,7 @@ bool is_filename_allowed(const char *name [[maybe_unused]],
 #if defined(_WIN32)
 
 /*
-  Check if a path will access a reserverd file name that may cause problems
+  Check if a path will access a reserved file name that may cause problems
 
   SYNOPSIS
     check_if_legal_filename

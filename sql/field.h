@@ -1,7 +1,7 @@
 #ifndef FIELD_INCLUDED
 #define FIELD_INCLUDED
 
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -38,7 +38,6 @@
 #include "field_types.h"  // enum_field_types
 #include "lex_string.h"
 #include "libbinlogevents/export/binary_log_funcs.h"  // my_time_binary_length
-#include "m_ctype.h"
 #include "my_alloc.h"
 #include "my_base.h"  // ha_storage_media
 #include "my_bitmap.h"
@@ -47,6 +46,8 @@
 #include "my_inttypes.h"
 #include "my_sys.h"
 #include "my_time.h"  // MYSQL_TIME_NOTE_TRUNCATED
+#include "mysql/strings/dtoa.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysql_time.h"
@@ -174,6 +175,7 @@ enum enum_check_fields : int {
   CHECK_FIELD_ERROR_FOR_NULL
 };
 
+/// For use @see DTCollation::aggregate()
 enum Derivation {
   DERIVATION_IGNORABLE = 6,
   DERIVATION_NUMERIC = 5,
@@ -285,7 +287,7 @@ inline uint get_enum_pack_length(int elements) {
 }
 
 inline uint get_set_pack_length(int elements) {
-  uint len = (elements + 7) / 8;
+  const uint len = (elements + 7) / 8;
   return len > 4 ? 8 : len;
 }
 
@@ -1421,7 +1423,7 @@ class Field {
   }
   longlong val_int_offset(ptrdiff_t row_offset) {
     ptr += row_offset;
-    longlong tmp = val_int();
+    const longlong tmp = val_int();
     ptr -= row_offset;
     return tmp;
   }
@@ -1837,8 +1839,8 @@ class Field {
 
   When adding a functional index at table creation, we need to resolve the
   expression we are indexing. All functions that references one or more
-  columns expects a Field to be available. But during CREATE TABLE, we only
-  have access to Create_field. So this class acts as a subsitute for the
+  columns expect a Field to be available. But during CREATE TABLE, we only
+  have access to Create_field. So this class acts as a substitute for the
   Field classes so that expressions can be properly resolved. Thus, trying
   to call store or val_* on this class will cause an assertion.
 */
@@ -2742,6 +2744,7 @@ class Field_temporal : public Field {
   {
     return (double)val_int();
   }
+  [[nodiscard]] uint8 get_dec() const { return dec; }
   my_decimal *val_decimal(
       my_decimal *decimal_value) const override;  // FSP types redefine it
 };
@@ -3013,7 +3016,7 @@ class Field_timestampf : public Field_temporal_with_date_and_timef {
   uint32 pack_length() const final { return my_timestamp_binary_length(dec); }
   uint pack_length_from_metadata(uint field_metadata) const final {
     DBUG_TRACE;
-    uint tmp = my_timestamp_binary_length(field_metadata);
+    const uint tmp = my_timestamp_binary_length(field_metadata);
     return tmp;
   }
 
@@ -3250,7 +3253,7 @@ class Field_timef final : public Field_time_common {
   uint32 pack_length() const final { return my_time_binary_length(dec); }
   uint pack_length_from_metadata(uint field_metadata) const final {
     DBUG_TRACE;
-    uint tmp = my_time_binary_length(field_metadata);
+    const uint tmp = my_time_binary_length(field_metadata);
     return tmp;
   }
   uint row_pack_length() const final { return pack_length(); }
@@ -3375,7 +3378,7 @@ class Field_datetimef : public Field_temporal_with_date_and_timef {
   uint32 pack_length() const final { return my_datetime_binary_length(dec); }
   uint pack_length_from_metadata(uint field_metadata) const final {
     DBUG_TRACE;
-    uint tmp = my_datetime_binary_length(field_metadata);
+    const uint tmp = my_datetime_binary_length(field_metadata);
     return tmp;
   }
   bool zero_pack() const final { return true; }
@@ -3783,7 +3786,7 @@ class Field_blob : public Field_longstr {
   void set_keep_old_value(bool old_value_flag) {
     /*
       We should only need to keep a copy of the blob 'value' in the case
-      where this is a virtual genarated column (that is indexed).
+      where this is a virtual generated column (that is indexed).
     */
     assert(is_virtual_gcol());
 
@@ -3829,7 +3832,7 @@ class Field_blob : public Field_longstr {
   void keep_old_value() {
     /*
       We should only need to keep a copy of the blob value in the case
-      where this is a virtual genarated column (that is indexed).
+      where this is a virtual generated column (that is indexed).
     */
     assert(is_virtual_gcol());
 
@@ -3928,20 +3931,6 @@ class Field_geom final : public Field_blob {
 class Field_json : public Field_blob {
   type_conversion_status unsupported_conversion();
   type_conversion_status store_binary(const char *ptr, size_t length);
-
-  /**
-    Diagnostics utility for ER_INVALID_JSON_TEXT.
-
-    @param err        error message argument for ER_INVALID_JSON_TEXT
-    @param err_offset location in text at which there is an error
-  */
-  void invalid_text(const char *err, size_t err_offset) const {
-    String s;
-    s.append(*table_name);
-    s.append('.');
-    s.append(field_name);
-    my_error(ER_INVALID_JSON_TEXT, MYF(0), err, err_offset, s.c_ptr_safe());
-  }
 
  public:
   Field_json(uchar *ptr_arg, uchar *null_ptr_arg, uint null_bit_arg,
@@ -4184,7 +4173,25 @@ class Field_typed_array final : public Field_json {
     SE to be returned to server. They will be filtered by WHERE condition later.
   */
   int key_cmp(const uchar *, const uchar *) const override { return -1; }
-  int key_cmp(const uchar *, uint) const override { return -1; }
+  /**
+   * @brief This function will behave similarly to MEMBER OF json operation,
+   *        unlike regular key_cmp. The key value will be checked against
+   *        members of the array and the presence of the key will be considered
+   *        as the record matching the given key. This particular definition is
+   *        used in descending ref index scans. Descending index scan uses
+   *        handler::ha_index_prev() function to read from the storage engine
+   *        which does not compare the index key with the search key [unlike
+   *        handler::ha_index_next_same()]. Hence each retrieved record needs
+   *        to be validated to find a stop point. Refer key_cmp_if_same() and
+   *        RefIterator<true>::Read() for more details.
+   *
+   * @param   key_ptr         Pointer to the key
+   * @param   key_length      Key length
+   * @return
+   *      0   Key found in the record
+   *      -1  Key not found in the record
+   */
+  int key_cmp(const uchar *key_ptr, uint key_length) const override;
   /**
     Multi-valued index always works only as a pre-filter for actual
     condition check, and the latter always use binary collation, so no point
@@ -4264,7 +4271,7 @@ class Field_typed_array final : public Field_json {
   }
   void sql_type(String &str) const final;
   void make_send_field(Send_field *field) const final;
-  void set_field_index(uint16 f_index) final override;
+  void set_field_index(uint16 f_index) final;
   Field *get_conv_field();
 };
 
@@ -4383,7 +4390,7 @@ class Field_set final : public Field_enum {
     This is the reason:
     - Field_bit::cmp_binary() is only implemented in the base class
       (Field::cmp_binary()).
-    - Field::cmp_binary() currenly use pack_length() to calculate how
+    - Field::cmp_binary() currently uses pack_length() to calculate how
       long the data is.
     - pack_length() includes size of the bits stored in the NULL bytes
       of the record.
@@ -4672,14 +4679,15 @@ type_conversion_status store_internal_with_error_check(Field_new_decimal *field,
     indexed expression.
 
   @param thd       Thread handler
-  @param item      The item to generate a Create_field from
+  @param source_item      The item to generate a Create_field from
   @param tmp_table A table object which is used to generate a temporary table
                    field, as described above. This doesn't need to be an
                    existing table.
   @return          A Create_field generated from the input item, or nullptr
                    in case of errors.
 */
-Create_field *generate_create_field(THD *thd, Item *item, TABLE *tmp_table);
+Create_field *generate_create_field(THD *thd, Item *source_item,
+                                    TABLE *tmp_table);
 
 inline bool is_blob(enum_field_types sql_type) {
   return (sql_type == MYSQL_TYPE_BLOB || sql_type == MYSQL_TYPE_MEDIUM_BLOB ||

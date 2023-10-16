@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
    as published by the Free Software Foundation.
@@ -36,32 +36,35 @@ int main()
 
   char buf[30];
 
+  constexpr size_t ptr_size = sizeof(void*);
+  static_assert(sizeof(size_t) == ptr_size);
+
   // cstrbuf with static extent
 
   cstrbuf a(buf);
-  ok1(sizeof(a) == 16);
+  ok1(sizeof(a) == 2 * ptr_size);
 
   cstrbuf b(ndb::span<char, 10>{buf + 10, 10});
-  ok1(sizeof(b) == 16);
+  ok1(sizeof(b) == 2 * ptr_size);
 
   cstrbuf<10, false> c({buf + 10, 10});
-  ok1(sizeof(c) == 16);
+  ok1(sizeof(c) == 2 * ptr_size);
 
   cstrbuf d{ndb::span(buf)};
-  ok1(sizeof(d) == 16);
+  ok1(sizeof(d) == 2 * ptr_size);
 
   // cstrbuf with dynamic extent
 
   cstrbuf e({buf + 10, 10});
-  ok1(sizeof(e) == 24);
+  ok1(sizeof(e) == 3 * ptr_size);
 
   cstrbuf f({buf + 20, buf + 25});
-  ok1(sizeof(f) == 24);
+  ok1(sizeof(f) == 3 * ptr_size);
 
   // cstrbuf owning buffer
 
   cstrbuf<24> g;
-  ok1(sizeof(g) == 32);
+  ok1(sizeof(g) == ptr_size + 24);
 
   a.append("Rumpnisse");
   if (a.appendf(" %s:", __func__) == -1)
@@ -83,9 +86,9 @@ int main()
   ok1(std::strcmp(g.c_str(), "Rumpnisse main: fantasi") == 0);
 
   cstrbuf<0> nullbuf;
-  ok1(sizeof(nullbuf) == 16);
+  ok1(sizeof(nullbuf) == 2 * ptr_size);
   ok1(nullbuf.is_truncated());  // Not even room for null termination!
-  ok1(nullbuf.appendf("Tjoho %zu", sizeof(nullbuf)) == 1);
+  ok1(nullbuf.appendf("Tjoho %2zu", sizeof(nullbuf)) == 1);
   ok1(nullbuf.length() == 0);
   ok1(nullbuf.untruncated_length() == 8);
   ok1(nullbuf.extent() == 0);

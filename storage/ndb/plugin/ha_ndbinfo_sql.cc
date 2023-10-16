@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2009, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,7 +27,7 @@
 #include "sql/plugin_table.h"
 #include "sql/sql_list.h"
 
-#include "storage/ndb/src/kernel/vm/NdbinfoTables.cpp"
+#include "debugger/Ndbinfo.hpp"
 #include "util/BaseString.hpp"
 
 static constexpr const char *opt_table_prefix{"ndb$"};
@@ -397,7 +397,7 @@ static struct view {
      "FROM `ndbinfo`.`ndb$membership`"},
     {"ndbinfo", "memory_per_fragment",
      /*
-      * The test for name.type<=6 is there to elimiate matching non-table
+      * The test for name.type<=6 is there to eliminate matching non-table
       * objects (triggers, files etc.), since the 'id' of these may collide
       * with table ids.
       */
@@ -450,7 +450,7 @@ static struct view {
       * dictionary information such as the table name and type, and the name
       * of the parent table, if there is any.
       *
-      * The test for name.type<=6 is there to elimiate matching non-table
+      * The test for name.type<=6 is there to eliminate matching non-table
       * objects (triggers, files etc.), since the 'id' of these may collide
       * with table ids.
       */
@@ -729,7 +729,7 @@ static struct lookup {
      "event_id INT UNSIGNED NOT NULL PRIMARY KEY, "
      "name varchar(192) NOT NULL, "
      "table_id INT UNSIGNED NOT NULL, "
-     "reporting  enum('updated', 'all', 'subscribe', 'DDL') NOT NULL, "
+     "reporting  SET('updated', 'all', 'subscribe', 'DDL') NOT NULL, "
      "columns varchar(512) NOT NULL, "
      "table_event SET('INSERT','DELETE','UPDATE','SCAN','DROP','ALTER',"
      "'CREATE','GCP_COMPLETE','CLUSTER_FAILURE','STOP',"
@@ -811,7 +811,9 @@ static struct lookup {
         "ndb$index_stats",
         "index_id INT UNSIGNED, "
         "index_version INT UNSIGNED, "
-        "sample_version INT UNSIGNED",
+        "sample_version INT UNSIGNED, "
+        "load_time INT UNSIGNED, "
+        "sample_count INT UNSIGNED",
     }};
 
 static constexpr size_t num_lookups = sizeof(lookups) / sizeof(lookups[0]);

@@ -1,6 +1,6 @@
 #ifndef SET_VAR_INCLUDED
 #define SET_VAR_INCLUDED
-/* Copyright (c) 2002, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2002, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -40,7 +40,6 @@
 #include <vector>
 
 #include "lex_string.h"
-#include "m_ctype.h"
 #include "my_getopt.h"    // get_opt_arg_type
 #include "my_hostname.h"  // HOSTNAME_LENGTH
 #include "my_inttypes.h"
@@ -48,6 +47,7 @@
 #include "my_systime.h"  // my_micro_time()
 #include "mysql/components/services/system_variable_source_type.h"
 #include "mysql/status_var.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"           // Item_result
 #include "prealloced_array.h"    // Prealloced_array
@@ -263,7 +263,7 @@ class sys_var {
 
   /**
     This function converts value stored in save_result to string. This
-    function must ba called after calling save_default() as save_default() will
+    function must be called after calling save_default() as save_default() will
     store default value to save_result.
   */
   virtual void saved_value_to_string(THD *thd, set_var *var, char *def_val) = 0;
@@ -365,8 +365,8 @@ class sys_var {
   inline static bool set_and_truncate(char *dst, const char *string,
                                       size_t sizeof_dst) {
     if (dst == string) return false;
-    size_t string_length = strlen(string), length;
-    length = std::min(sizeof_dst - 1, string_length);
+    const size_t string_length = strlen(string);
+    const size_t length = std::min(sizeof_dst - 1, string_length);
     memcpy(dst, string, length);
     dst[length] = 0;
     return length < string_length;  // truncated
@@ -510,7 +510,7 @@ enum class Is_single_thread { NO, YES };
   of static system variables.
   OTOH, the server silently accepts component-registered variable names like
   key_buffer_size etc. (conflict with qualified key cache variables), so
-  those newly-registered variables wont be easily accessible via SQL.
+  those newly-registered variables won't be easily accessible via SQL.
 
 
   API
@@ -846,6 +846,11 @@ class System_variable_tracker final {
     return m_cache.value().m_cached_is_sensitive;
   }
 
+  bool cached_is_applied_as_command_line() const {
+    if (!m_cache.has_value()) my_abort();
+    return m_cache.value().m_cached_is_applied_as_command_line;
+  }
+
   /** Number of system variable elements to preallocate. */
   static constexpr size_t SYSTEM_VARIABLE_PREALLOC = 200;
 
@@ -893,6 +898,7 @@ class System_variable_tracker final {
   struct Cache {
     SHOW_TYPE m_cached_show_type;
     bool m_cached_is_sensitive;
+    bool m_cached_is_applied_as_command_line;
   };
   mutable std::optional<Cache> m_cache;
 
@@ -937,7 +943,7 @@ class System_variable_tracker final {
 /**
   A base class for everything that can be set with SET command.
   It's similar to Items, an instance of this is created by the parser
-  for every assigmnent in SET (or elsewhere, e.g. in SELECT).
+  for every assignment in SET (or elsewhere, e.g. in SELECT).
 */
 class set_var_base {
  public:

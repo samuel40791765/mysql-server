@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2021, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -149,7 +149,7 @@ struct Fil_page_header {
 
   /** Print the page header to the given output stream.
   @param[in]  out  the output stream.
-  @return the ouput stream. */
+  @return the output stream. */
   std::ostream &print(std::ostream &out) const noexcept;
 
  private:

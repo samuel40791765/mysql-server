@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -47,6 +47,7 @@
 #include "storage/perfschema/pfs_stat.h"
 #include "storage/perfschema/pfs_timer.h"
 
+struct CHARSET_INFO;
 struct PFS_host;
 struct PFS_user;
 struct PFS_account;
@@ -233,32 +234,32 @@ void set_field_double(Field *f, double value);
 double get_field_double(Field *f);
 
 /**
-  Helper, assign a value to a @code char utf8 @endcode field.
+  Helper, assign a value to a @code char utf8mb4 @endcode field.
   @param f the field to set
   @param str the string to assign
   @param len the length of the string to assign
 */
-void set_field_char_utf8(Field *f, const char *str, uint len);
+void set_field_char_utf8mb4(Field *f, const char *str, uint len);
 
 /**
-  Helper, read a value from a @code char utf8 @endcode field.
+  Helper, read a value from a @code char utf8mb4 @endcode field.
   @param f the field to read
   @param[out] val the field value
   @param[out] len field value length
   @return the field value
 */
-char *get_field_char_utf8(Field *f, char *val, uint *len);
+char *get_field_char_utf8mb4(Field *f, char *val, uint *len);
 
 /**
-  Helper, read a value from a @code char utf8 @endcode field.
+  Helper, read a value from a @code char utf8mb4 @endcode field.
   @param f the field to read
   @param[out] val the field value
   @return the field value
 */
-String *get_field_char_utf8(Field *f, String *val);
+String *get_field_char_utf8mb4(Field *f, String *val);
 
 /**
-  Helper, assign a value to a @code varchar utf8 @endcode field.
+  Helper, assign a value to a @code varchar utf8mb4 @endcode field.
   @param f the field to set
   @param cs the string character set
   @param str the string to assign
@@ -268,36 +269,21 @@ void set_field_varchar(Field *f, const CHARSET_INFO *cs, const char *str,
                        uint len);
 
 /**
-  Helper, assign a value to a @code varchar utf8 @endcode field.
-  @param f the field to set
-  @param str the string to assign
-*/
-void set_field_varchar_utf8(Field *f, const char *str);
-
-/**
-  Helper, assign a value to a @code varchar utf8 @endcode field.
-  @param f the field to set
-  @param str the string to assign
-  @param len the length of the string to assign
-*/
-void set_field_varchar_utf8(Field *f, const char *str, size_t len);
-
-/**
-  Helper, read a value from a @code varchar utf8 @endcode field.
+  Helper, read a value from a @code varchar utf8mb4 @endcode field.
   @param f the field to read
   @param[out] val the field value
   @return the field value
 */
-String *get_field_varchar_utf8(Field *f, String *val);
+String *get_field_varchar_utf8mb4(Field *f, String *val);
 
 /**
-  Helper, read a value from a @code varchar utf8 @endcode field.
+  Helper, read a value from a @code varchar utf8mb4 @endcode field.
   @param f the field to read
   @param[out] val the field value
   @param[out] len field value length
   @return the field value
 */
-char *get_field_varchar_utf8(Field *f, char *val, uint *len);
+char *get_field_varchar_utf8mb4(Field *f, char *val, uint *len);
 
 /**
   Helper, assign a value to a @code varchar utf8mb4 @endcode field.
@@ -608,7 +594,7 @@ struct PFS_event_name_row {
 
   /** Set a table field from the row. */
   inline void set_field(Field *f) {
-    set_field_varchar_utf8(f, m_name, m_name_length);
+    set_field_varchar_utf8mb4(f, m_name, m_name_length);
   }
 };
 
@@ -648,7 +634,7 @@ struct PFS_column_row {
   size_t m_column_name_length;
 
   /** Build a row from a memory buffer. */
-  int make_row(const MDL_key *pfs);
+  int make_row(const MDL_key *mdl);
   /** Set a table field from the row. */
   void set_nullable_field(uint index, Field *f);
 };
@@ -883,6 +869,8 @@ struct PFS_statement_stat_row {
     Expressed in DISPLAY units (picoseconds).
   */
   ulonglong m_cpu_time;
+  ulonglong m_max_controlled_memory;
+  ulonglong m_max_total_memory;
   ulonglong m_count_secondary;
 
   /** Build a row from a memory buffer. */
@@ -910,6 +898,8 @@ struct PFS_statement_stat_row {
       m_no_index_used = stat->m_no_index_used;
       m_no_good_index_used = stat->m_no_good_index_used;
       m_cpu_time = stat->m_cpu_time * NANOSEC_TO_PICOSEC;
+      m_max_controlled_memory = stat->m_max_controlled_memory;
+      m_max_total_memory = stat->m_max_total_memory;
       m_count_secondary = stat->m_count_secondary;
     } else {
       m_timer1_row.reset();
@@ -934,6 +924,8 @@ struct PFS_statement_stat_row {
       m_no_index_used = 0;
       m_no_good_index_used = 0;
       m_cpu_time = 0;
+      m_max_controlled_memory = 0;
+      m_max_total_memory = 0;
       m_count_secondary = 0;
     }
   }
@@ -1006,13 +998,9 @@ struct PFS_error_stat_row {
 
 /** Row fragment for connection statistics. */
 struct PFS_connection_stat_row {
-  ulonglong m_current_connections;
-  ulonglong m_total_connections;
+  PFS_connection_stat m_stat;
 
-  inline void set(const PFS_connection_stat *stat) {
-    m_current_connections = stat->m_current_connections;
-    m_total_connections = stat->m_total_connections;
-  }
+  inline void set(const PFS_connection_stat *stat) { m_stat = *stat; }
 
   /** Set a table field from the row. */
   void set_field(uint index, Field *f);
@@ -1078,6 +1066,19 @@ struct PFS_memory_stat_row {
 
   /** Build a row from a memory buffer. */
   inline void set(const PFS_memory_monitoring_stat *stat) { m_stat = *stat; }
+
+  /** Set a table field from the row. */
+  void set_field(uint index, Field *f);
+};
+
+struct PFS_session_all_memory_stat_row {
+  size_t m_controlled_size;
+  size_t m_max_controlled_size;
+  size_t m_total_size;
+  size_t m_max_total_size;
+
+  /** Build a row from a memory buffer. */
+  void set(const PFS_session_all_memory_stat *stat);
 
   /** Set a table field from the row. */
   void set_field(uint index, Field *f);
@@ -1371,10 +1372,9 @@ class PFS_key_pstring : public PFS_engine_key {
     if (reader.get_key_type() == HA_KEYTYPE_TEXT) {
       return (reader.read_text_utf8(find_flag, is_null, key_value,
                                     key_value_length, key_value_max_length));
-    } else {
-      return (reader.read_varchar_utf8(find_flag, is_null, key_value,
-                                       key_value_length, key_value_max_length));
     }
+    return (reader.read_varchar_utf8(find_flag, is_null, key_value,
+                                     key_value_length, key_value_max_length));
   }
 
   static bool stateless_match(bool record_null, const char *record_string,
@@ -1410,8 +1410,8 @@ class PFS_key_string : public PFS_key_pstring {
                            m_key_value, m_key_value_length, m_is_null,
                            m_find_flag);
   }
-  bool do_match_prefix(bool record_null, const char *record_value,
-                       size_t record_value_length);
+  bool do_match_prefix(bool record_null, const char *record_string,
+                       size_t record_string_length);
 
  private:
   char m_key_value[SIZE * FILENAME_CHARSET_MBMAXLEN];
@@ -1434,7 +1434,7 @@ class PFS_key_event_name : public PFS_key_string<PFS_MAX_INFO_NAME_LENGTH> {
 
   ~PFS_key_event_name() override = default;
 
-  bool match(const PFS_instr_class *klass);
+  bool match(const PFS_instr_class *pfs);
   bool match(const PFS_mutex *pfs);
   bool match(const PFS_rwlock *pfs);
   bool match(const PFS_cond *pfs);
@@ -1465,7 +1465,7 @@ class PFS_key_host : public PFS_key_string<HOSTNAME_LENGTH> {
   bool match(const PFS_host *pfs);
   bool match(const PFS_account *pfs);
   bool match(const PFS_setup_actor *pfs);
-  bool match(const char *host, size_t host_length);
+  bool match(const char *host, size_t hostname_length);
 };
 
 class PFS_key_role : public PFS_key_string<ROLENAME_LENGTH> {
@@ -1598,7 +1598,7 @@ class PFS_key_object_schema : public PFS_key_string<NAME_CHAR_LEN> {
 
   ~PFS_key_object_schema() override = default;
 
-  bool match(const PFS_table_share *pfs);
+  bool match(const PFS_table_share *share);
   bool match(const PFS_program *pfs);
   bool match(const PFS_prepared_stmt *pfs);
   bool match(const PFS_object_row *pfs);
@@ -1613,14 +1613,14 @@ class PFS_key_object_name : public PFS_key_string<NAME_CHAR_LEN> {
 
   ~PFS_key_object_name() override = default;
 
-  bool match(const PFS_table_share *pfs);
+  bool match(const PFS_table_share *share);
   bool match(const PFS_program *pfs);
   bool match(const PFS_prepared_stmt *pfs);
   bool match(const PFS_object_row *pfs);
   bool match(const PFS_column_row *pfs);
   bool match(const PFS_index_row *pfs);
   bool match(const PFS_setup_object *pfs);
-  bool match(const char *schema_name, size_t schema_name_length);
+  bool match(const char *object_name, size_t object_name_length);
 };
 
 class PFS_key_column_name : public PFS_key_string<NAME_CHAR_LEN> {
@@ -1647,7 +1647,7 @@ class PFS_key_object_type : public PFS_engine_key {
   bool match(const PFS_program *pfs);
 
  private:
-  bool do_match(bool record_null, enum_object_type object_type);
+  bool do_match(bool record_null, enum_object_type record_value);
   enum_object_type m_object_type;
 };
 
@@ -1666,7 +1666,7 @@ class PFS_key_object_type_enum : public PFS_engine_key {
   bool match(const PFS_program *pfs);
 
  private:
-  bool do_match(bool record_null, enum_object_type object_type);
+  bool do_match(bool record_null, enum_object_type record_value);
   enum_object_type m_object_type;
 };
 

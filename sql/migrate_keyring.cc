@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -43,7 +43,7 @@ Destination_keyring_component::Destination_keyring_component(
     my_service<SERVICE_TYPE(registry_registration)> registrator(
         "registry_registration", srv_registry);
     const char *urn[] = {component_path_.c_str()};
-    bool load_status = dynamic_loader_srv->load(urn, 1);
+    const bool load_status = dynamic_loader_srv->load(urn, 1);
     if (load_status == true) return;
     component_loaded_ = true;
   }
@@ -154,9 +154,9 @@ bool Migrate_keyring::init(int argc, char **argv, char *source_plugin,
   DBUG_TRACE;
 
   std::size_t found = std::string::npos;
-  string equal("=");
-  string so(".so");
-  string dll(".dll");
+  const string equal("=");
+  const string so(".so");
+  const string dll(".dll");
   const string compression_method("zlib,zstd,uncompressed");
 
   if (!source_plugin) {
@@ -217,10 +217,7 @@ bool Migrate_keyring::init(int argc, char **argv, char *source_plugin,
     ssl_start();
     /* initiate connection */
     mysql = mysql_init(nullptr);
-    server_extn.m_user_data = nullptr;
-    server_extn.m_before_header = nullptr;
-    server_extn.m_after_header = nullptr;
-    server_extn.compress_ctx.algorithm = MYSQL_UNCOMPRESSED;
+    net_server_ext_init(&server_extn);
 
     mysql_extension_set_server_extn(mysql, &server_extn);
     /* set default compression method */
@@ -277,7 +274,7 @@ bool Migrate_keyring::init(int argc, char **argv, char *source_plugin,
     2. Load source plugin.
     3. Load destination plugin.
     4. Fetch all keys from source plugin and upon
-       sucess store in destination plugin.
+       success store in destination plugin.
     5. Enable access to keyring service APIs.
     6. Unload source plugin.
     7. Unload destination plugin.
@@ -321,7 +318,7 @@ bool Migrate_keyring::execute() {
   /* skip program name */
   m_argc--;
   /* We use a tmp ptr instead of m_argv since if the latter gets changed, we
-   * lose access to the alloced mem and hence there would be leak */
+   * lose access to the allocated mem and hence there would be leak */
   tmp_m_argv = m_argv + 1;
   /* check for invalid options */
   if (m_argc > 1) {
@@ -346,8 +343,6 @@ bool Migrate_keyring::execute() {
   return false;
 
 error:
-  /* clear the SSL error stack first as the connection could be encrypted */
-  ERR_clear_error();
   /*
    Enable keyring_operations in case of error
   */
@@ -491,7 +486,7 @@ bool Migrate_keyring::fetch_and_store_keys() {
          keep track of keys stored in successfully so that they can be
          removed in case of error.
         */
-        Key_info ki(key_id, user_id);
+        const Key_info ki(key_id, user_id);
         m_source_keys.push_back(ki);
       }
     }
@@ -547,6 +542,10 @@ bool Migrate_keyring::disable_keyring_operations() {
 bool Migrate_keyring::enable_keyring_operations() {
   DBUG_TRACE;
   const char query[] = "SET GLOBAL KEYRING_OPERATIONS=1";
+
+  /* clear the SSL error stack first as the connection could be encrypted */
+  ERR_clear_error();
+
   if (mysql && mysql_real_query(mysql, query, strlen(query))) {
     LogErr(ERROR_LEVEL, ER_KEYRING_MIGRATE_FAILED,
            "Failed to enable keyring_operations variable.");

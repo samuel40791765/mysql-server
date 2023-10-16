@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
    as published by the Free Software Foundation.
@@ -329,7 +329,7 @@ inline constexpr int cstrbuf<Extent, Owning>::replace_end_if_truncated(
    * N < Extent is intended since char[N] do not need to be null terminated.
    * This strict check will have the side effect that one can not pass a
    * truncation mark as string literal that would fill whole buffer. If one want
-   * to do that one will need to declare a char array and initalize that without
+   * to do that one will need to declare a char array and initialize that without
    * null termination.
    */
   static_assert(Extent == ndb::dynamic_extent || N < Extent);

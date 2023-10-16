@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -29,7 +29,7 @@
 // which do nothing except log that they ran. start() persists until stop()
 // makes it exit.
 //
-// The notable feature of this plugin is its (artificial) depenency on another
+// The notable feature of this plugin is its (artificial) dependency on another
 // test plugin, "lifecycle".  This is useful in testing correctness of plugin
 // initialisation and deinitialisation.
 //

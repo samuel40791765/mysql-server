@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -42,6 +42,8 @@
 #include "sql_string.h"          // String
 #include "template_utils.h"      // down_cast
 
+struct CHARSET_INFO;
+
 namespace histograms {
 
 // Overloading the Histogram_comparator for various data types.
@@ -73,8 +75,8 @@ bool Histogram_comparator::operator()(const my_decimal &lhs,
 }
 
 Value_map_base::Value_map_base(const CHARSET_INFO *charset,
-                               double sampling_rate, Value_map_type data_type)
-    : m_sampling_rate(sampling_rate),
+                               Value_map_type data_type)
+    : m_sampling_rate(1.0),
       m_charset(charset),
       m_num_null_values(0),
       m_data_type(data_type),

@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -58,14 +58,13 @@ class Query_block;
 class THD;
 struct AccessPath;
 struct JoinHypergraph;
-struct TABLE;
 
 /**
   The main entry point for the hypergraph join optimizer; takes in a query
   block and returns an access path to execute it (or nullptr, for error).
   It works as follows:
 
-    1. Convert the query block from MySQL's TABLE_LIST structures into
+    1. Convert the query block from MySQL's Table_ref structures into
        a hypergraph (see make_join_hypergraph.h).
     2. Find all legal subplans in the hypergraph, calculate costs for
        them and create access paths -- if there are multiple ways to make a

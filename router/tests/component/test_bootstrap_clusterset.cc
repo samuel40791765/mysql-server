@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -27,8 +27,6 @@
 #include <gmock/gmock.h>
 
 #ifdef RAPIDJSON_NO_SIZETYPEDEFINE
-// if we build within the server, it will set RAPIDJSON_NO_SIZETYPEDEFINE
-// globally and require to include my_rapidjson_size_t.h
 #include "my_rapidjson_size_t.h"
 #endif
 #include <rapidjson/document.h>
@@ -54,9 +52,20 @@ using namespace std::string_literals;
 using mysqlrouter::ClusterType;
 
 // for the test with no param
-class RouterClusterSetBootstrapTest : public RouterComponentBootstrapTest,
-                                      public RouterComponentClusterSetTest {
+class RouterClusterSetBootstrapTest : public RouterComponentClusterSetTest {
  protected:
+  ProcessWrapper &launch_router_for_bootstrap(
+      std::vector<std::string> params, int expected_exit_code = EXIT_SUCCESS,
+      const bool disable_rest = true,
+      ProcessWrapper::OutputResponder output_responder =
+          RouterComponentBootstrapTest::kBootstrapOutputResponder) {
+    if (disable_rest) params.push_back("--disable-rest");
+
+    return ProcessManager::launch_router(
+        params, expected_exit_code, /*catch_stderr=*/true, /*with_sudo=*/false,
+        /*wait_for_notify_ready=*/std::chrono::seconds(-1), output_responder);
+  }
+
   using NodeAddress = std::pair<std::string, uint16_t>;
   TempDirectory bootstrap_directory;
   uint64_t view_id{1};
@@ -65,7 +74,7 @@ class RouterClusterSetBootstrapTest : public RouterComponentBootstrapTest,
 struct TargetClusterTestParams {
   // which cluster from the CS should be used as a param for --bootstrap
   unsigned bootstrap_cluster_id;
-  // which node from the selected cluster hould be used as a param for
+  // which node from the selected cluster should be used as a param for
   // --bootstrap
   unsigned bootstrap_node_id;
   // what should be the value for --conf-target-cluster (if empty do not use
@@ -127,7 +136,7 @@ TEST_P(ClusterSetBootstrapTargetClusterTest, ClusterSetBootstrapTargetCluster) {
 
   auto &router = launch_router_for_bootstrap(bootstrap_params, EXIT_SUCCESS);
 
-  check_exit_code(router, EXIT_SUCCESS, 5s);
+  check_exit_code(router, EXIT_SUCCESS);
 
   const std::string conf_file_path =
       bootstrap_directory.name() + "/mysqlrouter.conf";
@@ -138,7 +147,7 @@ TEST_P(ClusterSetBootstrapTargetClusterTest, ClusterSetBootstrapTargetCluster) {
   // check the state file that was produced
   // [@FR12]
   check_state_file(state_file_path, ClusterType::GR_CS, clusterset_data_.uuid,
-                   clusterset_data_.get_all_nodes_classic_ports(), view_id);
+                   clusterset_data_.get_md_servers_classic_ports(), view_id);
 
   const std::string config_file_str = get_file_output(conf_file_path);
 
@@ -237,7 +246,7 @@ INSTANTIATE_TEST_SUITE_P(
         // target_cluster=UUID-OF-PRIMARY-CLUSTER
         // NOTE: since we are using "current" on the Primary cluster we expect
         // the warning on the console
-        // NOTE: also checks that the "current" option is case insesitive
+        // NOTE: also checks that the "current" option is case insensitive
         // [@FR3.1.1] [@FR3.3] [@TS_R2_1/1]
         TargetClusterTestParams{
             /*bootstrap_cluster_id*/ 0,
@@ -295,7 +304,7 @@ INSTANTIATE_TEST_SUITE_P(
         // target_cluster=UUID-OF-REPLICA-CLUSTER
         // NOTE: since this is not the PRIMARY cluster we do not expect the
         // warning now NOTE: also checks that the "current" option is case
-        // insesitive
+        // insensitive
         // [@FR3.2] [@TS_R2_1/3]
         TargetClusterTestParams{
             /*bootstrap_cluster_id*/ 1,
@@ -337,7 +346,7 @@ INSTANTIATE_TEST_SUITE_P(
 
         // we bootstrap against various ClusterSet nodes using
         // "--conf-target-cluster=primary" so we expect target_cluster=primary
-        // NOTE: also checks that the "current" option is case insesitive
+        // NOTE: also checks that the "current" option is case insensitive
         // [@FR3.2] [@FR3.3] [@TS_R3_1/1]
         TargetClusterTestParams{/*bootstrap_cluster_id*/ 0,
                                 /*bootstrap_node_id*/ 0,
@@ -471,7 +480,7 @@ TEST_P(ClusterSetConfUseGrNotificationParamTest,
   // launch the router in bootstrap mode
   auto &router = launch_router_for_bootstrap(bootstrap_params);
 
-  check_exit_code(router, EXIT_SUCCESS, 5s);
+  check_exit_code(router, EXIT_SUCCESS);
 
   const std::string state_file_path =
       bootstrap_directory.name() + "/data/state.json";
@@ -479,7 +488,7 @@ TEST_P(ClusterSetConfUseGrNotificationParamTest,
   // check the state file that was produced
   // [@FR12]
   check_state_file(state_file_path, ClusterType::GR_CS, clusterset_data_.uuid,
-                   clusterset_data_.get_all_nodes_classic_ports(), view_id);
+                   clusterset_data_.get_md_servers_classic_ports(), view_id);
 
   // check if the expected config options were added to the configuration file
   const auto conf_file_content =
@@ -526,7 +535,7 @@ INSTANTIATE_TEST_SUITE_P(
 struct BootstrapParametersErrorTestParams {
   // which cluster from the CS should be used as a param for --bootstrap
   unsigned bootstrap_cluster_id;
-  // which node from the selected cluster hould be used as a param for
+  // which node from the selected cluster should be used as a param for
   // --bootstrap
   unsigned bootstrap_node_id;
 
@@ -718,7 +727,7 @@ TEST_P(ClusterSetBootstrapClusterNotFoundErrorTest,
   const unsigned bootstrap_node_id = GetParam().bootstrap_node_id;
 
   create_clusterset(view_id, 0, /*primary_cluster_id*/ 0,
-                    "bootstrap_clusterset.js", "", "",
+                    "bootstrap_clusterset.js", "", "", "",
                     /*simulate_cluster_not_found*/ true);
 
   std::vector<std::string> bootsrtap_params{
@@ -965,7 +974,7 @@ TEST_F(RouterClusterSetBootstrapTest, PrimaryClusterQueriedFirst) {
 
   auto &router = launch_router_for_bootstrap(bootstrap_params, EXIT_SUCCESS);
 
-  check_exit_code(router, EXIT_SUCCESS, 5s);
+  check_exit_code(router, EXIT_SUCCESS);
 
   // check that the only nodes that we connected to during the bootstrap are the
   // one used as a -B parameter (first node of the second cluster) and the
@@ -984,6 +993,66 @@ TEST_F(RouterClusterSetBootstrapTest, PrimaryClusterQueriedFirst) {
                 get_session_init_count(cluster.nodes[node_id].http_port));
     }
   }
+}
+
+/**
+ * @test
+ *       verify that bootstrapping using Read Replica address fails and proper
+ * error message is printed
+ */
+TEST_F(RouterClusterSetBootstrapTest, FailToBootstrapFromReadReplica) {
+  const std::vector<size_t> read_replicas_per_cluster{1, 0, 0};
+  create_clusterset(view_id, /*target_cluster_id*/ 0,
+                    /*primary_cluster_id*/ 0, "bootstrap_clusterset.js", "",
+                    ".*", false, false, read_replicas_per_cluster);
+
+  const auto &read_replica_node =
+      clusterset_data_.clusters[0]
+          .nodes[clusterset_data_.clusters[0].nodes.size() - 1];
+  std::vector<std::string> bootstrap_params = {
+      "--bootstrap=127.0.0.1:" + std::to_string(read_replica_node.classic_port),
+      "-d", bootstrap_directory.name()};
+
+  auto &router = launch_router_for_bootstrap(bootstrap_params, EXIT_FAILURE);
+
+  EXPECT_NO_THROW(router.wait_for_exit());
+  EXPECT_THAT(
+      router.get_full_output(),
+      ::testing::HasSubstr("Error: Bootstrapping using the Read Replica "
+                           "Instance address is not supported"));
+
+  check_exit_code(router, EXIT_FAILURE);
+}
+
+/**
+ * @test
+ *       verify that Rad Replicas are not added to the state file as metadata
+ * servers during bootstrap
+ */
+TEST_F(RouterClusterSetBootstrapTest, BootstrapWithReadReaplicas) {
+  // let's configure the ClusterSet so that each of 3 clusters has 1 Read
+  // Replica
+  const std::vector<size_t> read_replicas_per_cluster{1, 1, 1};
+  create_clusterset(view_id, /*target_cluster_id*/ 0,
+                    /*primary_cluster_id*/ 0, "bootstrap_clusterset.js", "",
+                    ".*", false, false, read_replicas_per_cluster);
+
+  std::vector<std::string> bootstrap_params = {
+      "--bootstrap=127.0.0.1:" +
+          std::to_string(clusterset_data_.clusters[0].nodes[0].classic_port),
+      "-d", bootstrap_directory.name()};
+
+  auto &router = launch_router_for_bootstrap(bootstrap_params, EXIT_SUCCESS);
+
+  check_exit_code(router, EXIT_SUCCESS);
+
+  const std::string state_file_path =
+      bootstrap_directory.name() + "/data/state.json";
+
+  // the Read Replicas should not get written to the state file as metadata
+  // servers
+  check_state_file(state_file_path, ClusterType::GR_CS, clusterset_data_.uuid,
+                   clusterset_data_.get_md_servers_classic_ports(), view_id);
 }
 
 int main(int argc, char *argv[]) {

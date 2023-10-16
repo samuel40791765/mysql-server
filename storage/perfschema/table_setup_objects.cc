@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -41,6 +41,8 @@
 #include "storage/perfschema/pfs_instr.h"
 #include "storage/perfschema/pfs_setup_object.h"
 #include "storage/perfschema/table_helper.h"
+
+struct CHARSET_INFO;
 
 THR_LOCK table_setup_objects::m_table_lock;
 
@@ -137,10 +139,10 @@ int table_setup_objects::write_row(PFS_engine_table *, TABLE *table,
           object_type = (enum_object_type)get_field_enum(f);
           break;
         case 1: /* OBJECT_SCHEMA */
-          object_schema = get_field_varchar_utf8(f, &object_schema_data);
+          object_schema = get_field_varchar_utf8mb4(f, &object_schema_data);
           break;
         case 2: /* OBJECT_NAME */
-          object_name = get_field_varchar_utf8(f, &object_name_data);
+          object_name = get_field_varchar_utf8mb4(f, &object_name_data);
           break;
         case 3: /* ENABLED */
           enabled_value = (enum_yes_no)get_field_enum(f);
@@ -170,8 +172,8 @@ int table_setup_objects::write_row(PFS_engine_table *, TABLE *table,
     return HA_ERR_NO_REFERENCED_ROW;
   }
 
-  enabled = (enabled_value == ENUM_YES) ? true : false;
-  timed = (timed_value == ENUM_YES) ? true : false;
+  enabled = (enabled_value == ENUM_YES);
+  timed = (timed_value == ENUM_YES);
 
   PFS_schema_name schema_value;
   PFS_object_name object_value;
@@ -195,7 +197,7 @@ int table_setup_objects::write_row(PFS_engine_table *, TABLE *table,
   return result;
 }
 
-int table_setup_objects::delete_all_rows(void) {
+int table_setup_objects::delete_all_rows() {
   int result = reset_setup_object();
   if (result == 0) {
     result = update_derived_flags();
@@ -203,19 +205,19 @@ int table_setup_objects::delete_all_rows(void) {
   return result;
 }
 
-ha_rows table_setup_objects::get_row_count(void) {
+ha_rows table_setup_objects::get_row_count() {
   return global_setup_object_container.get_row_count();
 }
 
 table_setup_objects::table_setup_objects()
     : PFS_engine_table(&m_share, &m_pos), m_pos(0), m_next_pos(0) {}
 
-void table_setup_objects::reset_position(void) {
+void table_setup_objects::reset_position() {
   m_pos.m_index = 0;
   m_next_pos.m_index = 0;
 }
 
-int table_setup_objects::rnd_next(void) {
+int table_setup_objects::rnd_next() {
   PFS_setup_object *pfs;
 
   m_pos.set_at(&m_next_pos);
@@ -252,7 +254,7 @@ int table_setup_objects::index_init(uint idx [[maybe_unused]], bool) {
   return 0;
 }
 
-int table_setup_objects::index_next(void) {
+int table_setup_objects::index_next() {
   PFS_setup_object *pfs;
   bool has_more = true;
 
@@ -305,16 +307,16 @@ int table_setup_objects::read_row_values(TABLE *table, unsigned char *buf,
           break;
         case 1: /* OBJECT_SCHEMA */
           if (m_row.m_schema_name.length())
-            set_field_varchar_utf8(f, m_row.m_schema_name.ptr(),
-                                   m_row.m_schema_name.length());
+            set_field_varchar_utf8mb4(f, m_row.m_schema_name.ptr(),
+                                      m_row.m_schema_name.length());
           else {
             f->set_null();
           }
           break;
         case 2: /* OBJECT_NAME */
           if (m_row.m_object_name.length())
-            set_field_varchar_utf8(f, m_row.m_object_name.ptr(),
-                                   m_row.m_object_name.length());
+            set_field_varchar_utf8mb4(f, m_row.m_object_name.ptr(),
+                                      m_row.m_object_name.length());
           else {
             f->set_null();
           }
@@ -349,7 +351,7 @@ int table_setup_objects::update_row_values(TABLE *table, const unsigned char *,
           if ((value != ENUM_YES) && (value != ENUM_NO)) {
             return HA_ERR_NO_REFERENCED_ROW;
           }
-          *m_row.m_enabled_ptr = (value == ENUM_YES) ? true : false;
+          *m_row.m_enabled_ptr = (value == ENUM_YES);
           break;
         case 4: /* TIMED */
           value = (enum_yes_no)get_field_enum(f);
@@ -357,7 +359,7 @@ int table_setup_objects::update_row_values(TABLE *table, const unsigned char *,
           if ((value != ENUM_YES) && (value != ENUM_NO)) {
             return HA_ERR_NO_REFERENCED_ROW;
           }
-          *m_row.m_timed_ptr = (value == ENUM_YES) ? true : false;
+          *m_row.m_timed_ptr = (value == ENUM_YES);
           break;
         default:
           return HA_ERR_WRONG_COMMAND;

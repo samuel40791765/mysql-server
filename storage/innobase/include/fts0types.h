@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2022, Oracle and/or its affiliates.
+Copyright (c) 2007, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -40,6 +40,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "univ.i"
 #include "ut0byte.h"
 #include "ut0rbt.h"
+
+struct CHARSET_INFO;
 
 /** Types used within FTS. */
 struct fts_que_t;
@@ -147,7 +149,7 @@ struct fts_cache_t {
                   be our new upgrade-capable rw-lock */
 
   rw_lock_t init_lock; /*!< lock used for the cache
-                       intialization, it has different
+                       initialization, it has different
                        SYNC level as above cache lock */
 #endif                 /* !UNIV_HOTBACKUP */
 

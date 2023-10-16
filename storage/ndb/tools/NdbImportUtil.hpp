@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,6 +28,7 @@
 #include "util/require.h"
 #include <ndb_global.h>
 #include "portlib/ndb_compiler.h"
+#include "portlib/NdbTick.h"
 #include <stdint.h>
 #include <ndb_limits.h>
 #include <mgmapi.h>
@@ -106,7 +107,7 @@ public:
   // name
 
   /*
-   * Construct hierachical names where parts are separated by hyphens.
+   * Construct hierarchical names where parts are separated by hyphens.
    * Used to name teams, workers, stats.
    */
 
@@ -919,7 +920,6 @@ public:
 
   // convert milliseconds to hours,minutes,seconds string
   static void fmt_msec_to_hhmmss(char* str, uint64 msec);
-  int int_val_ok(NdbDictionary::Column::Type type, Uint64 val, Error& error);
 };
 
 NdbOut& operator<<(NdbOut& out, const NdbImportUtil& util);

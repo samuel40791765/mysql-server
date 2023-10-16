@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -38,7 +38,6 @@
 
 #include "field_types.h"
 #include "lex_string.h"
-#include "m_ctype.h"
 #include "m_string.h"
 #include "my_alloc.h"
 #include "my_bitmap.h"
@@ -47,9 +46,11 @@
 #include "my_pointer_arithmetic.h"
 #include "my_sys.h"
 #include "mysql/plugin.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
+#include "nulls.h"
 #include "scope_guard.h"
 #include "sql/create_field.h"
 #include "sql/current_thd.h"
@@ -228,14 +229,20 @@ Field *create_tmp_field_from_field(THD *thd, const Field *org_field,
 */
 
 static Field *create_tmp_field_from_item(Item *item, TABLE *table) {
-  bool maybe_null = item->is_nullable();
+  const bool maybe_null = item->is_nullable();
   Field *new_field = nullptr;
 
   switch (item->result_type()) {
     case REAL_RESULT:
-      new_field = new (*THR_MALLOC)
-          Field_double(item->max_length, maybe_null, item->item_name.ptr(),
-                       item->decimals, false, true);
+      if (item->data_type() == MYSQL_TYPE_FLOAT) {
+        new_field = new (*THR_MALLOC)
+            Field_float(item->max_length, maybe_null, item->item_name.ptr(),
+                        item->decimals, false);
+      } else {
+        new_field = new (*THR_MALLOC)
+            Field_double(item->max_length, maybe_null, item->item_name.ptr(),
+                         item->decimals, false, true);
+      }
       break;
     case INT_RESULT:
       /*
@@ -273,7 +280,7 @@ static Field *create_tmp_field_from_item(Item *item, TABLE *table) {
       break;
     case ROW_RESULT:
     default:
-      // This case should never be choosen
+      // This case should never be chosen
       assert(0);
       new_field = nullptr;
       break;
@@ -332,7 +339,7 @@ static Field *create_tmp_field_for_schema(const Item *item, TABLE *table) {
   @param default_field	If field has a default value field, store it here
   @param group		1 if we are going to do a relative group by on result
   @param modify_item	1 if item->result_field should point to new item.
-                       This is relevent for how fill_record() is going to
+                       This is relevant for how fill_record() is going to
                        work:
                        If modify_item is 1 then fill_record() will update
                        the record in the original table.
@@ -357,7 +364,7 @@ Field *create_tmp_field(THD *thd, TABLE *table, Item *item, Item::Type type,
                         bool make_copy_field) {
   DBUG_TRACE;
   Field *result = nullptr;
-  Item::Type orig_type = type;
+  const Item::Type orig_type = type;
   Item *orig_item = nullptr;
 
   // If we are optimizing twice (due to being in the hypergraph optimizer
@@ -375,7 +382,7 @@ Field *create_tmp_field(THD *thd, TABLE *table, Item *item, Item::Type type,
     type = Item::FIELD_ITEM;
   }
 
-  bool is_wf =
+  const bool is_wf =
       type == Item::SUM_FUNC_ITEM && item->real_item()->m_is_window_function;
 
   switch (type) {
@@ -508,7 +515,7 @@ Field *create_tmp_field(THD *thd, TABLE *table, Item *item, Item::Type type,
 */
 
 static void setup_tmp_table_column_bitmaps(TABLE *table, uchar *bitmaps) {
-  uint field_count = table->s->fields;
+  const uint field_count = table->s->fields;
   bitmap_init(&table->def_read_set, (my_bitmap_map *)bitmaps, field_count);
   bitmap_init(&table->tmp_set,
               (my_bitmap_map *)(bitmaps + bitmap_buffer_size(field_count)),
@@ -516,7 +523,14 @@ static void setup_tmp_table_column_bitmaps(TABLE *table, uchar *bitmaps) {
   bitmap_init(&table->cond_set,
               (my_bitmap_map *)(bitmaps + bitmap_buffer_size(field_count) * 2),
               field_count);
-  /* write_set and all_set are copies of read_set */
+
+  // Establish the other sets as copies of read_set. Temporary tables are
+  // generally created with all relevant columns, so all fields can be marked in
+  // read_set. (An exception to this is temporary tables for materialized
+  // derived tables, which are instantiated with all the columns of the derived
+  // table, even if they are not needed in the outer query block. Currently, all
+  // columns get marked as read here, even those that are not required.)
+  table->read_set_internal = table->def_read_set;
   table->def_write_set = table->def_read_set;
   table->s->all_set = table->def_read_set;
   bitmap_set_all(&table->s->all_set);
@@ -663,7 +677,7 @@ static const char *create_tmp_table_field_tmp_name(THD *thd, Item *item) {
   @param default_field    Default value array pointer
   @param from_field       Original field array pointer
   @param blob_field       Array pointer to record fields index of blob type
-  @param field            The registed hidden field
+  @param field            The registered hidden field
  */
 
 static void register_hidden_field(TABLE *table, Field **default_field,
@@ -672,7 +686,7 @@ static void register_hidden_field(TABLE *table, Field **default_field,
   uint i;
   Field **tmp_field = table->field;
 
-  /* Increase all of registed fields index */
+  /* Increase all of registered fields index */
   for (i = 0; i < table->s->fields; i++)
     tmp_field[i]->set_field_index(tmp_field[i]->field_index() + 1);
 
@@ -889,8 +903,10 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
     (1) unique key is too long, or
     (2) number of key parts in distinct key is too big, or
     (3) the caller has requested it.
+    (4) we have INTERSECT or EXCEPT, i.e. not UNION.
   */
-  bool unique_constraint_via_hash_field = false;
+  bool unique_constraint_via_hash_field =
+      param->m_operation != Temp_table_param::TTP_UNION_OR_TABLE;
 
   /*
     When loose index scan is employed as access method, it already
@@ -925,21 +941,26 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
   // (They should have been a struct, but we cannot, since the reg_field
   // array ends up in the TABLE object, which expects a flat array.)
   // blob_field is a separate array, which indexes into these.
-  Field **reg_field = own_root.ArrayAlloc<Field *>(field_count + 2, nullptr);
+  const uint extra_fields = 1 + (param->needs_set_counter() ? 1 : 0);
+  Field **reg_field =
+      own_root.ArrayAlloc<Field *>(field_count + extra_fields + 1, nullptr);
   Field **default_field =
-      own_root.ArrayAlloc<Field *>(field_count + 1, nullptr);
-  Field **from_field = own_root.ArrayAlloc<Field *>(field_count + 1, nullptr);
-  Item **from_item = own_root.ArrayAlloc<Item *>(field_count + 1, nullptr);
+      own_root.ArrayAlloc<Field *>(field_count + extra_fields, nullptr);
+  Field **from_field =
+      own_root.ArrayAlloc<Field *>(field_count + extra_fields, nullptr);
+  Item **from_item =
+      own_root.ArrayAlloc<Item *>(field_count + extra_fields, nullptr);
   uint *blob_field = own_root.ArrayAlloc<uint>(field_count + 2);
   if (reg_field == nullptr || default_field == nullptr ||
       from_field == nullptr || from_item == nullptr || blob_field == nullptr)
     return nullptr;
 
-  // Leave the first place to be prepared for hash_field
-  reg_field++;
-  default_field++;
-  from_field++;
-  from_item++;
+  // Leave the first place(s) to be prepared for hash_field (and counter, if
+  // needed
+  reg_field += extra_fields;
+  default_field += extra_fields;
+  from_field += extra_fields;
+  from_item += extra_fields;
   table->init_tmp_table(thd, share, &own_root, param->table_charset,
                         table_alias, reg_field, blob_field, false);
 
@@ -1036,8 +1057,7 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
 
       if (hidden_field_count <= 0) {
         if (thd->lex->current_query_block()->is_implicitly_grouped() &&
-            (item->used_tables() & ~(RAND_TABLE_BIT | INNER_TABLE_BIT)) == 0 &&
-            !item->has_rollup_expr()) {
+            (item->used_tables() & ~(RAND_TABLE_BIT | INNER_TABLE_BIT)) == 0) {
           /*
             This will be evaluated exactly once, regardless of the number
             of rows in the temporary table, as there is only one result row.
@@ -1291,7 +1311,9 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
       share->key_info = param->keyinfo;
       share->key_parts = param->keyinfo->user_defined_key_parts;
     }
-  } else if (distinct && share->fields != param->hidden_field_count) {
+  } else if ((distinct ||
+              param->m_operation != Temp_table_param::TTP_UNION_OR_TABLE) &&
+             share->fields != param->hidden_field_count) {
     /*
       Create an unique key or an unique constraint over all columns
       that should be in the result.  In the temporary table, there are
@@ -1300,7 +1322,10 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
     */
     DBUG_PRINT("info", ("hidden_field_count: %d", param->hidden_field_count));
     share->keys = 1;
-    share->is_distinct = true;
+    share->is_distinct =
+        distinct || param->m_operation == Temp_table_param::TTP_INTERSECT ||
+        param->m_operation == Temp_table_param::TTP_EXCEPT;
+
     if (!unique_constraint_via_hash_field) {
       param->keyinfo->table = table;
       param->keyinfo->is_visible = true;
@@ -1349,6 +1374,35 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
   }
 
   if (unique_constraint_via_hash_field) {
+    if (param->needs_set_counter()) {
+      // EXCEPT and INTERSECT implementation
+      Field_longlong *set_counter = new (&share->mem_root)
+          Field_longlong(sizeof(ulonglong), false, "<set counter>", true);
+      if (set_counter == nullptr) {
+        /* purecov: begin inspected */
+        assert(thd->is_fatal_error());
+        return nullptr;  // Got OOM
+                         /* purecov: end */
+      }
+      // Mark set_counter as NOT NULL
+      set_counter->set_flag(NOT_NULL_FLAG);
+      // Register set counter as a hidden field.
+      register_hidden_field(table, &default_field[0], &from_field[0],
+                            share->blob_field, set_counter);
+      // Repoint arrays
+      table->field--;
+      default_field--;
+      from_field--;
+      from_item--;
+      share->reclength += set_counter->pack_length();
+      share->fields = ++fieldnr;
+      param->hidden_field_count++;
+      share->field--;
+      table->set_set_counter(
+          set_counter, param->m_operation == Temp_table_param::TTP_EXCEPT);
+      table->set_distinct(param->m_last_operation_is_distinct);
+    }
+
     Field_longlong *field = new (&share->mem_root)
         Field_longlong(sizeof(ulonglong), false, "<hash_field>", true);
     if (!field) {
@@ -1394,7 +1448,7 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
     else
       null_count++;
   }
-  uint hidden_null_pack_length =
+  const uint hidden_null_pack_length =
       (hidden_null_count + 7 + hidden_uneven_bit_length) / 8;
   share->null_bytes = (hidden_null_pack_length +
                        (null_count + total_uneven_bit_length + 7) / 8);
@@ -1440,8 +1494,8 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
   param->func_count = param->items_to_copy->size();
   assert(param->func_count <= copy_func_count);  // Used <= allocated
   sort_copy_func(thd->lex->current_query_block(), param->items_to_copy);
-  uchar *bitmaps = static_cast<uchar *>(
-      share->mem_root.Alloc(bitmap_buffer_size(field_count + 1) * 3));
+  uchar *bitmaps = static_cast<uchar *>(share->mem_root.Alloc(
+      bitmap_buffer_size(field_count + extra_fields) * 3));
   if (bitmaps == nullptr) return nullptr;
   setup_tmp_table_column_bitmaps(table, bitmaps);
 
@@ -1461,7 +1515,7 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
       /*
         Get the value from default_values.
       */
-      ptrdiff_t diff = orig_field->table->default_values_offset();
+      const ptrdiff_t diff = orig_field->table->default_values_offset();
       Field *f_in_record0 = orig_field->table->field[orig_field->field_index()];
       if (f_in_record0->is_real_null(diff))
         field->set_null();
@@ -1531,7 +1585,7 @@ TABLE *create_tmp_table(THD *thd, Temp_table_param *param,
         */
         param->keyinfo->flags |= HA_NULL_ARE_EQUAL;  // def. that NULL == NULL
         cur_group->buff++;                           // Pointer to field data
-        group_buff++;                                // Skipp null flag
+        group_buff++;                                // Skip null flag
       }
       group_buff += cur_group->field_in_tmp_table->pack_length();
     }
@@ -1702,7 +1756,7 @@ TABLE *create_duplicate_weedout_tmp_table(THD *thd, uint uniq_tuple_length_arg,
   }
   {
     /*
-      For the sake of uniformity, always use Field_varstring (altough we could
+      For the sake of uniformity, always use Field_varstring (although we could
       use Field_string for shorter keys)
     */
     field = new (thd->mem_root) Field_varstring(
@@ -2129,7 +2183,7 @@ static bool alloc_record_buffers(THD *thd, TABLE *table) {
     allows to exclude "myisam.h" from include files.
   */
   const int TMP_TABLE_UNIQUE_HASH_LENGTH = 4;
-  uint alloc_length =
+  const uint alloc_length =
       ALIGN_SIZE(share->reclength + TMP_TABLE_UNIQUE_HASH_LENGTH + 1);
   share->rec_buff_length = alloc_length;
   /*
@@ -2259,7 +2313,12 @@ static void trace_tmp_table(Opt_trace_context *trace, const TABLE *table) {
   TABLE_SHARE *s = table->s;
   Opt_trace_object trace_tmp(trace, "tmp_table_info");
   if (strlen(table->alias) != 0)
-    trace_tmp.add_utf8_table(table->pos_in_table_list);
+    if (table->pos_in_table_list != nullptr &&
+        strlen(table->pos_in_table_list->table_name) > 0) {
+      trace_tmp.add_utf8_table(table->pos_in_table_list);
+    } else {
+      trace_tmp.add_alnum("table", table->alias);
+    }
   else
     trace_tmp.add_alnum("table", "intermediate_tmp_table");
   QEP_TAB *tab = table->reginfo.qep_tab;
@@ -2351,8 +2410,8 @@ bool instantiate_tmp_table(THD *thd, TABLE *table) {
 
   Opt_trace_context *const trace = &thd->opt_trace;
   if (unlikely(trace->is_started())) {
-    Opt_trace_object wrapper(trace);
-    Opt_trace_object convert(trace, "creating_tmp_table");
+    const Opt_trace_object wrapper(trace);
+    const Opt_trace_object convert(trace, "creating_tmp_table");
     trace_tmp_table(trace, table);
   }
   return false;
@@ -2458,7 +2517,7 @@ void free_tmp_table(TABLE *table) {
                                 is inserted into the newly created table after
                                 copying all the records from the temp table.
                                 If false, the last record is not inserted
-                                and the paramters ignore_last_dup, is_duplicate
+                                and the parameters ignore_last_dup, is_duplicate
                                 are ignored.
   @param[in] ignore_last_dup    If true, ignore duplicate key error for last
                                 inserted key (see detailed description below).
@@ -2561,7 +2620,7 @@ bool create_ondisk_from_heap(THD *thd, TABLE *wtable, int error,
 
   share.db_plugin = ha_lock_engine(thd, innodb_hton);
 
-  TABLE_LIST *const wtable_list = wtable->pos_in_table_list;
+  Table_ref *const wtable_list = wtable->pos_in_table_list;
   Derived_refs_iterator ref_it(wtable_list);
 
   if (wtable_list) {
@@ -2653,7 +2712,7 @@ bool create_ondisk_from_heap(THD *thd, TABLE *wtable, int error,
 
         if (unlikely(thd->opt_trace.is_started())) {
           Opt_trace_context *trace = &thd->opt_trace;
-          Opt_trace_object wrapper(trace);
+          const Opt_trace_object wrapper(trace);
           Opt_trace_object convert(trace, "converting_tmp_table_to_ondisk");
           assert(error == HA_ERR_RECORD_FILE_FULL);
           convert.add_alnum("cause", "memory_table_size_exceeded");

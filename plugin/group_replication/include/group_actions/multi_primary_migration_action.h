@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -82,12 +82,6 @@ class Multi_primary_migration_action : public Group_action,
     @return true if a problem was found when stopping the action.
   */
   bool stop_action_execution(bool killed) override;
-
-  /**
-    Returns the name of the action for debug messages and such
-    @return the action name
-  */
-  const char *get_action_name() override;
 
   /**
     Gets the info about execution, be it success or failure

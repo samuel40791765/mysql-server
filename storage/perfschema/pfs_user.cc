@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -62,7 +62,7 @@ int init_user(const PFS_global_param *param) {
 }
 
 /** Cleanup all the user buffers. */
-void cleanup_user(void) { global_user_container.cleanup(); }
+void cleanup_user() { global_user_container.cleanup(); }
 
 static const uchar *user_hash_get_key(const uchar *entry, size_t *length) {
   const PFS_user *const *typed_entry;
@@ -129,7 +129,7 @@ int init_user_hash(const PFS_global_param *param) {
 }
 
 /** Cleanup the user hash. */
-void cleanup_user_hash(void) {
+void cleanup_user_hash() {
   if (user_hash_inited) {
     lf_hash_destroy(&user_hash);
     user_hash_inited = false;
@@ -184,7 +184,7 @@ search:
 
     pfs->init_refcount();
     pfs->reset_stats();
-    pfs->m_disconnected_count = 0;
+    pfs->reset_connections_stats();
 
     int res;
     pfs->m_lock.dirty_to_allocated(&dirty_state);
@@ -258,7 +258,32 @@ void PFS_user::aggregate_status() {
 
 void PFS_user::aggregate_stats() {
   /* No parent to aggregate to, clean the stats */
-  m_disconnected_count = 0;
+  reset_connections_stats();
+}
+
+void PFS_user::aggregate_stats_from(PFS_account *pfs) {
+  m_disconnected_count += pfs->m_disconnected_count;
+
+  if (m_max_controlled_memory < pfs->m_max_controlled_memory) {
+    m_max_controlled_memory = pfs->m_max_controlled_memory;
+  }
+
+  if (m_max_total_memory < pfs->m_max_total_memory) {
+    m_max_total_memory = pfs->m_max_total_memory;
+  }
+}
+
+void PFS_user::aggregate_disconnect(ulonglong controlled_memory,
+                                    ulonglong total_memory) {
+  m_disconnected_count++;
+
+  if (m_max_controlled_memory < controlled_memory) {
+    m_max_controlled_memory = controlled_memory;
+  }
+
+  if (m_max_total_memory < total_memory) {
+    m_max_total_memory = total_memory;
+  }
 }
 
 void PFS_user::release() { dec_refcount(); }
@@ -334,7 +359,7 @@ class Proc_purge_user : public PFS_buffer_processor<PFS_user> {
 };
 
 /** Purge non connected users, reset stats of connected users. */
-void purge_all_user(void) {
+void purge_all_user() {
   PFS_thread *thread = PFS_thread::get_current_thread();
   if (unlikely(thread == nullptr)) {
     return;

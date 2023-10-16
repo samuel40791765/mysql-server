@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,10 +28,12 @@
 /* In OpenSSL before 1.1.0, we need this first. */
 #include <winsock2.h>
 #endif
+#include <openssl/err.h>
 #include <openssl/ssl.h>
 #endif
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -123,7 +125,7 @@ struct Network_security_credentials {
   Note that only the server_key_file/server_cert_file and the client_key_file/
   client_cert_file are required and the rest of the pointers can be NULL.
   If the key is provided along with the certificate, either the key file or
-  the other can be ommited.
+  the other can be omitted.
 
   The caller can free the parameters after the SSL is started
   if this is necessary.
@@ -307,7 +309,7 @@ class Network_provider {
   virtual std::pair<bool, int> stop() = 0;
 
   /**
-   * @brief Get the communcation stack implmeneted by this provider
+   * @brief Get the communication stack implemented by this provider
    *
    * Return a valid value withint the range of RunningProtocol enum.
    *
@@ -337,7 +339,17 @@ class Network_provider {
   virtual bool configure_secure_connections(
       const Network_configuration_parameters &params) = 0;
 
-  virtual bool cleanup_secure_connections_context() = 0;
+  virtual void cleanup_secure_connections_context() = 0;
+
+  virtual std::function<void()> get_secure_connections_context_cleaner() {
+    std::function<void()> retval = []() {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+      ERR_remove_thread_state(0);
+#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
+    };
+
+    return retval;
+  }
 
   virtual bool finalize_secure_connections_context() = 0;
 

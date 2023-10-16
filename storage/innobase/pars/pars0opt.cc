@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -368,7 +368,7 @@ static ulint opt_calc_index_goodness(
 }
 
 /** Calculates the number of matched fields based on an index goodness.
- @return number of excatly or partially matched fields */
+ @return number of exactly or partially matched fields */
 static inline ulint opt_calc_n_fields_from_goodness(
     ulint goodness) /*!< in: goodness */
 {

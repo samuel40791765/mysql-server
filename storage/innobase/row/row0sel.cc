@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -208,9 +208,9 @@ static dberr_t row_sel_sec_rec_is_for_clust_rec(
   heap = mem_heap_create(256, UT_LOCATION_HERE);
 
   clust_offs = rec_get_offsets(clust_rec, clust_index, clust_offs,
-                               ULINT_UNDEFINED, &heap);
-  sec_offs =
-      rec_get_offsets(sec_rec, sec_index, sec_offs, ULINT_UNDEFINED, &heap);
+                               ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
+  sec_offs = rec_get_offsets(sec_rec, sec_index, sec_offs, ULINT_UNDEFINED,
+                             UT_LOCATION_HERE, &heap);
 
   n = dict_index_get_n_ordering_defined_by_user(sec_index);
 
@@ -817,7 +817,7 @@ static inline bool row_sel_test_other_conds(
   *out_rec = nullptr;
 
   offsets = rec_get_offsets(rec, plan->pcur.get_btr_cur()->index, offsets,
-                            ULINT_UNDEFINED, &heap);
+                            ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
 
   row_build_row_ref_fast(plan->clust_ref, plan->clust_map, rec, offsets);
 
@@ -848,7 +848,8 @@ static inline bool row_sel_test_other_conds(
     goto func_exit;
   }
 
-  offsets = rec_get_offsets(clust_rec, index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(clust_rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (!node->read_view) {
     /* Try to place a lock on the index record */
@@ -1045,7 +1046,7 @@ retry:
           pcur->m_btr_cur.rtr_info);
 
       if (!page_is_leaf(buf_block_get_frame(cur_block))) {
-        /* Page got splitted and promoted (only for
+        /* Page got split and promoted (only for
         root page it is possible).  Release the
         page and ask for a re-search */
         mtr_commit(mtr);
@@ -1056,8 +1057,8 @@ retry:
 
       rec = pcur->get_rec();
       my_offsets = offsets_;
-      my_offsets =
-          rec_get_offsets(rec, index, my_offsets, ULINT_UNDEFINED, &heap);
+      my_offsets = rec_get_offsets(rec, index, my_offsets, ULINT_UNDEFINED,
+                                   UT_LOCATION_HERE, &heap);
 
       /* No match record */
       if (page_rec_is_supremum(rec) || !match->valid) {
@@ -1082,7 +1083,7 @@ lock_match:
     rtr_rec_t *rtr_rec = &(*it);
 
     my_offsets = rec_get_offsets(rtr_rec->r_rec, index, my_offsets,
-                                 ULINT_UNDEFINED, &heap);
+                                 ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
 
     err = lock_sec_rec_read_check_and_lock(
         lock_duration_t::REGULAR, &match->block, rtr_rec->r_rec, index,
@@ -1383,7 +1384,8 @@ static ulint row_sel_try_search_shortcut(
   /* This is a non-locking consistent read: if necessary, fetch
   a previous version of the record */
 
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (index->is_clustered()) {
     if (!lock_clust_rec_cons_read_sees(rec, index, offsets, node->read_view)) {
@@ -1620,8 +1622,8 @@ rec_loop:
 
       trx = thr_get_trx(thr);
 
-      offsets =
-          rec_get_offsets(next_rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(next_rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
 
       if (trx->skip_gap_locks()) {
         if (page_rec_is_supremum(next_rec)) {
@@ -1669,7 +1671,8 @@ skip_lock:
     ulint lock_type;
     trx_t *trx;
 
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     trx = thr_get_trx(thr);
 
@@ -1739,7 +1742,8 @@ skip_lock:
   /* PHASE 3: Get previous version in a consistent read */
 
   cons_read_requires_clust_rec = false;
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (consistent_read) {
     /* This is a non-locking consistent read: if necessary, fetch
@@ -1764,8 +1768,8 @@ skip_lock:
           are searching through has been
           exhausted. */
 
-          offsets =
-              rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+          offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                                    UT_LOCATION_HERE, &heap);
 
           /* Fetch the columns needed in
           test conditions. The clustered
@@ -2934,7 +2938,7 @@ bool row_sel_store_mysql_rec(byte *mysql_rec, row_prebuilt_t *prebuilt,
       const auto dfield = dtuple_get_nth_v_field(vrow, col->v_pos);
 
       /* If this is a partitioned table, it might request
-      InnoDB to fill out virtual column data for serach
+      InnoDB to fill out virtual column data for search
       index key values while other non key columns are also
       getting selected. The non-key virtual columns may
       not be materialized and we should skip them. */
@@ -3233,7 +3237,7 @@ non-clustered index. Does the necessary locking.
   }
 
   *offsets = rec_get_offsets(clust_rec, clust_index, *offsets, ULINT_UNDEFINED,
-                             offset_heap);
+                             UT_LOCATION_HERE, offset_heap);
 
   if (prebuilt->select_lock_type != LOCK_NONE) {
     /* Try to place a lock on the index record; we are searching
@@ -3292,8 +3296,9 @@ non-clustered index. Does the necessary locking.
           /* The offsets need not be same for the latest version of
           clust_rec and its old version old_vers.  Re-calculate the offsets
           for old_vers. */
-          *offsets = rec_get_offsets(old_vers, clust_index, *offsets,
-                                     ULINT_UNDEFINED, offset_heap);
+          *offsets =
+              rec_get_offsets(old_vers, clust_index, *offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, offset_heap);
           ut_ad(
               lob::rec_check_lobref_space_id(clust_index, old_vers, *offsets));
         }
@@ -3704,7 +3709,8 @@ static ulint row_sel_try_search_shortcut_for_mysql(
   /* This is a non-locking consistent read: if necessary, fetch
   a previous version of the record */
 
-  *offsets = rec_get_offsets(rec, index, *offsets, ULINT_UNDEFINED, heap);
+  *offsets = rec_get_offsets(rec, index, *offsets, ULINT_UNDEFINED,
+                             UT_LOCATION_HERE, heap);
 
   if (!lock_clust_rec_cons_read_sees(rec, index, *offsets,
                                      trx_get_read_view(trx))) {
@@ -3886,7 +3892,7 @@ static dberr_t row_search_traverse(bool moves_up, ulint match_mode,
 }
 
 /** Searches for rows in the database using cursor.
-Function is for temporary tables that are not shared accross connections
+Function is for temporary tables that are not shared across connections
 and so lot of complexity is reduced especially locking and transaction related.
 The cursor is an iterator over the table/index.
 
@@ -3963,6 +3969,16 @@ dberr_t row_search_no_mvcc(byte *buf, page_cur_mode_t mode,
     if (prebuilt->m_temp_read_shared && !prebuilt->m_temp_tree_modified) {
       if (!mtr->is_active()) {
         mtr_start(mtr);
+
+        if (!pcur->m_block_when_stored.run_with_hint([&](buf_block_t *hint) {
+              return hint != nullptr &&
+                     buf_page_optimistic_get(
+                         RW_NO_LATCH, hint, pcur->m_modify_clock,
+                         Page_fetch::NORMAL, __FILE__, __LINE__, mtr);
+            })) {
+          /* block was relocated */
+          goto block_relocated;
+        }
       }
 
       /* This is an intrinsic table shared read, so we
@@ -3977,6 +3993,7 @@ dberr_t row_search_no_mvcc(byte *buf, page_cur_mode_t mode,
       }
 
     } else if (index->last_sel_cur->invalid || prebuilt->m_temp_tree_modified) {
+    block_relocated:
       /* Index tree has changed and so active cached cursor is no more valid.
       Re-set it based on the last selected position. */
       index->last_sel_cur->release();
@@ -4033,7 +4050,7 @@ dberr_t row_search_no_mvcc(byte *buf, page_cur_mode_t mode,
     }
   }
 
-  /* Step-3: Traverse the records filtering non-qualifiying records. */
+  /* Step-3: Traverse the records filtering non-qualifying records. */
   for (/* No op */; err == DB_SUCCESS;
        err = row_search_traverse(moves_up, match_mode, pcur, mtr)) {
     const rec_t *rec = pcur->get_rec();
@@ -4046,7 +4063,8 @@ dberr_t row_search_no_mvcc(byte *buf, page_cur_mode_t mode,
       continue;
     }
 
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     /* Note that we cannot trust the up_match value in the cursor
     at this place because we can arrive here after moving the
@@ -4103,8 +4121,8 @@ dberr_t row_search_no_mvcc(byte *buf, page_cur_mode_t mode,
               ? result_rec
               : rec;
 
-      offsets =
-          rec_get_offsets(ret_rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(ret_rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
 
       memcpy(buf + 4, ret_rec - rec_offs_extra_size(offsets),
              rec_offs_size(offsets));
@@ -4131,6 +4149,9 @@ dberr_t row_search_no_mvcc(byte *buf, page_cur_mode_t mode,
     pcur->m_old_rec = dict_index_copy_rec_order_prefix(
         index, rec, &pcur->m_old_n_fields, &pcur->m_old_rec_buf,
         &pcur->m_buf_size);
+
+    pcur->m_block_when_stored.store(pcur->get_block());
+    pcur->m_modify_clock = pcur->get_block()->get_modify_clock(IF_DEBUG(true));
 
     break;
   }
@@ -4159,7 +4180,8 @@ static void row_sel_fill_vrow(const rec_t *rec, dict_index_t *index,
 
   ut_ad(!(*vrow));
 
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   *vrow =
       dtuple_create_with_vcol(heap, 0, dict_table_get_n_v_cols(index->table));
@@ -4845,8 +4867,8 @@ dberr_t row_search_mvcc(byte *buf, page_cur_mode_t mode,
       to prevent phantoms in ORDER BY ... DESC queries */
       const rec_t *next_rec = page_rec_get_next_const(rec);
 
-      offsets =
-          rec_get_offsets(next_rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(next_rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       err = sel_set_rec_lock(pcur, next_rec, index, offsets,
                              prebuilt->select_mode, prebuilt->select_lock_type,
                              LOCK_GAP, thr, &mtr);
@@ -4925,7 +4947,7 @@ rec_loop:
 
       /** Create offsets based on prebuilt index. */
       offsets = rec_get_offsets(prev_rec, prebuilt->index, offsets,
-                                ULINT_UNDEFINED, &heap);
+                                ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
 
       if (row_sel_store_mysql_rec(end_range_cache, prebuilt, prev_rec,
                                   prev_vrow, clust_templ_for_sec, key_index,
@@ -4953,7 +4975,8 @@ rec_loop:
         !dict_index_is_spatial(index)) {
       /* Try to place a lock on the index record */
 
-      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       err = sel_set_rec_lock(pcur, rec, index, offsets, prebuilt->select_mode,
                              prebuilt->select_lock_type, LOCK_ORDINARY, thr,
                              &mtr);
@@ -5037,7 +5060,8 @@ rec_loop:
   ut_ad(fil_page_index_page_check(pcur->get_page()));
   ut_ad(btr_page_get_index_id(pcur->get_page()) == index->id);
 
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (UNIV_UNLIKELY(srv_force_recovery > 0)) {
     if (!rec_validate(rec, offsets) ||
@@ -5160,9 +5184,15 @@ rec_loop:
         goto normal_return;
       }
     }
-
-    err = sel_set_rec_lock(pcur, rec, index, offsets, prebuilt->select_mode,
-                           prebuilt->select_lock_type, lock_type, thr, &mtr);
+    /* in case of semi-consistent read, we use SELECT_SKIP_LOCKED, so we don't
+    waste time on creating a WAITING lock, as we won't wait on it anyway */
+    const bool use_semi_consistent =
+        prebuilt->row_read_type == ROW_READ_TRY_SEMI_CONSISTENT &&
+        !unique_search && index == clust_index && !trx_is_high_priority(trx);
+    err = sel_set_rec_lock(
+        pcur, rec, index, offsets,
+        use_semi_consistent ? SELECT_SKIP_LOCKED : prebuilt->select_mode,
+        prebuilt->select_lock_type, lock_type, thr, &mtr);
 
     switch (err) {
       const rec_t *old_vers;
@@ -5181,54 +5211,22 @@ rec_loop:
         }
         break;
       case DB_SKIP_LOCKED:
-        goto next_rec;
-      case DB_LOCK_WAIT:
-        /* Lock wait for R-tree should already
-        be handled in sel_set_rtr_rec_lock() */
-        ut_ad(!dict_index_is_spatial(index));
-        /* Never unlock rows that were part of a conflict. */
-        prebuilt->new_rec_lock.reset();
-
-        if (UNIV_LIKELY(prebuilt->row_read_type !=
-                        ROW_READ_TRY_SEMI_CONSISTENT) ||
-            unique_search || index != clust_index) {
-          goto lock_wait_or_error;
+        if (prebuilt->select_mode == SELECT_SKIP_LOCKED) {
+          goto next_rec;
         }
+        DEBUG_SYNC_C("semi_consistent_read_would_wait");
+        ut_a(use_semi_consistent);
         ut_a(trx->allow_semi_consistent());
         /* The following call returns 'offsets' associated with 'old_vers' */
         row_sel_build_committed_vers_for_mysql(
             clust_index, prebuilt, rec, &offsets, &heap, &old_vers,
             need_vrow ? &vrow : nullptr, &mtr);
 
-        /* Check whether it was a deadlock or not, if not
-        a deadlock and the transaction had to wait then
-        release the lock it is waiting on. */
-
-        DEBUG_SYNC_C("semi_consistent_read_would_wait");
-        err = lock_trx_handle_wait(trx);
-
-        switch (err) {
-          case DB_SUCCESS:
-            /* The lock was granted while we were
-            searching for the last committed version.
-            Do a normal locking read. */
-
-            offsets =
-                rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
-            goto locks_ok;
-          case DB_DEADLOCK:
-            goto lock_wait_or_error;
-          case DB_LOCK_WAIT:
-            ut_ad(!dict_index_is_spatial(index));
-            err = DB_SUCCESS;
-            break;
-          default:
-            ut_error;
-        }
+        ut_ad(!dict_index_is_spatial(index));
+        err = DB_SUCCESS;
 
         if (old_vers == nullptr) {
           /* The row was not yet committed */
-
           goto next_rec;
         }
 
@@ -5239,6 +5237,14 @@ rec_loop:
                  pcur, index, prev_rec, &prev_rec_debug_n_fields,
                  &prev_rec_debug_buf, &prev_rec_debug_buf_size));
         break;
+      case DB_LOCK_WAIT:
+        /* Lock wait for R-tree should already
+        be handled in sel_set_rtr_rec_lock() */
+        ut_ad(!dict_index_is_spatial(index));
+        /* Never unlock rows that were part of a conflict. */
+        prebuilt->new_rec_lock.reset();
+        ut_a(!use_semi_consistent);
+        goto lock_wait_or_error;
       case DB_RECORD_NOT_FOUND:
         if (dict_index_is_spatial(index)) {
           goto next_rec;
@@ -5247,10 +5253,9 @@ rec_loop:
         }
 
       default:
-
+        ut_a(!use_semi_consistent);
         goto lock_wait_or_error;
     }
-  locks_ok:
     if (err == DB_SUCCESS && !row_to_range_relation.row_can_be_in_range) {
       err = DB_RECORD_NOT_FOUND;
       goto normal_return;
@@ -5501,8 +5506,8 @@ rec_loop:
       index_entry = row_build_index_entry(clust_row, ext, index, heap);
       rtr_get_mbr_from_tuple(index_entry, &clust_mbr);
 
-      index_offsets =
-          rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+      index_offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                                      UT_LOCATION_HERE, &heap);
       rtr_get_mbr_from_rec(rec, index_offsets, &index_mbr);
 
       if (mbr_equal_cmp(index->rtr_srs.get(), &clust_mbr, &index_mbr)) {
@@ -5605,7 +5610,8 @@ rec_loop:
             sec_offsets = sec_offsets_;
           }
           sec_offsets =
-              rec_get_offsets(rec, index, sec_offsets, ULINT_UNDEFINED, &heap);
+              rec_get_offsets(rec, index, sec_offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
         }
 
         if (row_search_end_range_check(next_buf, rec, prebuilt,
@@ -5644,7 +5650,8 @@ rec_loop:
       if (result_rec != rec && !prebuilt->need_to_access_clustered) {
         /* We used 'offsets' for the clust
         rec, recalculate them for 'rec' */
-        offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+        offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                                  UT_LOCATION_HERE, &heap);
         result_rec = rec;
       }
 
@@ -5798,10 +5805,12 @@ next_rec:
         auto heap_tmp = mem_heap_create(256, UT_LOCATION_HERE);
 
         offsets1 = rec_get_offsets(prev_rec_debug, index, nullptr,
-                                   prev_rec_debug_n_fields, &heap_tmp);
+                                   prev_rec_debug_n_fields, UT_LOCATION_HERE,
+                                   &heap_tmp);
 
-        offsets2 = rec_get_offsets(prev_rec, index, nullptr,
-                                   prev_rec_debug_n_fields, &heap_tmp);
+        offsets2 =
+            rec_get_offsets(prev_rec, index, nullptr, prev_rec_debug_n_fields,
+                            UT_LOCATION_HERE, &heap_tmp);
 
         ut_ad(!cmp_rec_rec(prev_rec_debug, prev_rec, offsets1, offsets2, index,
                            page_is_spatial_non_leaf(prev_rec, index), nullptr,
@@ -6152,7 +6161,8 @@ static uint64_t row_search_autoinc_read_column(
 
   rec_offs_init(offsets_);
 
-  offsets = rec_get_offsets(rec, index, offsets, col_no + 1, &heap);
+  offsets =
+      rec_get_offsets(rec, index, offsets, col_no + 1, UT_LOCATION_HERE, &heap);
 
   if (rec_offs_nth_sql_null(index, offsets, col_no)) {
     /* There is no non-NULL value in the auto-increment column. */
@@ -6298,8 +6308,8 @@ bool row_search_table_stats(const char *db_name, const char *tbl_name,
 
   for (; move == true; move = pcur.move_to_next(&mtr)) {
     rec = pcur.get_rec();
-    offsets =
-        rec_get_offsets(rec, clust_index, nullptr, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, clust_index, nullptr, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     if (page_rec_is_infimum(rec) || page_rec_is_supremum(rec)) {
       continue;
@@ -6379,8 +6389,8 @@ bool row_search_index_stats(const char *db_name, const char *tbl_name,
 
   for (; move == true; move = pcur.move_to_next(&mtr)) {
     rec = pcur.get_rec();
-    offsets =
-        rec_get_offsets(rec, clust_index, nullptr, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, clust_index, nullptr, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     if (page_rec_is_infimum(rec) || page_rec_is_supremum(rec)) {
       continue;

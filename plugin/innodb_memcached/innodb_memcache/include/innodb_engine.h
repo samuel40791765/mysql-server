@@ -1,6 +1,6 @@
 /***********************************************************************
 
-Copyright (c) 2011, 2021, Oracle and/or its affiliates.
+Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -131,7 +131,7 @@ struct innodb_conn_data_struct {
   bool is_stale;             /*!< connection closed, this is
                              stale */
   bool is_waiting_for_mdl;
-  /*!< Used to detrmine if the connection is
+  /*!< Used to determine if the connection is
   locked and waiting on MDL */
   void *conn_cookie;      /*!< connection cookie */
   uint64_t n_total_reads; /*!< number of reads */

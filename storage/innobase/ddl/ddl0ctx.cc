@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+Copyright (c) 2020, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -158,7 +158,7 @@ Context::Scan_buffer_size Context::scan_buffer_size(
   }
 
   /* The maximum size of the record is considered to be srv_page_size/2,
-  because one B-tree node should be able to hold atleast 2 records. But there
+  because one B-tree node should be able to hold at least 2 records. But there
   is also an i/o alignment requirement of IO_BLOCK_SIZE.  This means that the
   min io buffer size should be the sum of these two.  Refer to
   Key_sort_buffer::serialize() function and its write() lambda function to

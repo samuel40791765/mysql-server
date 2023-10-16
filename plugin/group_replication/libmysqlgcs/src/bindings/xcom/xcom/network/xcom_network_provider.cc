@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -145,12 +145,10 @@ void ssl_shutdown_con(connection_descriptor *con) {
   }
 }
 
-bool Xcom_network_provider::cleanup_secure_connections_context() {
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-  ERR_remove_thread_state(0);
-#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
-
-  return false;
+void Xcom_network_provider::cleanup_secure_connections_context() {
+  auto secure_connections_context_cleaner =
+      this->get_secure_connections_context_cleaner();
+  std::invoke(secure_connections_context_cleaner);
 }
 
 bool Xcom_network_provider::finalize_secure_connections_context() {
@@ -199,7 +197,7 @@ std::unique_ptr<Network_connection> Xcom_network_provider::open_connection(
   char buffer[20];
   sprintf(buffer, "%d", port);
 
-  checked_getaddrinfo(address.c_str(), buffer, 0, &from_ns);
+  checked_getaddrinfo(address.c_str(), buffer, nullptr, &from_ns);
 
   if (from_ns == nullptr) {
     /* purecov: begin inspected */

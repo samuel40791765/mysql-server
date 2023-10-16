@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2022, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,7 +28,7 @@
 /*************************************************************
  *
  * SafeCounter "automates" three way to node-fais safe protocols
- * for "slave" failures.  This is done by registing "fake" signals
+ * for "slave" failures.  This is done by registering "fake" signals
  * to be sent in case of nodefailure.
  *
  * init<SignalClass>(..., GSN, senderData);
@@ -56,6 +56,7 @@
  */
 
 #include <NodeBitmask.hpp>
+#include "ArrayPool.hpp"
 #include "IntrusiveList.hpp"
 #include "VMSignal.hpp"
 

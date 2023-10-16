@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2013, 2021, Oracle and/or its affiliates.
+Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -35,6 +35,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "fts0ast.h"
 #include "fts0tokenize.h"
 #include "mysql/plugin.h"
+
+struct CHARSET_INFO;
 
 /** FTS default parser init
  @return 0 */

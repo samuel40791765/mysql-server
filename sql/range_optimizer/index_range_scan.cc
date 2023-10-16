@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,7 +29,6 @@
 #include <algorithm>
 
 #include "field_types.h"
-#include "m_ctype.h"
 #include "m_string.h"
 #include "my_alloc.h"
 #include "my_base.h"
@@ -37,6 +36,7 @@
 #include "my_sys.h"
 #include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/m_ctype.h"
 #include "sql/join_optimizer/bit_utils.h"
 #include "sql/key.h"
 #include "sql/psi_memory_key.h"
@@ -269,7 +269,7 @@ bool InitIndexRangeScan(TABLE *table, handler *file, int index,
     const bool sorted = (mrr_flags & HA_MRR_SORTED);
     DBUG_EXECUTE_IF("bug14365043_2", DBUG_SET("+d,ha_index_init_fail"););
 
-    /* Pass index specifc read set for ror_merged_scan */
+    /* Pass index specific read set for ror_merged_scan */
     if (in_ror_merged_scan) {
       /*
         We don't need to signal the bitmap change as the bitmap is always the

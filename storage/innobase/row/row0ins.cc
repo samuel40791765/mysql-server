@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -47,7 +47,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ha_prototypes.h"
 #include "lob0lob.h"
 #include "lock0lock.h"
-#include "log0log.h"
+#include "log0chkp.h"
 #include "m_string.h"
 #include "mach0data.h"
 #include "que0que.h"
@@ -61,6 +61,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0undo.h"
 #include "usr0sess.h"
 
+#include <debug_sync.h>
 #include "my_dbug.h"
 
 /*************************************************************************
@@ -68,7 +69,7 @@ IMPORTANT NOTE: Any operation that generates redo MUST check that there
 is enough space in the redo log before for that operation. This is
 done by calling log_free_check(). The reason for checking the
 availability of the redo log space before the start of the operation is
-that we MUST not hold any synchonization objects when performing the
+that we MUST not hold any synchronization objects when performing the
 check.
 If you make a change in this module make sure that no codepath is
 introduced where a call to log_free_check() is bypassed. */
@@ -517,6 +518,7 @@ static bool row_ins_cascade_ancestor_updates_table(
 
         ufield->field_no =
             dict_table_get_nth_col_pos(table, dict_col_get_no(col));
+        IF_DEBUG(ufield->field_phy_pos = col->get_col_phy_pos());
 
         ufield->orig_len = 0;
         ufield->exp = nullptr;
@@ -845,8 +847,8 @@ static void row_ins_foreign_fill_virtual(upd_node_t *cascade, const rec_t *rec,
   mem_heap_t *v_heap = nullptr;
   upd_t *update = cascade->update;
   rec_offs_init(offsets_);
-  const ulint *offsets =
-      rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &update->heap);
+  const ulint *offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                                         UT_LOCATION_HERE, &update->heap);
   ulint n_v_fld = index->table->n_v_def;
   ulint n_diff;
   upd_field_t *upd_field;
@@ -1554,8 +1556,8 @@ dberr_t row_ins_check_foreign_constraint(
       continue;
     }
 
-    offsets =
-        rec_get_offsets(rec, check_index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, check_index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     if (page_rec_is_supremum(rec)) {
       if (skip_gap_lock) {
@@ -1769,8 +1771,7 @@ exit_func:
   if (trx->check_foreigns == false) {
     return (DB_SUCCESS);
   }
-  DEBUG_SYNC_C_IF_THD(thr_get_trx(thr)->mysql_thd,
-                      "foreign_constraint_check_for_ins");
+  DEBUG_SYNC(thr_get_trx(thr)->mysql_thd, "foreign_constraint_check_for_ins");
 
   for (dict_foreign_set::iterator it = table->foreign_set.begin();
        it != table->foreign_set.end(); ++it) {
@@ -1932,8 +1933,8 @@ static bool row_allow_duplicates(que_thr_t *thr) {
       continue;
     }
 
-    offsets =
-        rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &offsets_heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &offsets_heap);
 
     const bool is_supremum = page_rec_is_supremum(rec);
     const bool is_next =
@@ -1945,7 +1946,7 @@ static bool row_allow_duplicates(que_thr_t *thr) {
 #if 0  // TODO: Enable this assert after WL#9509. REPLACE will not be allowed on
        // DD tables
                         /* This assert means DD tables should not use REPLACE
-                        or INSERT INTO table.. ON DUPLCIATE KEY */
+                        or INSERT INTO table.. ON DUPLICATE KEY */
                         ut_ad(!index->table->is_dd_table);
 #endif
 
@@ -2097,8 +2098,8 @@ a newer version of entry (the entry should not be inserted)
   const rec_t *rec = btr_cur_get_rec(cursor);
 
   if (cursor->low_match >= n_uniq && !page_rec_is_infimum(rec)) {
-    *offsets =
-        rec_get_offsets(rec, cursor->index, *offsets, ULINT_UNDEFINED, heap);
+    *offsets = rec_get_offsets(rec, cursor->index, *offsets, ULINT_UNDEFINED,
+                               UT_LOCATION_HERE, heap);
     err = row_ins_duplicate_online(n_uniq, entry, rec, cursor->index, *offsets);
     if (err != DB_SUCCESS) {
       return (err);
@@ -2108,8 +2109,8 @@ a newer version of entry (the entry should not be inserted)
   rec = page_rec_get_next_const(btr_cur_get_rec(cursor));
 
   if (cursor->up_match >= n_uniq && !page_rec_is_supremum(rec)) {
-    *offsets =
-        rec_get_offsets(rec, cursor->index, *offsets, ULINT_UNDEFINED, heap);
+    *offsets = rec_get_offsets(rec, cursor->index, *offsets, ULINT_UNDEFINED,
+                               UT_LOCATION_HERE, heap);
     err = row_ins_duplicate_online(n_uniq, entry, rec, cursor->index, *offsets);
   }
 
@@ -2148,7 +2149,7 @@ a newer version of entry (the entry should not be inserted)
   /* NOTE: For unique non-clustered indexes there may be any number
   of delete marked records with the same value for the non-clustered
   index key (remember multiversioning), and which differ only in
-  the row refererence part of the index record, containing the
+  the row reference part of the index record, containing the
   clustered index key fields. For such a secondary index record,
   to avoid race condition, we must FIRST do the insertion and after
   that check that the uniqueness condition is not breached! */
@@ -2164,8 +2165,8 @@ a newer version of entry (the entry should not be inserted)
     rec = btr_cur_get_rec(cursor);
 
     if (!page_rec_is_infimum(rec)) {
-      offsets =
-          rec_get_offsets(rec, cursor->index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, cursor->index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
 
       /* We set a lock on the possible duplicate: this
       is needed in logical logging of MySQL to make
@@ -2207,8 +2208,8 @@ a newer version of entry (the entry should not be inserted)
     rec = page_rec_get_next(btr_cur_get_rec(cursor));
 
     if (!page_rec_is_supremum(rec)) {
-      offsets =
-          rec_get_offsets(rec, cursor->index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, cursor->index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
 
       /* If the SQL-query will update or replace
       duplicate key we will take X-lock for
@@ -2300,7 +2301,8 @@ static dberr_t row_ins_index_entry_big_rec_func(
   pcur.open(index, 0, entry, PAGE_CUR_LE, BTR_MODIFY_TREE, &mtr,
             UT_LOCATION_HERE);
   rec = pcur.get_rec();
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, heap);
 
   DEBUG_SYNC_C_IF_THD(thd, "before_row_ins_extern");
   error = lob::btr_store_big_rec_extern_fields(
@@ -2425,9 +2427,10 @@ dberr_t row_ins_clust_index_entry_low(uint32_t flags, ulint mode,
 
   /* Write logs for AUTOINC right after index lock has been got and
   before any further resource acquisitions to prevent deadlock.
-  No need to log for temporary tables and intermediate tables */
-  if (!index->table->is_temporary() && !index->table->skip_alter_undo &&
+  No need to log for temporary tables */
+  if (!index->table->is_temporary() &&
       dict_table_has_autoinc_col(index->table)) {
+    ut_ad(!index->table->is_intrinsic());
     uint64_t counter =
         row_get_autoinc_counter(entry, index->table->autoinc_field_no);
 
@@ -2437,6 +2440,9 @@ dberr_t row_ins_clust_index_entry_low(uint32_t flags, ulint mode,
       persist_autoinc = dict_table_autoinc_log(index->table, counter, &mtr);
     }
   }
+
+  DBUG_EXECUTE_IF("crash_create_after_autoinc_persisted_update",
+                  DBUG_SUICIDE(););
 
   /* Allowing duplicates in clustered index is currently enabled
   only for intrinsic table and caller understand the limited
@@ -2830,7 +2836,7 @@ dberr_t row_ins_sec_index_entry_low(uint32_t flags, ulint mode,
   });
 
   if (check) {
-    DEBUG_SYNC_C("row_ins_sec_index_enter");
+    DEBUG_SYNC(thr_get_trx(thr)->mysql_thd, "row_ins_sec_index_enter");
     if (mode == BTR_MODIFY_LEAF) {
       search_mode |= BTR_ALREADY_S_LATCHED;
       mtr_s_lock(dict_index_get_lock(index), &mtr, UT_LOCATION_HERE);
@@ -2993,7 +2999,7 @@ dberr_t row_ins_sec_index_entry_low(uint32_t flags, ulint mode,
     prefix, we must convert the insert into a modify of an
     existing record */
     offsets = rec_get_offsets(btr_cur_get_rec(&cursor), index, offsets,
-                              ULINT_UNDEFINED, &offsets_heap);
+                              ULINT_UNDEFINED, UT_LOCATION_HERE, &offsets_heap);
 
     err = row_ins_sec_index_entry_by_modify(
         flags, mode, &cursor, &offsets, offsets_heap, heap, entry, thr, &mtr);
@@ -3105,8 +3111,8 @@ and return. don't execute actual insert. */
                                         entry, thr, dup_chk_only);
   }
 
-  DEBUG_SYNC_C_IF_THD(thr_get_trx(thr)->mysql_thd,
-                      "after_row_ins_clust_index_entry_leaf");
+  DEBUG_SYNC(thr_get_trx(thr)->mysql_thd,
+             "after_row_ins_clust_index_entry_leaf");
 
   if (err != DB_FAIL) {
     DEBUG_SYNC_C("row_ins_clust_index_entry_leaf_after");
@@ -3433,8 +3439,7 @@ dberr_t row_ins_index_entry_set_vals(const dict_index_t *index, dtuple_t *entry,
   err = row_ins_index_entry(node->index, node->entry, node->ins_multi_val_pos,
                             thr);
 
-  DEBUG_SYNC_C_IF_THD(thr_get_trx(thr)->mysql_thd,
-                      "after_row_ins_index_entry_step");
+  DEBUG_SYNC(thr_get_trx(thr)->mysql_thd, "after_row_ins_index_entry_step");
 
   return err;
 }

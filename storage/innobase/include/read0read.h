@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -89,7 +89,7 @@ class MVCC {
   }
 
   /**
-  Set the view creator transaction id. Note: This shouldbe set only
+  Set the view creator transaction id. Note: This should be set only
   for views created by RW transactions.
   @param view   Set the creator trx id for this view
   @param id     Transaction id to set */

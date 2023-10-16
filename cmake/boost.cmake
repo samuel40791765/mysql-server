@@ -1,4 +1,4 @@
-# Copyright (c) 2014, 2021, Oracle and/or its affiliates.
+# Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -330,6 +330,9 @@ ELSE()
 ENDIF()
 
 IF(NOT WIN32)
+# Needed to use Boost header container_hash/hash.hpp in C++17
+  ADD_DEFINITIONS(-DBOOST_NO_CXX98_FUNCTION_BASE)
+
   FILE(GLOB_RECURSE BOOST_PATCHES_LIST
     RELATIVE ${BOOST_PATCHES_DIR}
     ${BOOST_PATCHES_DIR}/*.hpp

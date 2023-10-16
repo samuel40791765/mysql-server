@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -33,6 +33,8 @@
 #include "sql/mysqld.h"
 #include "sql/stateless_allocator.h"
 
+struct CHARSET_INFO;
+
 namespace dd {
 namespace tables {
 
@@ -44,7 +46,7 @@ const Foreign_keys &Foreign_keys::instance() {
 ///////////////////////////////////////////////////////////////////////////
 
 const CHARSET_INFO *Foreign_keys::name_collation() {
-  return &my_charset_utf8_general_ci;
+  return &my_charset_utf8mb3_general_ci;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -63,7 +65,7 @@ Foreign_keys::Foreign_keys() {
                              String_type(name_collation()->m_coll_name));
   m_target_def.add_field(
       FIELD_UNIQUE_CONSTRAINT_NAME, "FIELD_UNIQUE_CONSTRAINT_NAME",
-      "unique_constraint_name VARCHAR(64) COLLATE utf8_tolower_ci");
+      "unique_constraint_name VARCHAR(64) COLLATE utf8mb3_tolower_ci");
   m_target_def.add_field(FIELD_MATCH_OPTION, "FIELD_MATCH_OPTION",
                          "match_option ENUM('NONE', 'PARTIAL', 'FULL') "
                          "NOT NULL");

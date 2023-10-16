@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -73,7 +73,7 @@ typedef pthread_rwlock_t native_rw_lock_t;
      MDL subsystem deadlock detector relies on this property for
      its correctness.
   2) They are optimized for uncontended wr-lock/unlock case.
-     This is scenario in which they are most oftenly used
+     This is scenario in which they are most often used
      within MDL subsystem. Optimizing for it gives significant
      performance improvements in some of tests involving many
      connections.

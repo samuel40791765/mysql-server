@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -34,7 +34,6 @@
 
 #include <openssl/bio.h>
 
-#include "my_compiler.h"
 #include "mysql/harness/net_ts/buffer.h"
 #include "mysql/harness/net_ts/executor.h"
 #include "mysql/harness/net_ts/io_context.h"
@@ -148,16 +147,18 @@ class ProtocolBase {
               async_send(std::move(compl_handler));
             });
       } else {
-        net::defer([compl_handler = std::move(init.completion_handler),
+        net::defer(client_socket_.get_executor(),
+                   [compl_handler = std::move(init.completion_handler),
                     ec = write_res.error()]() { compl_handler(ec, {}); });
       }
     } else {
       net::dynamic_buffer(send_buffer_).consume(write_res.value());
 
-      net::defer([compl_handler = std::move(init.completion_handler),
+      net::defer(client_socket_.get_executor(),
+                 [compl_handler = std::move(init.completion_handler),
                   transferred = write_res.value()]() {
-        compl_handler({}, transferred);
-      });
+                   compl_handler({}, transferred);
+                 });
     }
 
     return init.result.get();
@@ -346,14 +347,26 @@ class ProtocolBase {
 class StatementReaderBase {
  public:
   struct handshake_data {
-    std::optional<ErrorResponse> error;
+    classic_protocol::message::server::Greeting greeting;
 
     std::optional<std::string> username;
     std::optional<std::string> password;
     bool cert_required{false};
     std::optional<std::string> cert_subject;
     std::optional<std::string> cert_issuer;
+
+    std::chrono::microseconds exec_time;
   };
+
+  StatementReaderBase() = default;
+
+  StatementReaderBase(const StatementReaderBase &) = default;
+  StatementReaderBase(StatementReaderBase &&) = default;
+
+  StatementReaderBase &operator=(const StatementReaderBase &) = default;
+  StatementReaderBase &operator=(StatementReaderBase &&) = default;
+
+  virtual ~StatementReaderBase() = default;
 
   /** @brief Returns the data about the next statement from the
    *         json file. If there is no more statements it returns
@@ -370,20 +383,10 @@ class StatementReaderBase {
 
   virtual std::vector<AsyncNotice> get_async_notices() = 0;
 
-  virtual stdx::expected<classic_protocol::message::server::Greeting,
-                         std::error_code>
-  server_greeting(bool with_tls) = 0;
-
-  virtual stdx::expected<handshake_data, ErrorResponse> handshake() = 0;
-
-  virtual std::chrono::microseconds server_greeting_exec_time() = 0;
+  virtual stdx::expected<handshake_data, ErrorResponse> handshake(
+      bool is_greeting) = 0;
 
   virtual void set_session_ssl_info(const SSL *ssl) = 0;
-
-  MY_COMPILER_DIAGNOSTIC_PUSH()
-  MY_COMPILER_CLANG_DIAGNOSTIC_IGNORE("-Wdeprecated")
-  virtual ~StatementReaderBase() = default;
-  MY_COMPILER_DIAGNOSTIC_POP()
 };
 
 }  // namespace server_mock

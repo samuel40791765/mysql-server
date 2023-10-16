@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2009, 2010 Facebook, Inc.
-Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -95,34 +95,6 @@ external tools. */
 #include "my_inttypes.h"
 #include "univ.i"
 #include "ut0crc32.h"
-
-#ifdef CRC32_x86_64
-#include <nmmintrin.h>
-#include <wmmintrin.h>
-#endif /* CRC32_x86_64 */
-
-#ifdef CRC32_x86_64_WIN
-#include <intrin.h>
-#endif /* CRC32_x86_64_WIN */
-
-#ifdef CRC32_ARM64
-#include <arm_acle.h>
-#include <arm_neon.h>
-#endif /* CRC32_ARM64 */
-
-#ifdef CRC32_ARM64_DEFAULT
-#include <asm/hwcap.h>
-#include <sys/auxv.h>
-#endif /* CRC32_ARM64_DEFAULT */
-
-#ifdef CRC32_ARM64_APPLE
-#if __has_include(<asm/hwcap.h>) &&  __has_include(<sys/auxv.h>)
-#error \
-    "Current implementation is based on asumption that APPLE_ARM always " \
-    "supports crc32 and pmull and that there is no way to check it, yet it "\
-    "seem that this APPLE_ARM has getauxval()."
-#endif /* __has_include(<asm/hwcap.h>) &&  __has_include(<sys/auxv.h>) */
-#endif /* CRC32_ARM64_APPLE */
 
 /** Pointer to CRC32 calculation function. */
 ut_crc32_func_t ut_crc32;
@@ -299,7 +271,7 @@ uint32_t crc32_processing_64bit_chunks(const byte *buf, size_t len) {
 
   return (~crc);
 }
-/** Computes CRC32-C hash not using any hardware accelaration.
+/** Computes CRC32-C hash not using any hardware acceleration.
 It's non-static so it can be unit-tested, but otherwise should not be used
 directly, and thus is not exposed in the header file - use ut_crc32 to benefit
 from hardware acceleration available.
@@ -579,7 +551,7 @@ inline static uint64_t roll(uint32_t crc) {
 }
 
 /** Takes a 64-bit reversed representation of a polynomial, and computes the
-32-bit reveresed representation of it modulo CRC32-C.
+32-bit reversed representation of it modulo CRC32-C.
 @param[in]  big   The 64-bit representation of polynomial w, with the most
                   significant coefficient (the one for x^63) stored at least
                   significant bit (the one at 1<<0).

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -106,6 +106,9 @@ struct OSTrackMutex {
     ut_ad(!m_locked);
     ut_d(m_locked = true);
   }
+
+  void lock() { enter(); }
+  void unlock() { exit(); }
 
   /** @return true if locking succeeded */
   bool try_lock() UNIV_NOTHROW {
@@ -352,7 +355,7 @@ struct TTASFutexMutex {
         }
       }
 
-      ut_delay(ut_rnd_interval(0, max_delay));
+      ut_delay(ut::random_from_interval_fast(0, max_delay));
     }
 
     return (trylock());
@@ -398,8 +401,8 @@ struct TTASEventMutex {
     m_policy.init(*this, id, filename, line);
   }
 
-  /** This is the real desctructor. This mutex can be created in BSS and
-  its desctructor will be called on exit(). We can't call
+  /** This is the real destructor. This mutex can be created in BSS and
+  its destructor will be called on exit(). We can't call
   os_event_destroy() at that stage. */
   void destroy() UNIV_NOTHROW {
     ut_ad(!is_locked());
@@ -488,7 +491,7 @@ struct TTASEventMutex {
         return (true);
       }
 
-      ut_delay(ut_rnd_interval(0, max_delay));
+      ut_delay(ut::random_from_interval_fast(0, max_delay));
 
       ++n_spins;
 
@@ -654,7 +657,7 @@ struct PolicyMutex {
 
     /* There is a subtlety here, we check the mutex ordering
     after locking here. This is only done to avoid add and
-    then remove if the trylock was unsuccesful. */
+    then remove if the trylock was unsuccessful. */
 
     int ret = m_impl.try_lock() ? 0 : 1;
 

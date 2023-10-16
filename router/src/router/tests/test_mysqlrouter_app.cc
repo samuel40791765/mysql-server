@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -963,7 +963,8 @@ TEST_F(AppTest, BootstrapSuperuserNoUserOption) {
                   mock_sys_user_operations.get());
     FAIL() << "Should throw";
   } catch (const std::runtime_error &exc) {
-    EXPECT_THAT(exc.what(), StartsWith("You are bootstraping as a superuser."));
+    EXPECT_THAT(exc.what(),
+                StartsWith("You are bootstrapping as a superuser."));
   }
 }
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -199,8 +199,35 @@
     Added columns EXECUTION_ENGINE, COUNT_SECONDARY
   - Bug #30624990 NO UTF8MB3 IN INFORMATION_SCHEMA.CHARACTER_SETS
     Use 'utf8mb3' rather than 'utf8' alias for for character set names.
+
+  80030:
+
+  performance_schema tables changed in MySQL 8.0.30
+  - WL#12527 added innodb_redo_log_files table (table is created dynamically
+    and based on PFS_engine_table_share_proxy mechanism)
+  - Bug #33787300 Rename utf8_xxx collations to utf8mb3_xxx
+    This patch renames utf8_bin to utf8mb3_bin
+    This patch renames utf8_general_ci
+
+  80031:
+
+  - WL#14432 Session memory limits in performance schema
+    Modified column PROPERTIES in table setup_instruments
+    Added column FLAGS in table setup_instruments
+
+  80032:
+
+  - WL#15419: Make the replica_generate_invisible_primary_key option settable
+    per channel
+    Modified column REQUIRE_TABLE_PRIMARY_KEY_CHECK in table
+    replication_applier_configuration
+
+  80033:
+
+   - WL#15059: PERFORMANCE_SCHEMA, OTEL TRACE INTERFACE
+     New column TELEMETRY_ACTIVE added to performance_schema.threads
 */
 
-static const uint PFS_DD_VERSION = 80029;
+static const uint PFS_DD_VERSION = 80033;
 
 #endif /* PFS_DD_VERSION_H */

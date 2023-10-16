@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2021, Oracle and/or its affiliates.
+Copyright (c) 2007, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -158,18 +158,18 @@ const ib_rbt_node_t *rbt_next(const ib_rbt_t *tree, /*!< in: rb tree */
                               const ib_rbt_node_t * /* in: current node */
                                   current);
 /** Return the prev node from current.
- @return precedessor node to current that is passed in */
+ @return predecessor node to current that is passed in */
 const ib_rbt_node_t *rbt_prev(const ib_rbt_t *tree, /*!< in: rb tree */
                               const ib_rbt_node_t * /* in: current node */
                                   current);
-/** Search for the key, a node will be retuned in parent.last, whether it
+/** Search for the key, a node will be returned in parent.last, whether it
  was found or not. If not found then parent.last will contain the
  parent node for the possibly new key otherwise the matching node.
  @return result of last comparison */
 int rbt_search(const ib_rbt_t *tree,   /*!< in: rb tree */
                ib_rbt_bound_t *parent, /*!< in: search bounds */
                const void *key);       /*!< in: key to search */
-/** Search for the key, a node will be retuned in parent.last, whether it
+/** Search for the key, a node will be returned in parent.last, whether it
  was found or not. If not found then parent.last will contain the
  parent node for the possibly new key otherwise the matching node.
  @return result of last comparison */

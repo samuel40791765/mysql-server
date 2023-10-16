@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -660,7 +660,7 @@ class ha_innobase : public handler {
   /** the size of upd_buf in bytes */
   ulint m_upd_buf_size;
 
-  /** Flags that specificy the handler instance (table) capability. */
+  /** Flags that specify the handler instance (table) capability. */
   Table_flags m_int_table_flags;
 
   /** this is set to 1 when we are starting a table scan but have

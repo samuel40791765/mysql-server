@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -63,6 +63,8 @@ constexpr uint32_t IBUF_BITMAP = PAGE_DATA;
 #include "fsp0sysspace.h"
 #include "fut0lst.h"
 #include "lock0lock.h"
+#include "log0buf.h"
+#include "log0chkp.h"
 #include "log0recv.h"
 #include "que0que.h"
 #include "rem0cmp.h"
@@ -84,7 +86,7 @@ In versions < 4.1.x:
 
 In versions >= 4.1.x:
 
-Note that contary to what we planned in the 1990's, there will only be one
+Note that contrary to what we planned in the 1990's, there will only be one
 insert buffer tree, and that is in the system tablespace of InnoDB.
 
 1. The first field is the space id.
@@ -460,7 +462,7 @@ void ibuf_init_at_db_start(void) {
   ibuf = static_cast<ibuf_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(ibuf_t)));
 
-  /* At startup we intialize ibuf to have a maximum of
+  /* At startup we initialize ibuf to have a maximum of
   CHANGE_BUFFER_DEFAULT_SIZE in terms of percentage of the
   buffer pool size. Once ibuf struct is initialized this
   value is updated with the user supplied size by calling
@@ -517,7 +519,7 @@ void ibuf_init_at_db_start(void) {
                                              IBUF_SPACE_ID, 1, 0, 0, 0, 0);
   ibuf->index->n_uniq = REC_MAX_N_FIELDS;
   rw_lock_create(index_tree_rw_lock_key, &ibuf->index->lock,
-                 SYNC_IBUF_INDEX_TREE);
+                 LATCH_ID_IBUF_INDEX_TREE);
   ibuf->index->search_info = btr_search_info_create(ibuf->index->heap);
   ibuf->index->page = FSP_IBUF_TREE_ROOT_PAGE_NO;
   ut_d(ibuf->index->cached = true);
@@ -771,9 +773,6 @@ void ibuf_set_free_bits_func(
                                          UT_LOCATION_HERE, &mtr);
 
   switch (space->purpose) {
-    case FIL_TYPE_LOG:
-      ut_d(ut_error);
-      ut_o(break);
     case FIL_TYPE_TABLESPACE:
       break;
     case FIL_TYPE_TEMPORARY:
@@ -2048,7 +2047,7 @@ static ulint ibuf_get_merge_page_nos_func(bool contract, const rec_t *rec,
   prev_space_id = 0;
 
   /* Go backwards from the first rec until we reach the border of the
-  'merge area', or the page start or the limit of storeable pages is
+  'merge area', or the page start or the limit of storable pages is
   reached */
 
   while (!page_rec_is_infimum(rec) && UNIV_LIKELY(n_pages < limit)) {
@@ -2412,10 +2411,12 @@ ulint ibuf_merge_in_background(bool full) {
     mutex_enter(&ibuf_mutex);
 
     /* If the ibuf->size is more than half the max_size
-    then we make more agreesive contraction.
+    then we make more aggressive contraction.
     +1 is to avoid division by zero. */
     if (ibuf->size > ibuf->max_size / 2) {
       ulint diff = ibuf->size - ibuf->max_size / 2;
+      /* limits to around 100% value, for shrinking max_size case */
+      diff = std::min(diff, ibuf->max_size);
       n_pages += PCT_IO((diff * 100) / (ibuf->max_size + 1));
     }
 
@@ -2481,15 +2482,14 @@ static bool ibuf_get_volume_buffered_hash(
     ulint size)        /*!< in: number of elements in hash array */
 {
   ulint len;
-  ulint fold;
   ulint bitmask;
 
   len = ibuf_rec_get_size(
       rec, types, rec_get_n_fields_old_raw(rec) - IBUF_REC_FIELD_USER, comp);
-  fold = ut_fold_binary(data, len);
+  const auto hash_value = ut::hash_binary(data, len);
 
-  hash += (fold / (CHAR_BIT * sizeof *hash)) % size;
-  bitmask = static_cast<ulint>(1) << (fold % (CHAR_BIT * sizeof(*hash)));
+  hash += (hash_value / (CHAR_BIT * sizeof *hash)) % size;
+  bitmask = static_cast<ulint>(1) << (hash_value % (CHAR_BIT * sizeof(*hash)));
 
   if (*hash & bitmask) {
     return false;
@@ -3501,8 +3501,8 @@ static void ibuf_insert_to_index_page(
   /* A change buffer merge must occur before users are granted
   any access to the page. No adaptive hash index entries may
   point to a freshly read page. */
-  ut_ad(!block->index);
-  assert_block_ahi_empty(block);
+  ut_ad(!block->ahi.index);
+  block->ahi.assert_empty();
 
   if (UNIV_UNLIKELY(dict_table_is_comp(index->table) != page_is_comp(page))) {
     ib::warn(ER_IB_MSG_611)
@@ -3557,7 +3557,8 @@ static void ibuf_insert_to_index_page(
     row_ins_sec_index_entry_by_modify(BTR_MODIFY_LEAF). */
     ut_ad(rec_get_deleted_flag(rec, page_is_comp(page)));
 
-    offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
     update = row_upd_build_sec_rec_difference_binary(rec, index, offsets, entry,
                                                      heap);
 
@@ -3609,17 +3610,17 @@ static void ibuf_insert_to_index_page(
     /* A collation may identify values that differ in
     storage length.
     Some examples (1 or 2 bytes):
-    utf8_turkish_ci: I = U+0131 LATIN SMALL LETTER DOTLESS I
-    utf8_general_ci: S = U+00DF LATIN SMALL LETTER SHARP S
-    utf8_general_ci: A = U+00E4 LATIN SMALL LETTER A WITH DIAERESIS
+    utf8mb3_turkish_ci: I = U+0131 LATIN SMALL LETTER DOTLESS I
+    utf8mb3_general_ci: S = U+00DF LATIN SMALL LETTER SHARP S
+    utf8mb3_general_ci: A = U+00E4 LATIN SMALL LETTER A WITH DIAERESIS
 
     latin1_german2_ci: SS = U+00DF LATIN SMALL LETTER SHARP S
 
     Examples of a character (3-byte UTF-8 sequence)
     identified with 2 or 4 characters (1-byte UTF-8 sequences):
 
-    utf8_unicode_ci: 'II' = U+2171 SMALL ROMAN NUMERAL TWO
-    utf8_unicode_ci: '(10)' = U+247D PARENTHESIZED NUMBER TEN
+    utf8mb3_unicode_ci: 'II' = U+2171 SMALL ROMAN NUMERAL TWO
+    utf8mb3_unicode_ci: '(10)' = U+247D PARENTHESIZED NUMBER TEN
     */
 
     /* Delete the different-length record, and insert the
@@ -3728,7 +3729,8 @@ static void ibuf_delete(const dtuple_t *entry, /*!< in: entry */
 
     rec_offs_init(offsets_);
 
-    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
 
     if (page_get_n_recs(page) <= 1 ||
         !(REC_INFO_DELETED_FLAG & rec_get_info_bits(rec, page_is_comp(page)))) {

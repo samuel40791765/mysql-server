@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2005, 2021, Oracle and/or its affiliates.
+Copyright (c) 2005, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -125,6 +125,8 @@ struct Row {
 
   /** Destructor. */
   ~Row() = default;
+
+  Row &operator=(const Row &) = default;
 
   /** Build a row from a raw record.
   @param[in,out] ctx            DDL context.

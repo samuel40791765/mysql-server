@@ -1,4 +1,4 @@
-# Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+# Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -32,10 +32,9 @@ SET(lib_source_files
   certificate_generator.cc
   certificate_handler.cc
   config_files.cc
-  config_generator.cc
   cluster_metadata.cc
   cluster_metadata_dynamic_state.cc
-  router_app.cc
+  cluster_metadata_instance_attributes.cc
   sys_user_operations.cc
   utils.cc
   uri.cc
@@ -45,14 +44,6 @@ SET(lib_source_files
   common/mysql_session.cc
   common/utils_sqlstring.cc
   )
-IF(WIN32)
-  LIST(APPEND lib_source_files
-    windows/main-windows.cc
-    windows/nt_servc.cc
-    windows/password_vault.cc
-    windows/service_operations.cc
-    )
-ENDIF()
 
 SET(source_files main.cc)
 
@@ -70,9 +61,11 @@ TARGET_LINK_LIBRARIES(router_lib
   ${CMAKE_DL_LIBS}
   harness-library
   harness_stdx
+  harness_tls
   mysqlclient
   ${SSL_LIBRARIES}
   io_component
+  extra::rapidjson
   )
 TARGET_INCLUDE_DIRECTORIES(router_lib
   PUBLIC
@@ -103,15 +96,44 @@ SET_PATH_TO_CUSTOM_SSL_FOR_APPLE(router_lib)
 GENERATE_EXPORT_HEADER(router_lib
   EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/../include/mysqlrouter/router_export.h)
 
+SET(frontend_lib_source_files
+  router_app.cc
+  config_generator.cc
+  )
+
+IF(WIN32)
+  LIST(APPEND frontend_lib_source_files
+    windows/main-windows.cc
+    windows/nt_servc.cc
+    windows/password_vault.cc
+    windows/service_operations.cc
+    )
+ENDIF()
+
+ADD_LIBRARY(router_frontend_lib STATIC
+  ${frontend_lib_source_files})
+
+TARGET_LINK_LIBRARIES(router_frontend_lib
+  router_lib
+  harness-library)
+
+TARGET_INCLUDE_DIRECTORIES(router_frontend_lib
+  PUBLIC
+  ${PROJECT_SOURCE_DIR}/src/routing/include/
+  ${PROJECT_SOURCE_DIR}/src/metadata_cache/include/
+  ${PROJECT_SOURCE_DIR}/src/http/include/
+  ${PROJECT_SOURCE_DIR}/src/rest_api/include/
+)
+
 MYSQL_ADD_EXECUTABLE(mysqlrouter
   ${source_files}
   COMPONENT Router
   LINK_LIBRARIES
   harness-library
   router_lib
+  router_frontend_lib
   ${CMAKE_DL_LIBS}
   )
-
 ADD_INSTALL_RPATH(mysqlrouter "${ROUTER_INSTALL_RPATH}")
 
 IF(SOLARIS)

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -89,7 +89,7 @@ TEST_P(ConnectionPoolConfigTest, check) {
 
   std::vector<std::string> lines;
   {
-    std::istringstream ss{router.get_full_logfile()};
+    std::istringstream ss{router.get_logfile_content()};
 
     std::string line;
     while (std::getline(ss, line, '\n')) {

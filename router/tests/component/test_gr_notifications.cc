@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, 2022, Oracle and/or its affiliates.
+Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "keyring/keyring_manager.h"
 #include "mock_server_rest_client.h"
 #include "mock_server_testutils.h"
+#include "mysql/harness/stdx/ranges.h"
 #include "mysqlrouter/mysql_session.h"
 #include "mysqlrouter/rest_client.h"
 #include "router_component_system_layout.h"
@@ -149,27 +150,23 @@ class GrNotificationsTest : public RouterComponentTest {
     JsonAllocator allocator;
     gr_id_.reset(new JsonValue(gr_id.c_str(), gr_id.length(), allocator));
 
-    size_t i{0};
     gr_nodes_.reset(new JsonValue(rapidjson::kArrayType));
     for (auto &gr_node : gr_node_ports) {
       JsonValue node(rapidjson::kArrayType);
       node.PushBack(JsonValue(static_cast<int>(gr_node)), allocator);
       node.PushBack(JsonValue("ONLINE", strlen("ONLINE"), allocator),
                     allocator);
-      node.PushBack(JsonValue(static_cast<int>(gr_node_xports[i++])),
-                    allocator);
       gr_nodes_->PushBack(node, allocator);
     }
 
-    i = 0;
     cluster_nodes_.reset(new JsonValue(rapidjson::kArrayType));
-    for (auto &cluster_node : cluster_node_ports) {
+    const auto &cluster_nodes =
+        cluster_node_ports.empty() ? gr_node_ports : cluster_node_ports;
+    for (auto [i, cluster_node] : stdx::views::enumerate(cluster_nodes)) {
       JsonValue node(rapidjson::kArrayType);
       node.PushBack(JsonValue(static_cast<int>(cluster_node)), allocator);
-      node.PushBack(JsonValue("ONLINE", strlen("ONLINE"), allocator),
-                    allocator);
-      node.PushBack(JsonValue(static_cast<int>(gr_node_xports[i++])),
-                    allocator);
+      node.PushBack(JsonValue(static_cast<int>(gr_node_xports[i])), allocator);
+      node.PushBack(JsonValue("{}", strlen("{}"), allocator), allocator);
       cluster_nodes_->PushBack(node, allocator);
     }
 
@@ -237,6 +234,7 @@ class GrNotificationsTest : public RouterComponentTest {
                        mysqlx_wait_timeout_unsupported ? 1 : 0, allocator);
     json_doc.AddMember("gr_notices_unsupported", gr_notices_unsupported ? 1 : 0,
                        allocator);
+    json_doc.AddMember("md_query_count", 0, allocator);
     const auto json_str = json_to_string(json_doc);
     EXPECT_NO_THROW(MockServerRestClient(http_port).set_globals(json_str));
   }
@@ -760,7 +758,7 @@ TEST_P(GrNotificationMysqlxWaitTimeoutUnsupportedTest,
   ASSERT_GT(md_queries_count, 1);
 
   // there should be no WARNINGs nor ERRORs in the log file
-  const std::string log_content = router.get_full_logfile();
+  const std::string log_content = router.get_logfile_content();
 
   EXPECT_THAT(log_content,
               ::testing::Not(::testing::AnyOf(
@@ -956,10 +954,9 @@ TEST_P(GrNotificationsConfErrorTest, GrNotificationConfError) {
   const auto wait_for_process_exit_timeout{10000ms};
   check_exit_code(router, EXIT_FAILURE, wait_for_process_exit_timeout);
 
-  const std::string log_content = router.get_full_logfile();
+  const std::string log_content = router.get_logfile_content();
   EXPECT_NE(log_content.find(test_params.expected_error_message),
-            log_content.npos)
-      << log_content;
+            log_content.npos);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1015,7 +1012,7 @@ TEST_F(GrNotificationsTest, GrNotificationInconsistentMetadata) {
         trace_file, nodes_ports[i], EXIT_SUCCESS, false, http_ports[i],
         nodes_xports[i]));
 
-    set_mock_metadata(http_ports[i], "00-000", nodes_ports, nodes_xports,
+    set_mock_metadata(http_ports[i], "uuid", nodes_ports, nodes_xports,
                       /*sent=*/false, nodes_ports);
 
     SCOPED_TRACE(
@@ -1039,7 +1036,7 @@ TEST_F(GrNotificationsTest, GrNotificationInconsistentMetadata) {
 
   SCOPED_TRACE("// Create a router state file");
   const std::string state_file = GrNotificationsTest::create_state_file(
-      temp_test_dir.name(), "00-000", nodes_ports);
+      temp_test_dir.name(), "uuid", nodes_ports);
 
   SCOPED_TRACE(
       "// Create a configuration file sections with high ttl so that "
@@ -1075,7 +1072,7 @@ TEST_F(GrNotificationsTest, GrNotificationInconsistentMetadata) {
   // cluster metadata should be missing a newly added node, GR metaadata should
   // already have it
   for (size_t i = 0; i <= 2; i++) {
-    set_mock_metadata(http_ports[i], "00-000", nodes_ports, nodes_xports,
+    set_mock_metadata(http_ports[i], "uuid", nodes_ports, nodes_xports,
                       /*send=*/true, cluster_nodes_ports);
   }
 
@@ -1094,7 +1091,7 @@ TEST_F(GrNotificationsTest, GrNotificationInconsistentMetadata) {
   SCOPED_TRACE("// Now let the metadata be consistent again");
   // GR tables and cluster metadata should both contain the newly added node
   for (size_t i = 0; i <= 2; i++) {
-    set_mock_metadata(http_ports[i], "00-000", nodes_ports, nodes_xports,
+    set_mock_metadata(http_ports[i], "uuid", nodes_ports, nodes_xports,
                       /*send=*/true, nodes_ports);
   }
 
@@ -1219,19 +1216,19 @@ TEST_F(GrNotificationsTest, AddNode) {
 
   SCOPED_TRACE(
       "// Check that GR notices have been enabled exactly once on each node");
-  const std::string log_content = router.get_full_logfile();
+  const std::string log_content = router.get_logfile_content();
   for (unsigned i = 0; i < kCurrentClusterNodesCount; ++i) {
     const std::string needle =
         "Enabling GR notices for cluster 'test' "
         "changes on node 127.0.0.1:" +
         std::to_string(cluster_nodes_xports[i]);
-    EXPECT_EQ(1, count_str_occurences(log_content, needle)) << log_content;
+    EXPECT_EQ(1, count_str_occurences(log_content, needle));
   }
 
   SCOPED_TRACE(
       "// Make sure no GR notice connection has been removed in the process");
   const std::string needle = "Removing unused GR notification session";
-  EXPECT_EQ(0, count_str_occurences(log_content, needle)) << log_content;
+  EXPECT_EQ(0, count_str_occurences(log_content, needle));
 }
 
 /**
@@ -1319,13 +1316,13 @@ TEST_F(GrNotificationsTest, RemoveNode) {
 
   SCOPED_TRACE(
       "// Check that GR notices have been enabled exactly once on each node");
-  const std::string log_content = router.get_full_logfile();
+  const std::string log_content = router.get_logfile_content();
   for (unsigned i = 0; i < kCurrentClusterNodesCount; ++i) {
     const std::string needle =
         "Enabling GR notices for cluster 'test' "
         "changes on node 127.0.0.1:" +
         std::to_string(cluster_nodes_xports[i]);
-    EXPECT_EQ(1, count_str_occurences(log_content, needle)) << log_content;
+    EXPECT_EQ(1, count_str_occurences(log_content, needle));
   }
 
   SCOPED_TRACE(

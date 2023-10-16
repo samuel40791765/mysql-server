@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
    as published by the Free Software Foundation.
@@ -34,6 +34,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <sys/types.h>
+#include <iterator>
 
 #include "my_alloc.h"
 #include "my_compiler.h"
@@ -48,9 +49,9 @@
 // For instrumented code: Always use malloc(); never reuse a chunk.
 // This gives a lot more memory chunks, each with a red-zone around them.
 #if defined(HAVE_VALGRIND) || defined(HAVE_ASAN)
-#define MEM_ROOT_SINGLE_CHUNKS 1
+static constexpr bool MEM_ROOT_SINGLE_CHUNKS = true;
 #else
-#define MEM_ROOT_SINGLE_CHUNKS 0
+static constexpr bool MEM_ROOT_SINGLE_CHUNKS = false;
 #endif
 
 MEM_ROOT::Block *MEM_ROOT::AllocBlock(size_t wanted_length,
@@ -90,13 +91,16 @@ MEM_ROOT::Block *MEM_ROOT::AllocBlock(size_t wanted_length,
     if (m_error_handler) (m_error_handler)();
     return nullptr;
   }
+  TRASH(new_block, bytes_to_alloc);
   new_block->end = pointer_cast<char *>(new_block) + bytes_to_alloc;
 
   m_allocated_size += length;
 
   // Make the default block size 50% larger next time.
   // This ensures O(1) total mallocs (assuming Clear() is not called).
-  m_block_size += m_block_size / 2;
+  if (!MEM_ROOT_SINGLE_CHUNKS) {
+    m_block_size += m_block_size / 2;
+  }
   return new_block;
 }
 
@@ -146,6 +150,9 @@ void *MEM_ROOT::AllocSlow(size_t length) {
 }
 
 bool MEM_ROOT::ForceNewBlock(size_t minimum_length) {
+  if (MEM_ROOT_SINGLE_CHUNKS) {
+    assert(m_block_size == m_orig_block_size);
+  }
   Block *new_block = AllocBlock(/*wanted_length=*/ALIGN_SIZE(m_block_size),
                                 minimum_length);  // Will modify block_size.
   if (new_block == nullptr) return true;
@@ -195,6 +202,7 @@ void MEM_ROOT::ClearForReuse() {
   Block *start = m_current_block->prev;
   m_current_block->prev = nullptr;
   m_allocated_size = m_current_free_end - m_current_free_start;
+  TRASH(m_current_free_start, m_allocated_size);
 
   FreeBlocks(start);
 }
@@ -204,6 +212,7 @@ void MEM_ROOT::FreeBlocks(Block *start) {
   // touch it after we've started freeing.
   for (Block *block = start; block != nullptr;) {
     Block *prev = block->prev;
+    TRASH(block, std::distance(pointer_cast<char *>(block), block->end));
     my_free(block);
     block = prev;
   }

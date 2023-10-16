@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -179,7 +179,7 @@ struct PART_PRUNE_PARAM {
   /* Same as above for subpartitioning */
   bool *is_subpart_keypart;
 
-  bool ignore_part_fields; /* Ignore rest of partioning fields */
+  bool ignore_part_fields; /* Ignore rest of partitioning fields */
 
   /***************************************************************
    Following fields form find_used_partitions() recursion context:
@@ -305,8 +305,9 @@ bool prune_partitions(THD *thd, TABLE *table, Query_block *query_block,
   range_par->table = table;
   range_par->query_block = query_block;
   /* range_par->cond doesn't need initialization */
-  const table_map prev_tables = INNER_TABLE_BIT;
-  const table_map read_tables = INNER_TABLE_BIT;
+  const bool const_only = !thd->lex->is_query_tables_locked();
+  const table_map prev_tables = const_only ? 0 : INNER_TABLE_BIT;
+  const table_map read_tables = const_only ? 0 : INNER_TABLE_BIT;
   const table_map current_table = table->pos_in_table_list->map();
 
   range_par->keys = 1;  // one index
@@ -611,7 +612,7 @@ static int find_used_partitions_imerge(THD *thd, PART_PRUNE_PARAM *ppar,
       * recursively walks the SEL_ARG* tree collecting partitioning "intervals"
       * finds the partitions one needs to use to get rows in these intervals
       * marks these partitions as used.
-    The next session desribes the process in greater detail.
+    The next session describes the process in greater detail.
 
   IMPLEMENTATION
     TYPES OF RESTRICTIONS THAT WE CAN OBTAIN PARTITIONS FOR
@@ -922,7 +923,7 @@ static int find_used_partitions(THD *thd, PART_PRUNE_PARAM *ppar,
           res = 0; /* No satisfying partitions */
           goto pop_and_go_right;
         }
-        /* Rembember the limit we got - single partition #part_id */
+        /* Remember the limit we got - single partition #part_id */
         init_single_partition_iterator(part_id, &ppar->part_iter);
 
         /*
@@ -1049,7 +1050,7 @@ static void mark_all_partitions_as_used(partition_info *part_info) {
     partitioning index description.
 
     We can't process GEOMETRY fields - for these fields singlepoint intervals
-    cant be generated, and non-singlepoint are "special" kinds of intervals
+    can't be generated, and non-singlepoint are "special" kinds of intervals
     to which our processing logic can't be applied.
 
     It is not known if we could process ENUM fields, so they are disabled to be

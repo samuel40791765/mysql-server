@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -274,16 +274,23 @@ mem_block_t *mem_heap_create_block(mem_heap_t *heap, ulint n,
     len = UNIV_PAGE_SIZE;
 
     if ((type & MEM_HEAP_BTR_SEARCH) && heap) {
-      /* We cannot allocate the block from the
-      buffer pool, but must get the free block from
-      the heap header free block field */
+      /* We cannot allocate the block from the buffer pool, but must get the
+      free block from free block field of the heap base block. This is because
+      we hold the X latch on AHI, and getting a block by eviction from LRU might
+      require it too. See btr_search_check_free_space_in_heap.
+      It is safe to do load()->if(!=null)->store(null) as the methods that do
+      such store of nullptr value are synchronized. The if statement is
+      important, because we can suffer from ABA problem if the value read is
+      nullptr, as it could be replaced with non-null by any concurrent
+      btr_search_check_free_space_in_heap, which is the only not synchronized
+      modify access to heap. */
+      ut_ad(heap->free_block_ptr != nullptr);
+      buf_block = static_cast<buf_block_t *>(heap->free_block_ptr->load());
 
-      buf_block = static_cast<buf_block_t *>(heap->free_block);
-      heap->free_block = nullptr;
-
-      if (UNIV_UNLIKELY(!buf_block)) {
-        return (nullptr);
+      if (!buf_block) {
+        return nullptr;
       }
+      heap->free_block_ptr->store(nullptr);
     } else {
       buf_block = buf_block_alloc(nullptr);
     }
@@ -306,14 +313,14 @@ mem_block_t *mem_heap_create_block(mem_heap_t *heap, ulint n,
   UNIV_MEM_ALLOC(block, MEM_BLOCK_HEADER_SIZE);
 
   block->buf_block = buf_block;
-  block->free_block = nullptr;
+  block->free_block_ptr = nullptr;
 
 #else  /* !UNIV_LIBRARY && !UNIV_HOTBACKUP */
   len = MEM_BLOCK_HEADER_SIZE + MEM_SPACE_NEEDED(n);
   block = static_cast<mem_block_t *>(
       ut::malloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, len));
   ut_a(block);
-  block->free_block = nullptr;
+  block->free_block_ptr = nullptr;
 #endif /* !UNIV_LIBRARY && !UNIV_HOTBACKUP */
 
   ut_d(ut_strlcpy_rev(block->file_name, file_name, sizeof(block->file_name)));
@@ -448,18 +455,28 @@ void mem_heap_block_free(mem_heap_t *heap,   /*!< in: heap */
 /** Frees the free_block field from a memory heap. */
 void mem_heap_free_block_free(mem_heap_t *heap) /*!< in: heap */
 {
-  if (UNIV_LIKELY_NULL(heap->free_block)) {
+  if (heap->free_block_ptr == nullptr) {
+    return;
+  }
+
+  /* It is safe to do load()->if(!=null)->store(null) as the methods that do
+  such store of nullptr value are synchronized. The if statement is important,
+  because we can suffer from ABA problem if the value read is nullptr, as it
+  could be replaced with non-null by any concurrent
+  btr_search_check_free_space_in_heap, which is the only not synchronized
+  modify access to heap. */
+  const auto block = static_cast<buf_block_t *>(heap->free_block_ptr->load());
+  if (block) {
 #ifdef UNIV_DEBUG_VALGRIND
-    void *block = static_cast<buf_block_t *>(heap->free_block)->frame;
+    const auto frame = block->frame;
     /* Make memory available again for the buffer pool, since
     we previously set parts of the block to "free" state in
     heap allocator. */
-    UNIV_MEM_ALLOC(block, UNIV_PAGE_SIZE);
+    UNIV_MEM_ALLOC(frame, UNIV_PAGE_SIZE);
 #endif
 
-    buf_block_free(static_cast<buf_block_t *>(heap->free_block));
-
-    heap->free_block = nullptr;
+    heap->free_block_ptr->store(nullptr);
+    buf_block_free(block);
   }
 }
 #endif /* !UNIV_LIBRARY */

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -49,6 +49,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "fts0fts.h"
 #endif /* !UNIV_HOTBACKUP */
 #include "ha_prototypes.h"
+#include "log0chkp.h"
+#include "log0write.h"
 #include "my_dbug.h"
 
 #ifndef UNIV_HOTBACKUP
@@ -166,7 +168,7 @@ dict_persist_t *dict_persist = nullptr;
 /** @brief the data dictionary rw-latch protecting dict_sys
 
 table create, drop, etc. reserve this in X-mode; implicit or
-backround operations purge, rollback, foreign key checks reserve this
+background operations purge, rollback, foreign key checks reserve this
 in S-mode; we cannot trust that MySQL protects implicit or background
 operations a table drop since MySQL does not know of them; therefore
 we need this; NOTE: a transaction which reserves this must keep book
@@ -225,13 +227,13 @@ static void dict_index_remove_from_cache_low(
     dict_table_t *table, /*!< in/out: table */
     dict_index_t *index, /*!< in, own: index */
     bool lru_evict);     /*!< in: true if page being evicted
-                          to make room in the table LRU list */
+                         to make room in the table LRU list */
 
 /** Calculate and update the redo log margin for current tables which
 have some changed dynamic metadata in memory and have not been written
 back to mysql.innodb_dynamic_metadata. Update LSN limit, which is used
 to stop user threads when redo log is running out of space and they
-do not hold latches (log.free_check_limit_sn). */
+do not hold latches (log.free_check_limit_lsn). */
 static void dict_persist_update_log_margin(void);
 
 /** Removes a table object from the dictionary cache. */
@@ -320,7 +322,8 @@ static void dict_table_stats_latch_alloc(void *table_void) {
 
   ut_a(table->stats_latch != nullptr);
 
-  rw_lock_create(dict_table_stats_key, table->stats_latch, SYNC_INDEX_TREE);
+  rw_lock_create(dict_table_stats_key, table->stats_latch,
+                 LATCH_ID_DICT_TABLE_STATS);
 }
 
 /** Deinit and free a dict_table_t's stats latch.
@@ -465,8 +468,8 @@ static void dict_table_try_drop_aborted(
 static void dict_table_try_drop_aborted_and_mutex_exit(
     dict_table_t *table, /*!< in: table (may be NULL) */
     bool try_drop)       /*!< in: false if should try to
-                          drop indexes whose online creation
-                          was aborted */
+                         drop indexes whose online creation
+                         was aborted */
 {
   if (try_drop && table != nullptr && table->drop_aborted &&
       table->get_ref_count() == 1 && table->first_index()) {
@@ -1014,14 +1017,14 @@ void dict_init(void) {
 
   mutex_create(LATCH_ID_DICT_SYS, &dict_sys->mutex);
 
-  dict_sys->table_hash = hash_create(
+  dict_sys->table_hash = ut::new_<hash_table_t>(
       buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE));
 
-  dict_sys->table_id_hash = hash_create(
+  dict_sys->table_id_hash = ut::new_<hash_table_t>(
       buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE));
 
   rw_lock_create(dict_operation_lock_key, dict_operation_lock,
-                 SYNC_DICT_OPERATION);
+                 LATCH_ID_DICT_OPERATION);
 
 #ifndef UNIV_HOTBACKUP
   if (!srv_read_only_mode) {
@@ -1059,8 +1062,8 @@ dict_table_t *dict_table_open_on_name(
     const char *table_name,       /*!< in: table name */
     bool dict_locked,             /*!< in: true=data dictionary locked */
     bool try_drop,                /*!< in: true=try to drop any orphan
-                                   indexes after an aborted online
-                                   index creation */
+                                  indexes after an aborted online
+                                  index creation */
     dict_err_ignore_t ignore_err) /*!< in: error to be ignored when
                                   loading a table definition */
 {
@@ -1185,24 +1188,21 @@ void dict_table_set_big_rows(dict_table_t *table) {
 }
 
 void dict_table_add_to_cache(dict_table_t *table, bool can_be_evicted) {
-  ulint fold;
-  ulint id_fold;
-
   ut_ad(dict_lru_validate());
   ut_ad(dict_sys_mutex_own());
 
   table->cached = true;
 
-  fold = ut_fold_string(table->name.m_name);
-  id_fold = ut_fold_ull(table->id);
+  const auto name_hash_value = ut::hash_string(table->name.m_name);
+  const auto index_id_hash_value = ut::hash_uint64(table->id);
 
   dict_table_set_big_rows(table);
 
   /* Look for a table with the same name: error if such exists */
   {
     dict_table_t *table2;
-    HASH_SEARCH(name_hash, dict_sys->table_hash, fold, dict_table_t *, table2,
-                ut_ad(table2->cached),
+    HASH_SEARCH(name_hash, dict_sys->table_hash, name_hash_value,
+                dict_table_t *, table2, ut_ad(table2->cached),
                 !strcmp(table2->name.m_name, table->name.m_name));
     ut_a(table2 == nullptr);
 
@@ -1217,8 +1217,9 @@ void dict_table_add_to_cache(dict_table_t *table, bool can_be_evicted) {
   /* Look for a table with the same id: error if such exists */
   {
     dict_table_t *table2;
-    HASH_SEARCH(id_hash, dict_sys->table_id_hash, id_fold, dict_table_t *,
-                table2, ut_ad(table2->cached), table2->id == table->id);
+    HASH_SEARCH(id_hash, dict_sys->table_id_hash, index_id_hash_value,
+                dict_table_t *, table2, ut_ad(table2->cached),
+                table2->id == table->id);
     ut_a(table2 == nullptr);
 
 #ifdef UNIV_DEBUG
@@ -1230,10 +1231,12 @@ void dict_table_add_to_cache(dict_table_t *table, bool can_be_evicted) {
   }
 
   /* Add table to hash table of tables */
-  HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, fold, table);
+  HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, name_hash_value,
+              table);
 
   /* Add table to hash table of tables based on table id */
-  HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash, id_fold, table);
+  HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
+              index_id_hash_value, table);
 
   table->can_be_evicted = can_be_evicted;
 
@@ -1281,8 +1284,6 @@ static bool dict_table_can_be_evicted(
 
     for (index = table->first_index(); index != nullptr;
          index = index->next()) {
-      const btr_search_t *info = btr_search_get_info(index);
-
       /* We are not allowed to free the in-memory index
       struct dict_index_t until all entries in the adaptive
       hash index that point to any of the page belonging to
@@ -1295,7 +1296,7 @@ static bool dict_table_can_be_evicted(
 
       See also: dict_index_remove_from_cache_low() */
 
-      if (btr_search_info_get_ref_count(info, index) > 0) {
+      if (index->search_info->ref_count > 0) {
         return false;
       }
     }
@@ -1402,6 +1403,8 @@ void dict_table_move_from_non_lru_to_lru(dict_table_t *table) {
   table->can_be_evicted = true;
 }
 
+#ifndef UNIV_HOTBACKUP
+
 /** Look up an index in a table.
 @param[in]      table   table
 @param[in]      id      index identifier
@@ -1419,7 +1422,6 @@ static const dict_index_t *dict_table_find_index_on_id(
   return (nullptr);
 }
 
-#ifndef UNIV_HOTBACKUP
 const dict_index_t *dict_index_find(const index_id_t &id) {
   ut_ad(dict_sys_mutex_own());
 
@@ -1467,7 +1469,6 @@ dberr_t dict_table_rename_in_cache(
   dberr_t err;
   dict_foreign_t *foreign;
   dict_index_t *index;
-  ulint fold;
   char old_name[MAX_FULL_NAME_LEN + 1];
 
   ut_ad(dict_sys_mutex_own());
@@ -1481,12 +1482,12 @@ dberr_t dict_table_rename_in_cache(
         << MAX_FULL_NAME_LEN;
   }
 
-  fold = ut_fold_string(new_name);
+  const auto hash_value = ut::hash_string(new_name);
 
   /* Look for a table with the same name: error if such exists */
   dict_table_t *table2;
-  HASH_SEARCH(name_hash, dict_sys->table_hash, fold, dict_table_t *, table2,
-              ut_ad(table2->cached),
+  HASH_SEARCH(name_hash, dict_sys->table_hash, hash_value, dict_table_t *,
+              table2, ut_ad(table2->cached),
               (ut_strcmp(table2->name.m_name, new_name) == 0));
 
   DBUG_EXECUTE_IF(
@@ -1600,7 +1601,7 @@ dberr_t dict_table_rename_in_cache(
 
   /* Remove table from the hash tables of tables */
   HASH_DELETE(dict_table_t, name_hash, dict_sys->table_hash,
-              ut_fold_string(old_name), table);
+              ut::hash_string(old_name), table);
 
   if (strlen(new_name) > strlen(table->name.m_name)) {
     /* We allocate MAX_FULL_NAME_LEN + 1 bytes here to avoid
@@ -1614,7 +1615,7 @@ dberr_t dict_table_rename_in_cache(
   strcpy(table->name.m_name, new_name);
 
   /* Add table to hash table of tables */
-  HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, fold, table);
+  HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, hash_value, table);
 
   dict_sys->size += strlen(new_name) - strlen(old_name);
   ut_a(dict_sys->size > 0);
@@ -1843,26 +1844,42 @@ void dict_table_change_id_in_cache(
   ut_ad(dict_sys_mutex_own());
   ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
 
+#ifdef UNIV_DEBUG
+
+  auto id_fold = ut::hash_uint64(table->id);
+  /* Table with the same id should not exist in cache */
+  {
+    dict_table_t *table2;
+    HASH_SEARCH(id_hash, dict_sys->table_id_hash, id_fold, dict_table_t *,
+                table2, ut_ad(table2->cached), table2->id == new_id);
+    ut_ad(table2 == nullptr);
+
+    if (table2 != nullptr) {
+      return;
+    }
+  }
+#endif /*UNIV_DEBUG*/
+
   /* Remove the table from the hash table of id's */
 
   HASH_DELETE(dict_table_t, id_hash, dict_sys->table_id_hash,
-              ut_fold_ull(table->id), table);
+              ut::hash_uint64(table->id), table);
+
   table->id = new_id;
 
   /* Add the table back to the hash table */
   HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
-              ut_fold_ull(table->id), table);
+              ut::hash_uint64(table->id), table);
 }
 
 /** Removes a table object from the dictionary cache. */
 static void dict_table_remove_from_cache_low(
     dict_table_t *table, /*!< in, own: table */
     bool lru_evict)      /*!< in: true if table being evicted
-                          to make room in the table LRU list */
+                         to make room in the table LRU list */
 {
   dict_foreign_t *foreign;
   dict_index_t *index;
-  lint size;
 
   ut_ad(table);
   ut_ad(dict_lru_validate());
@@ -1915,10 +1932,10 @@ static void dict_table_remove_from_cache_low(
   /* Remove table from the hash tables of tables */
 
   HASH_DELETE(dict_table_t, name_hash, dict_sys->table_hash,
-              ut_fold_string(table->name.m_name), table);
+              ut::hash_string(table->name.m_name), table);
 
   HASH_DELETE(dict_table_t, id_hash, dict_sys->table_id_hash,
-              ut_fold_ull(table->id), table);
+              ut::hash_uint64(table->id), table);
 
   /* Remove table from LRU or non-LRU list. */
   if (table->can_be_evicted) {
@@ -1937,7 +1954,8 @@ static void dict_table_remove_from_cache_low(
     ut::delete_(table->vc_templ);
   }
 
-  size = mem_heap_get_size(table->heap) + strlen(table->name.m_name) + 1;
+  const auto size =
+      mem_heap_get_size(table->heap) + strlen(table->name.m_name) + 1;
 
   ut_ad(dict_sys->size >= size);
 
@@ -1964,7 +1982,7 @@ void dict_partitioned_table_remove_from_cache(const char *name) {
     dict_table_t *table;
 
     table =
-        static_cast<dict_table_t *>(HASH_GET_FIRST(dict_sys->table_hash, i));
+        static_cast<dict_table_t *>(hash_get_first(dict_sys->table_hash, i));
 
     while (table != nullptr) {
       dict_table_t *prev_table = table;
@@ -2388,7 +2406,7 @@ static void dict_index_try_cache_rec_offsets(dict_index_t *index) {
       return;
     }
   }
-  /* inlined rec_get_offsets_func() and rec_init_offsets()'s fast-path without
+  /* inlined rec_get_offsets() and rec_init_offsets()'s fast-path without
   referencing rec follows: */
 
   const auto offsets_len = n_unique_in_tree + (1 + REC_OFFS_HEADER_SIZE);
@@ -2534,7 +2552,7 @@ dberr_t dict_index_add_to_cache_w_vcol(dict_table_t *table, dict_index_t *index,
   new_index->search_info = btr_search_info_create(new_index->heap);
 
   new_index->page = page_no;
-  rw_lock_create(index_tree_rw_lock_key, &new_index->lock, SYNC_INDEX_TREE);
+  rw_lock_create(index_tree_rw_lock_key, &new_index->lock, LATCH_ID_INDEX_TREE);
 
   /* The conditions listed here correspond to the simplest call-path through
   rec_get_offsets(). If they are met now, we can cache rec offsets and use the
@@ -2597,15 +2615,17 @@ dberr_t dict_index_add_to_cache_w_vcol(dict_table_t *table, dict_index_t *index,
   new_index->set_instant_nullable(new_index->n_nullable);
 
   if (new_index->is_clustered()) {
+    if (new_index->table->has_row_versions()) {
+      new_index->row_versions = true;
+    }
+
     if (new_index->table->has_instant_cols()) {
       ut_ad(new_index->table->is_upgraded_instant());
       new_index->instant_cols = true;
-      new_index->set_instant_nullable(
-          new_index->get_n_nullable_before(new_index->get_instant_fields()));
-    }
-
-    if (new_index->table->has_row_versions()) {
-      new_index->row_versions = true;
+      const size_t n_instant_fields = new_index->get_instant_fields();
+      size_t new_n_nullable =
+          new_index->calculate_n_instant_nullable(n_instant_fields);
+      new_index->set_instant_nullable(new_n_nullable);
     }
   }
 
@@ -2619,12 +2639,8 @@ static void dict_index_remove_from_cache_low(
     dict_table_t *table, /*!< in/out: table */
     dict_index_t *index, /*!< in, own: index */
     bool lru_evict)      /*!< in: true if index being evicted
-                          to make room in the table LRU list */
+                         to make room in the table LRU list */
 {
-  lint size;
-  ulint retries = 0;
-  btr_search_t *info;
-
   ut_ad(table && index);
   ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
   ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
@@ -2638,48 +2654,7 @@ static void dict_index_remove_from_cache_low(
     row_log_free(index->online_log);
   }
 
-  /* We always create search info whether adaptive hash index is enabled or not.
-   */
-  info = btr_search_get_info(index);
-  ut_ad(info);
-
-  /* We are not allowed to free the in-memory index struct
-  dict_index_t until all entries in the adaptive hash index
-  that point to any of the page belonging to his b-tree index
-  are dropped. This is so because dropping of these entries
-  require access to dict_index_t struct. To avoid such scenario
-  We keep a count of number of such pages in the search_info and
-  only free the dict_index_t struct when this count drops to
-  zero. See also: dict_table_can_be_evicted() */
-
-  do {
-    ulint ref_count = btr_search_info_get_ref_count(info, index);
-
-    if (ref_count == 0) {
-      break;
-    }
-
-    /* Sleep for 10ms before trying again. */
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    ++retries;
-
-    if (retries % 500 == 0) {
-      /* No luck after 5 seconds of wait. */
-      ib::error(ER_IB_MSG_181) << "Waited for " << retries / 100
-                               << " secs for hash index"
-                                  " ref_count ("
-                               << ref_count
-                               << ") to drop to 0."
-                                  " index: "
-                               << index->name << " table: " << table->name;
-    }
-
-    /* To avoid a hang here we commit suicide if the
-    ref_count doesn't drop to zero in 600 seconds. */
-    if (retries >= 60000) {
-      ut_error;
-    }
-  } while (srv_shutdown_state.load() < SRV_SHUTDOWN_CLEANUP || !lru_evict);
+  btr_search_await_no_reference(table, index, !lru_evict);
 
   rw_lock_free(&index->lock);
 
@@ -2726,7 +2701,7 @@ static void dict_index_remove_from_cache_low(
     }
   }
 
-  size = mem_heap_get_size(index->heap);
+  const auto size = mem_heap_get_size(index->heap);
 
   ut_ad(!table->is_intrinsic());
   ut_ad(dict_sys->size >= size);
@@ -3973,7 +3948,6 @@ static void dict_init_dynamic_metadata(dict_table_t *table,
 
   /* Will initialize other metadata here */
 }
-#endif /* !UNIV_HOTBACKUP */
 
 /** Apply the persistent dynamic metadata read from redo logs or
 DDTableBuffer to corresponding table during recovery.
@@ -3981,7 +3955,7 @@ DDTableBuffer to corresponding table during recovery.
 @param[in]      metadata        structure of persistent metadata
 @return true if we do apply something to the in-memory table object,
 otherwise false */
-bool dict_table_apply_dynamic_metadata(
+static bool dict_table_apply_dynamic_metadata(
     dict_table_t *table, const PersistentTableMetadata *metadata) {
   bool get_dirty = false;
 
@@ -4051,7 +4025,6 @@ bool dict_table_apply_dynamic_metadata(
   return (get_dirty);
 }
 
-#ifndef UNIV_HOTBACKUP
 /** Read persistent dynamic metadata stored in a buffer
 @param[in]      buffer          buffer to read
 @param[in]      size            size of data in buffer
@@ -4070,6 +4043,8 @@ void dict_table_read_dynamic_metadata(const byte *buffer, ulint size,
 
     persister = dict_persist->persisters->get(type);
     ut_ad(persister != nullptr);
+    pos++;
+    size--;
 
     consumed = persister->read(*metadata, pos, size, &corrupt);
     ut_ad(consumed != 0);
@@ -4098,18 +4073,16 @@ void dict_table_load_dynamic_metadata(dict_table_t *table) {
 
   mutex_enter(&dict_persist->mutex);
 
-  std::string *readmeta;
   uint64_t version;
-  readmeta = table_buffer->get(table->id, &version);
+  const auto readmeta = table_buffer->get(table->id, &version);
 
-  if (readmeta->length() != 0) {
+  if (!readmeta.empty()) {
     /* Persistent dynamic metadata of this table have changed
     recently, we need to update them to in-memory table */
     PersistentTableMetadata metadata(table->id, version);
 
-    dict_table_read_dynamic_metadata(
-        reinterpret_cast<const byte *>(readmeta->data()), readmeta->length(),
-        &metadata);
+    dict_table_read_dynamic_metadata(readmeta.data(), readmeta.size(),
+                                     &metadata);
 
     bool is_dirty = dict_table_apply_dynamic_metadata(table, &metadata);
 
@@ -4129,8 +4102,6 @@ void dict_table_load_dynamic_metadata(dict_table_t *table) {
   }
 
   mutex_exit(&dict_persist->mutex);
-
-  ut::delete_(readmeta);
 }
 
 /** Mark the dirty_status of a table as METADATA_DIRTY, and add it to the
@@ -4198,6 +4169,8 @@ void dict_set_corrupted(dict_index_t *index) {
 
     /* Make sure the corruption bit won't be lost */
     log_write_up_to(*log_sys, mtr.commit_lsn(), true);
+
+    DBUG_INJECT_CRASH("log_corruption_crash", 1);
 
     dict_table_mark_dirty(table);
   }
@@ -4312,7 +4285,7 @@ void dict_persist_to_dd_table_buffer() {
 have some changed dynamic metadata in memory and have not been written
 back to mysql.innodb_dynamic_metadata. Update LSN limit, which is used
 to stop user threads when redo log is running out of space and they
-do not hold latches (log.free_check_limit_sn). */
+do not hold latches (log.free_check_limit_lsn). */
 static void dict_persist_update_log_margin() {
   /* Below variables basically considers only the AUTO_INCREMENT counter
   and a small margin for corrupted indexes. */
@@ -4332,7 +4305,7 @@ static void dict_persist_update_log_margin() {
   /* Every page split needs at most this log margin, if not root split. */
   static const uint32_t log_margin_per_split_no_root = 500;
 
-  /* Extra marge for root split, we always leave this margin,
+  /* Extra margin for root split, we always leave this margin,
   since we don't know exactly it will split root or not */
   static const uint32_t log_margin_per_split_root =
       univ_page_size.physical() / 2 * 3; /* Add 50% margin. */
@@ -4550,16 +4523,17 @@ void dict_table_check_for_dup_indexes(const dict_table_t *table,
 
 /** Converts a database and table name from filesystem encoding (e.g.
 "@code d@i1b/a@q1b@1Kc @endcode", same format as used in  dict_table_t::name)
-in two strings in UTF8 encoding (e.g. dцb and aюbØc). The output buffers must
-be at least MAX_DB_UTF8_LEN and MAX_TABLE_UTF8_LEN bytes.
+in two strings in UTF8MB3 encoding (e.g. dцb and aюbØc). The output buffers must
+be at least MAX_DB_UTF8MB3_LEN and MAX_TABLE_UTF8MB3_LEN bytes.
 @param[in]      db_and_table    database and table names,
                                 e.g. "@code d@i1b/a@q1b@1Kc @endcode"
-@param[out]     db_utf8         database name, e.g. dцb
-@param[in]      db_utf8_size    dbname_utf8 size
-@param[out]     table_utf8      table name, e.g. aюbØc
-@param[in]      table_utf8_size table_utf8 size */
-void dict_fs2utf8(const char *db_and_table, char *db_utf8, size_t db_utf8_size,
-                  char *table_utf8, size_t table_utf8_size) {
+@param[out]     db_utf8mb3         database name, e.g. dцb
+@param[in]      db_utf8mb3_size    db_utf8mb3 size
+@param[out]     table_utf8mb3      table name, e.g. aюbØc
+@param[in]      table_utf8mb3_size table_utf8mb3 size */
+void dict_fs2utf8(const char *db_and_table, char *db_utf8mb3,
+                  size_t db_utf8mb3_size, char *table_utf8mb3,
+                  size_t table_utf8mb3_size) {
   char db[MAX_DATABASE_NAME_LEN + 1];
   ulint db_len;
   uint errors;
@@ -4571,8 +4545,8 @@ void dict_fs2utf8(const char *db_and_table, char *db_utf8, size_t db_utf8_size,
   memcpy(db, db_and_table, db_len);
   db[db_len] = '\0';
 
-  strconvert(&my_charset_filename, db, system_charset_info, db_utf8,
-             db_utf8_size, &errors);
+  strconvert(&my_charset_filename, db, system_charset_info, db_utf8mb3,
+             db_utf8mb3_size, &errors);
 
   /* convert each # to @0023 in table name and store the result in buf */
   const char *table = dict_remove_db_name(db_and_table);
@@ -4596,44 +4570,48 @@ void dict_fs2utf8(const char *db_and_table, char *db_utf8, size_t db_utf8_size,
   buf_p[0] = '\0';
 
   errors = 0;
-  strconvert(&my_charset_filename, buf, system_charset_info, table_utf8,
-             table_utf8_size, &errors);
+  strconvert(&my_charset_filename, buf, system_charset_info, table_utf8mb3,
+             table_utf8mb3_size, &errors);
 
   if (errors != 0) {
-    snprintf(table_utf8, table_utf8_size, "%s", table);
+    snprintf(table_utf8mb3, table_utf8mb3_size, "%s", table);
   }
 }
 
-/** Resize the hash tables besed on the current buffer pool size. */
+/** Resize the hash tables based on the current buffer pool size. */
 void dict_resize() {
   dict_sys_mutex_enter();
 
   /* all table entries are in table_LRU and table_non_LRU lists */
-  hash_table_free(dict_sys->table_hash);
-  hash_table_free(dict_sys->table_id_hash);
+  ut::delete_(dict_sys->table_hash);
+  ut::delete_(dict_sys->table_id_hash);
 
-  dict_sys->table_hash = hash_create(
+  dict_sys->table_hash = ut::new_<hash_table_t>(
       buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE));
 
-  dict_sys->table_id_hash = hash_create(
+  dict_sys->table_id_hash = ut::new_<hash_table_t>(
       buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE));
 
   for (auto table : dict_sys->table_LRU) {
-    ulint fold = ut_fold_string(table->name.m_name);
-    ulint id_fold = ut_fold_ull(table->id);
+    const auto name_hash_value = ut::hash_string(table->name.m_name);
+    const auto index_id_hash_value = ut::hash_uint64(table->id);
 
-    HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, fold, table);
+    HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, name_hash_value,
+                table);
 
-    HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash, id_fold, table);
+    HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
+                index_id_hash_value, table);
   }
 
   for (auto table : dict_sys->table_non_LRU) {
-    ulint fold = ut_fold_string(table->name.m_name);
-    ulint id_fold = ut_fold_ull(table->id);
+    const auto name_hash_value = ut::hash_string(table->name.m_name);
+    const auto index_id_hash_value = ut::hash_uint64(table->id);
 
-    HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, fold, table);
+    HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, name_hash_value,
+                table);
 
-    HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash, id_fold, table);
+    HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
+                index_id_hash_value, table);
   }
 
   dict_sys_mutex_exit();
@@ -4677,7 +4655,7 @@ void dict_close(void) {
     dict_table_t *table;
 
     table =
-        static_cast<dict_table_t *>(HASH_GET_FIRST(dict_sys->table_hash, i));
+        static_cast<dict_table_t *>(hash_get_first(dict_sys->table_hash, i));
 
     while (table) {
       dict_table_t *prev_table = table;
@@ -4689,11 +4667,11 @@ void dict_close(void) {
   }
 #endif /* !UNIV_HOTBACKUP */
 
-  hash_table_free(dict_sys->table_hash);
+  ut::delete_(dict_sys->table_hash);
 
   /* The elements are the same instance as in dict_sys->table_hash,
   therefore we don't delete the individual elements. */
-  hash_table_free(dict_sys->table_id_hash);
+  ut::delete_(dict_sys->table_id_hash);
 
 #ifndef UNIV_HOTBACKUP
   dict_ind_free();
@@ -5434,9 +5412,9 @@ void DDTableBuffer::truncate() {
 has to delete the returned std::string object by ut::delete_
 @param[in]      id      table id
 @param[out]     version table dynamic metadata version
-@return the metadata saved in a string object, if nothing, the
-string would be of length 0 */
-std::string *DDTableBuffer::get(table_id_t id, uint64_t *version) {
+@return the metadata saved in a vector object, if nothing, the
+vector would be empty */
+std::vector<byte> DDTableBuffer::get(table_id_t id, uint64_t *version) {
   btr_cur_t cursor;
   mtr_t mtr;
   ulint len;
@@ -5473,8 +5451,7 @@ std::string *DDTableBuffer::get(table_id_t id, uint64_t *version) {
     *version = 0;
   }
 
-  std::string *metadata = ut::new_withkey<std::string>(
-      UT_NEW_THIS_FILE_PSI_KEY, reinterpret_cast<const char *>(field), len);
+  std::vector<byte> metadata{field, field + len};
 
   mtr.commit();
 
@@ -5538,6 +5515,7 @@ ulint CorruptedIndexPersister::write(const PersistentTableMetadata &metadata,
   ++buffer;
 
   mach_write_to_1(buffer, num);
+  DBUG_EXECUTE_IF("log_corruption_1", mach_write_to_1(buffer, 100););
   ++length;
   ++buffer;
 
@@ -5588,22 +5566,13 @@ ulint CorruptedIndexPersister::read(PersistentTableMetadata &metadata,
                                     bool *corrupt) const {
   const byte *end = buffer + size;
   ulint consumed = 0;
-  byte type;
   ulint num;
 
   *corrupt = false;
 
-  /* It should contain PM_INDEX_CORRUPTED and number at least */
-  if (size <= 2) {
+  /* It should contain a number at least */
+  if (size <= 1) {
     return (0);
-  }
-
-  type = *buffer++;
-  ++consumed;
-
-  if (type != PM_INDEX_CORRUPTED) {
-    *corrupt = true;
-    return (consumed);
   }
 
   num = mach_read_from_1(buffer);
@@ -5631,6 +5600,14 @@ ulint CorruptedIndexPersister::read(PersistentTableMetadata &metadata,
   return (consumed);
 }
 
+void CorruptedIndexPersister::aggregate(
+    PersistentTableMetadata &metadata,
+    const PersistentTableMetadata &new_entry) const {
+  for (auto id : new_entry.get_corrupted_indexes()) {
+    metadata.add_corrupted_index(id);
+  }
+}
+
 /** Write the autoinc counter of a table, we can pre-calculate
 the size by calling get_write_size()
 @param[in]      metadata        persistent metadata
@@ -5656,55 +5633,44 @@ ulint AutoIncPersister::write(const PersistentTableMetadata &metadata,
 }
 
 /** Read the autoinc counter from buffer, and store them to
-metadata object
+a metadata object
 @param[out]     metadata        metadata where we store the read data
 @param[in]      buffer          buffer to read
 @param[in]      size            size of buffer
 @param[out]     corrupt         true if we found something wrong in
-                                the buffer except incomplete buffer,
-                                otherwise false
+                                  the buffer except incomplete buffer,
+                                  otherwise false
 @return the bytes we read from the buffer if the buffer data
 is complete and we get everything, 0 if the buffer is incomplete */
 ulint AutoIncPersister::read(PersistentTableMetadata &metadata,
                              const byte *buffer, ulint size,
                              bool *corrupt) const {
-  const byte *end = buffer + size;
-  ulint consumed = 0;
-  byte type;
-  uint64_t autoinc;
-
   *corrupt = false;
 
-  /* It should contain PM_TABLE_AUTO_INC and the counter at least */
-  if (size < 2) {
-    return (0);
-  }
-
-  type = *buffer++;
-  ++consumed;
-
-  if (type != PM_TABLE_AUTO_INC) {
-    *corrupt = true;
-    return (consumed);
-  }
-
   const byte *start = buffer;
-  autoinc = mach_parse_u64_much_compressed(&start, end);
+  const auto autoinc = mach_parse_u64_much_compressed(&start, buffer + size);
 
   if (start == nullptr) {
     /* Just incomplete data, not corrupted */
     return (0);
   }
 
-  if (autoinc == 0) {
-    metadata.set_autoinc(autoinc);
-  } else {
-    metadata.set_autoinc_if_bigger(autoinc);
-  }
+  metadata.set_autoinc(autoinc);
 
-  consumed += start - buffer;
+  const ulint consumed = start - buffer;
   ut_ad(consumed <= size);
   return (consumed);
+}
+
+void AutoIncPersister::aggregate(
+    PersistentTableMetadata &metadata,
+    const PersistentTableMetadata &new_entry) const {
+  if (new_entry.get_version() > metadata.get_version()) {
+    metadata.set_autoinc(new_entry.get_autoinc());
+    metadata.set_version(new_entry.get_version());
+  } else if (new_entry.get_version() == metadata.get_version()) {
+    metadata.set_autoinc_if_bigger(new_entry.get_autoinc());
+  }
 }
 
 /** Destructor */
@@ -5878,7 +5844,18 @@ an earlier upgrade. This will update the table_id by adding DICT_MAX_DD_TABLES
 void dict_table_change_id_sys_tables() {
   ut_ad(dict_sys_mutex_own());
 
-  for (uint32_t i = 0; i < SYS_NUM_SYSTEM_TABLES; i++) {
+  /* On upgrading from 5.6 to 5.7, new system table SYS_VIRTUAL is given table
+   id after the last created user table. So, if last user table was created
+   with table_id as 1027, SYS_VIRTUAL would get id 1028. On upgrade to 8.0,
+   all these tables are shifted by 1024. On 5.7, the SYS_FIELDS has table id
+   4, which gets updated to 1028 on upgrade. This would later assert when we
+   try to open the SYS_VIRTUAL table (having id 1028) for upgrade. Hence, we
+   need to upgrade system tables in reverse order to avoid that.
+   These tables are created on boot. And hence this issue can only be caused by
+   a new table being added at a later stage - the SYS_VIRTUAL table being added
+   on upgrading to 5.7. */
+
+  for (int i = SYS_NUM_SYSTEM_TABLES - 1; i >= 0; i--) {
     dict_table_t *system_table = dict_table_get_low(SYSTEM_TABLE_NAME[i]);
 
     ut_a(system_table != nullptr);
@@ -6112,4 +6089,14 @@ uint32_t dict_vcol_base_is_foreign_key(dict_v_col_t *vcol,
   return foreign_col_count;
 }
 
+#ifdef UNIV_DEBUG
+/** Validate no active background threads to cause purge or rollback
+ operations. */
+void dict_validate_no_purge_rollback_threads() {
+  /* No concurrent background threads to access to the table */
+  ut_ad(trx_purge_state() == PURGE_STATE_STOP ||
+        trx_purge_state() == PURGE_STATE_DISABLED);
+  ut_ad(!srv_thread_is_active(srv_threads.m_trx_recovery_rollback));
+}
+#endif /* UNIV_DEBUG */
 #endif /* !UNIV_HOTBACKUP */

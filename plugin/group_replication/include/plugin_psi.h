@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -89,7 +89,6 @@ extern PSI_mutex_key key_GR_LOCK_applier_module_run,
     key_GR_LOCK_count_down_latch,
     key_GR_LOCK_delayed_init_run,
     key_GR_LOCK_delayed_init_server_ready,
-    key_GR_LOCK_force_members_running,
     key_GR_LOCK_group_action_coordinator_process,
     key_GR_LOCK_group_action_coordinator_thread,
     key_GR_LOCK_group_action_coordinator_thread_end,
@@ -130,7 +129,9 @@ extern PSI_mutex_key key_GR_LOCK_applier_module_run,
     key_GR_LOCK_mysql_thread_dispatcher_run,
     key_GR_LOCK_connection_map,
     key_GR_LOCK_mysql_thread_handler_run,
-    key_GR_LOCK_mysql_thread_handler_dispatcher_run;
+    key_GR_LOCK_mysql_thread_handler_dispatcher_run,
+    key_GR_LOCK_mysql_thread_handler_read_only_mode_run,
+    key_GR_LOCK_mysql_thread_handler_read_only_mode_dispatcher_run;
 
 extern PSI_cond_key key_GR_COND_applier_module_run,
     key_GR_COND_applier_module_suspend,
@@ -169,7 +170,9 @@ extern PSI_cond_key key_GR_COND_applier_module_run,
     key_GR_COND_mysql_thread_run,
     key_GR_COND_mysql_thread_dispatcher_run,
     key_GR_COND_mysql_thread_handler_run,
-    key_GR_COND_mysql_thread_handler_dispatcher_run;
+    key_GR_COND_mysql_thread_handler_dispatcher_run,
+    key_GR_COND_mysql_thread_handler_read_only_mode_run,
+    key_GR_COND_mysql_thread_handler_read_only_mode_dispatcher_run;
 
 extern PSI_thread_key key_GR_THD_applier_module_receiver,
     key_GR_THD_autorejoin,
@@ -185,7 +188,8 @@ extern PSI_thread_key key_GR_THD_applier_module_receiver,
     key_GR_THD_recovery,
     key_GR_THD_message_service_handler,
     key_GR_THD_mysql_thread,
-    key_GR_THD_mysql_thread_handler;
+    key_GR_THD_mysql_thread_handler,
+    key_GR_THD_mysql_thread_handler_read_only_mode;
 
 extern PSI_rwlock_key key_GR_RWLOCK_cert_stable_gtid_set,
     key_GR_RWLOCK_channel_observation_list,
@@ -225,6 +229,21 @@ extern PSI_stage_info info_GR_STAGE_autorejoin,
     info_GR_STAGE_clone_prepare,
     info_GR_STAGE_clone_execute;
 
+extern PSI_memory_key key_write_set_encoded,
+    key_certification_data,
+    key_certification_data_gc,
+    key_certification_info,
+    key_transaction_data,
+    key_sql_service_command_data,
+    key_mysql_thread_queued_task,
+    key_message_service_queue,
+    key_message_service_received_message,
+    key_group_member_info,
+    key_consistent_members_that_must_prepare_transaction,
+    key_consistent_transactions,
+    key_consistent_transactions_prepared,
+    key_consistent_transactions_waiting,
+    key_consistent_transactions_delayed_view_change;
 /* clang-format on */
 
 #endif /* PLUGIN_PSI_INCLUDED */

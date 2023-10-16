@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2003, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,7 +34,7 @@
 //
 LogHandler::LogHandler() : 
   m_errorCode(0),
-  m_errorStr(NULL)
+  m_errorStr(nullptr)
 {
   m_max_repeat_frequency= 3; // repeat messages maximum every 3 seconds
   m_count_repeated_messages= 0;
@@ -134,18 +134,9 @@ LogHandler::setErrorCode(int code)
   m_errorCode = code;
 }
 
+const char* LogHandler::getErrorStr() const { return m_errorStr; }
 
-char*
-LogHandler::getErrorStr()
-{
-  return m_errorStr;
-}
-
-void
-LogHandler::setErrorStr(const char* str)
-{
-  m_errorStr= (char*) str;
-}
+void LogHandler::setErrorStr(const char* str) { m_errorStr = str; }
 
 bool
 LogHandler::parseParams(const BaseString &_params) {

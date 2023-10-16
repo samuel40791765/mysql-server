@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -70,7 +70,7 @@ TEST(CompareAccessPathsTest, CompareAccessPaths) {
   a.ordering_state = 0;
   a.safe_for_rowid = AccessPath::Safety::UNSAFE;
   // Numerical cost dimensions (fuzzy comparison).
-  a.num_output_rows = 100.0;
+  a.set_num_output_rows(100.0);
   a.cost = 100.0;
   a.init_cost = 100.0;
   a.init_once_cost = 0.0;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -32,15 +32,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <utility>
 #include <vector>
 
-#include "m_ctype.h"
-#include "m_string.h"
 #include "mutex_lock.h"
 #include "my_alloc.h"
 #include "my_base.h"
 #include "my_compiler.h"
 
 #include "my_inttypes.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_sys.h"
 #include "mysql/components/service_implementation.h"
@@ -49,7 +46,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "mysql/components/services/bits/psi_mutex_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_mutex.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysqld_error.h"
 #include "persistent_dynamic_loader_imp.h"
 #include "scope_guard.h"
@@ -70,6 +69,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql/thd_raii.h"
 #include "sql/transaction.h"
 #include "sql_string.h"
+#include "string_with_len.h"
 #include "thr_lock.h"
 #include "thr_mutex.h"
 
@@ -152,7 +152,7 @@ static Component_db_intact table_intact;
 */
 static bool open_component_table(THD *thd, enum thr_lock_type lock_type,
                                  TABLE **table, ulong acl_to_check) {
-  TABLE_LIST tables("mysql", "component", lock_type);
+  Table_ref tables("mysql", "component", lock_type);
 
   if (mysql_persistent_dynamic_loader_imp::initialized() && !opt_noacl &&
       check_one_table_access(thd, acl_to_check, &tables))
@@ -267,7 +267,7 @@ bool mysql_persistent_dynamic_loader_imp::init(void *thdp) {
 
       uint64 component_id =
           component_table->field[CT_FIELD_COMPONENT_ID]->val_int();
-      uint64 component_group_id =
+      const uint64 component_group_id =
           component_table->field[CT_FIELD_GROUP_ID]->val_int();
       String component_urn_str;
       component_table->field[CT_FIELD_COMPONENT_URN]->val_str(
@@ -338,6 +338,16 @@ bool mysql_persistent_dynamic_loader_imp::initialized() {
   return mysql_persistent_dynamic_loader_imp::is_initialized;
 }
 
+int mysql_persistent_dynamic_loader_imp::remove_from_cache(
+    const char *urns[], int component_count) {
+  int count_erased = 0;
+  MUTEX_LOCK(lock, &component_id_by_urn_mutex);
+  for (int i = 0; i < component_count; ++i)
+    count_erased +=
+        mysql_persistent_dynamic_loader_imp::component_id_by_urn.erase(urns[i]);
+  return count_erased;
+}
+
 /**
   Loads specified group of components by URN, initializes them and
   registers all service implementations present in these components.
@@ -369,7 +379,7 @@ DEFINE_BOOL_METHOD(mysql_persistent_dynamic_loader_imp::load,
     MUTEX_LOCK(lock, &component_id_by_urn_mutex);
 
     /* We don't replicate INSTALL COMPONENT */
-    Disable_binlog_guard binlog_guard(thd);
+    const Disable_binlog_guard binlog_guard(thd);
 
     TABLE *component_table;
     auto guard_close_tables = create_scope_guard([&thd] {
@@ -408,13 +418,19 @@ DEFINE_BOOL_METHOD(mysql_persistent_dynamic_loader_imp::load,
       component_table->field[CT_FIELD_COMPONENT_URN]->store(
           urns[i], strlen(urns[i]), system_charset);
 
-      int res = component_table->file->ha_write_row(component_table->record[0]);
+      const int res =
+          component_table->file->ha_write_row(component_table->record[0]);
       if (res != 0) {
         my_error(ER_COMPONENT_MANIPULATE_ROW_FAILED, MYF(0), urns[i], res);
         component_table->file->ha_release_auto_increment();
         return true;
       }
 
+      /*
+        This is an attempt to sync an out of sync memory cache.
+        This should ideally be removing zero rows.
+      */
+      mysql_persistent_dynamic_loader_imp::component_id_by_urn.erase(urns[i]);
       /* Use last insert auto-increment column value and store it by the URN. */
       mysql_persistent_dynamic_loader_imp::component_id_by_urn.emplace(
           urns[i], component_table->file->insert_id_for_cur_row);
@@ -475,7 +491,7 @@ DEFINE_BOOL_METHOD(mysql_persistent_dynamic_loader_imp::unload,
     }
 
     /* We don't replicate UNINSTALL_COMPONENT */
-    Disable_binlog_guard binlog_guard(thd);
+    const Disable_binlog_guard binlog_guard(thd);
 
     /* Making component_id_by_urn copy so, that if any error occurs it will
        be restored
@@ -528,7 +544,7 @@ DEFINE_BOOL_METHOD(mysql_persistent_dynamic_loader_imp::unload,
       mysql_persistent_dynamic_loader_imp::component_id_by_urn.erase(it);
     }
 
-    bool result = dynamic_loader_srv->unload(urns, component_count);
+    const bool result = dynamic_loader_srv->unload(urns, component_count);
     if (result) {
       /* No need to specify error, underlying service implementation would add
         one. */

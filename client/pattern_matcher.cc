@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,6 +27,8 @@
 #include "my_dbug.h"
 #include "my_sys.h"
 
+struct CHARSET_INFO;
+
 /**
   @brief Parses concatenated patterns and adds them to internal pattern list
 
@@ -38,7 +40,7 @@
 size_t Pattern_matcher::add_patterns(const std::string &patterns,
                                      char delimiter) {
   DBUG_TRACE;
-  size_t length = patterns.length();
+  const size_t length = patterns.length();
   size_t pattern_count = 0;
 
   // we don't parse empty patterns

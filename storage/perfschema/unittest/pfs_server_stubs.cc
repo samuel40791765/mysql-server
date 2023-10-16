@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -28,7 +28,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 #include "sql/mysqld.h"
 #include "sql/sql_class.h"
 #include "sql/sql_show.h"
@@ -59,9 +59,9 @@ struct System_status_var *get_thd_status_var(THD *, bool *) {
 }
 
 #ifndef NDEBUG
-bool thd_mem_cnt_alloc(THD *, size_t, const char *) { return false; }
+void thd_mem_cnt_alloc(THD *, size_t, const char *) {}
 #else
-bool thd_mem_cnt_alloc(THD *, size_t) { return false; }
+void thd_mem_cnt_alloc(THD *, size_t) {}
 #endif
 
 void thd_mem_cnt_free(THD *, size_t) {}

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,6 +34,7 @@
 
 class NdbRecAttr;
 class Thd_ndb;
+class THD;
 namespace dd {
 class Table;
 }
@@ -52,18 +53,18 @@ class Ndb_util_table {
                          NdbDictionary::Column::Type type,
                          const char *type_name) const;
 
-  void push_ndb_error_warning(const NdbError &ndb_err) const;
-
  protected:
+  const NdbDictionary::Column *get_column_by_number(Uint32 number) const;
   const NdbDictionary::Column *get_column(const char *name) const;
   void push_warning(const char *fmt, ...) const
       MY_ATTRIBUTE((format(printf, 2, 3)));
+  void push_ndb_error_warning(const NdbError &ndb_err) const;
 
   Ndb_util_table(Thd_ndb *, std::string db_name, std::string table_name,
                  bool hidden, bool create_events = true);
   ~Ndb_util_table();
 
-  const class THD *get_thd() const;
+  const THD *get_thd() const;
   Ndb *get_ndb() const;
 
   bool check_column_exist(const char *name) const;
@@ -87,7 +88,7 @@ class Ndb_util_table {
      @brief Define the NdbApi table definition
      @param table NdbApi table to populate
      @param mysql_version Force the table to be defined as it looked in
-     a specifc MySQL version. This is primarily used for testing of upgrade.
+     a specific MySQL version. This is primarily used for testing of upgrade.
      @return true if definition was filled without problem
    */
   virtual bool define_table_ndb(NdbDictionary::Table &table,
@@ -118,10 +119,10 @@ class Ndb_util_table {
 
     @return true on success.
    */
-  virtual bool pre_upgrade() const { return true; }
+  virtual bool pre_upgrade() { return true; }
 
   /**
-    @brief Code to be executed after installing the table.
+    @brief Code to be executed after installing the table in NDB.
 
     @note  The derived class has to override this method if it wants to
            execute code after installing the table.
@@ -129,6 +130,17 @@ class Ndb_util_table {
     @return true on success.
    */
   virtual bool post_install() const { return true; }
+
+  /**
+    @brief Code to be executed after installing the table in the data
+    dictionary.
+
+    @note The derived class has to override this method to execute additional
+    code.
+
+    @return true on success, false otherwise
+  */
+  virtual bool post_install_in_DD() const { return true; }
 
   /**
      @brief Drop the events related to this table from NDB
@@ -165,6 +177,28 @@ class Ndb_util_table {
                                const char *packed_str) const;
 
   /**
+     @brief Pack the string to be written to a column of a util table
+     @note Table definition must be loaded with open() before this function is
+           called
+     @param column_name  Column name
+     @param src          String to be packed
+     @param dst [out]    Packed string
+  */
+  void pack_varchar(const char *column_name, std::string_view src,
+                    char *dst) const;
+
+  /**
+     @brief Pack the string to be written to a column of a util table
+     @note Table definition must be loaded with open() before this function is
+           called
+     @param column_number Column number
+     @param src          String to be packed
+     @param dst [out]    Packed string
+  */
+  void pack_varchar(Uint32 column_number, std::string_view src,
+                    char *dst) const;
+
+  /**
      @brief Unpack a non nullable blob column
      @param ndb_blob_handle     The NDB Blob handle
      @param blob_value [out]    Extracted string
@@ -179,7 +213,7 @@ class Ndb_util_table {
            and setup NDB binlog events if enabled
     @return true on success
    */
-  bool create_or_upgrade(class THD *, bool upgrade_allowed);
+  bool create_or_upgrade(THD *, bool upgrade_allowed);
 
   /**
     @brief Check if table exists in NDB
@@ -233,6 +267,12 @@ class Ndb_util_table {
      @return true if table was created successfully
    */
   bool create(bool is_upgrade = false);
+
+  /**
+     @brief Create table in DD and finalize it
+     @return true if successful, false otherwise
+  */
+  bool create_in_DD();
 
   /**
      @brief Check if table need to be upgraded

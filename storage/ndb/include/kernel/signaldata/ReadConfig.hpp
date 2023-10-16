@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2004, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,6 +25,8 @@
 #ifndef READ_CONFIG_HPP
 #define READ_CONFIG_HPP
 
+#include "kernel/signaldata/SignalData.hpp"
+
 #define JAM_FILE_ID 75
 
 
@@ -40,6 +42,8 @@ public:
   Uint32 parameters[1];  // see mgmapi_config_parameters.h
 };
 
+DECLARE_SIGNAL_SCOPE(GSN_READ_CONFIG_REQ, Local);
+
 class ReadConfigConf {
 public:
   static constexpr Uint32 SignalLength = 2;
@@ -48,6 +52,7 @@ public:
   Uint32 senderData;
 };
 
+DECLARE_SIGNAL_SCOPE(GSN_READ_CONFIG_CONF, Local);
 
 #undef JAM_FILE_ID
 

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -44,6 +44,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef UNIV_HOTBACKUP
 #include <algorithm>
 
+#include <debug_sync.h>
 #include "btr0btr.h"
 #include "btr0cur.h"
 #include "buf0lru.h"
@@ -55,7 +56,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "fts0types.h"
 #include "lob0lob.h"
 #include "lock0lock.h"
-#include "log0log.h"
+#include "log0chkp.h"
 #include "mach0data.h"
 #include "pars0sym.h"
 #include "que0que.h"
@@ -125,7 +126,7 @@ IMPORTANT NOTE: Any operation that generates redo MUST check that there
 is enough space in the redo log before for that operation. This is
 done by calling log_free_check(). The reason for checking the
 availability of the redo log space before the start of the operation is
-that we MUST not hold any synchonization objects when performing the
+that we MUST not hold any synchronization objects when performing the
 check.
 If you make a change in this module make sure that no codepath is
 introduced where a call to log_free_check() is bypassed. */
@@ -487,20 +488,28 @@ void row_upd_rec_in_place(
   ut_ad(!index->table->skip_alter_undo);
 
   if (rec_offs_comp(offsets)) {
-    bool is_instant = rec_get_instant_flag_new(rec);
-    bool is_versioned = rec_new_is_versioned(rec);
+    /* Keep the INSTANT/VERSION bit of prepared physical record */
+    const bool is_instant = rec_get_instant_flag_new(rec);
+    const bool is_versioned = rec_new_is_versioned(rec);
 
+    /* Set the info_bits from the update vector */
     rec_set_info_bits_new(rec, update->info_bits);
+
+    /* Set the INSTANT/VERSION bit from the values kept */
     if (is_versioned) {
-      rec_new_set_versioned(rec, true);
+      rec_new_set_versioned(rec);
     } else if (is_instant) {
       ut_ad(index->table->has_instant_cols());
-      rec_set_instant_flag_new(rec, true);
+      ut_ad(!rec_new_is_versioned(rec));
+      rec_new_set_instant(rec);
     } else {
-      rec_new_set_versioned(rec, false);
-      rec_set_instant_flag_new(rec, false);
+      rec_new_reset_instant_version(rec);
     }
+
+    /* Only one of the bit (INSTANT or VERSION) could be set */
+    ut_a(!(rec_get_instant_flag_new(rec) && rec_new_is_versioned(rec)));
   } else {
+    /* INSTANT bit is irrelevant for the record in Redundant format */
     bool is_versioned = rec_old_is_versioned(rec);
     rec_set_info_bits_old(rec, update->info_bits);
     if (is_versioned) {
@@ -852,7 +861,8 @@ upd_t *row_upd_build_difference_binary(dict_index_t *index,
         (index->get_sys_col_pos(DATA_ROLL_PTR) == trx_id_pos + 1));
 
   if (!offsets) {
-    offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &heap);
+    offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &heap);
   } else {
     ut_ad(rec_offs_validate(rec, index, offsets));
   }
@@ -1808,15 +1818,34 @@ static inline void row_upd_eval_new_vals(
   }
 }
 
+/** Copies the data pointed to by the new values for virtual fields to update
+@param[in,out]  update          an update vector */
+static void row_upd_dup_v_new_vals(const upd_t *update) {
+  ut_ad(update != nullptr);
+
+  for (ulint j = 0; j < upd_get_n_fields(update); j++) {
+    upd_field_t *upd_field = upd_get_nth_field(update, j);
+    if (upd_field->new_val.type.is_virtual()) {
+      if (dfield_is_multi_value(&upd_field->new_val)) {
+        dfield_multi_value_dup(&upd_field->new_val, update->heap);
+      } else {
+        dfield_dup(&upd_field->new_val, update->heap);
+      }
+    }
+  }
+}
+
 /** Stores to the heap the virtual columns that need for any indexes
 @param[in,out]  node            row update node
-@param[in]      update          an update vector if it is update
+@param[in,out]  update          an update vector if it is update
 @param[in]      thd             mysql thread handle
 @param[in,out]  mysql_table     mysql table object */
 static void row_upd_store_v_row(upd_node_t *node, const upd_t *update, THD *thd,
                                 TABLE *mysql_table) {
   mem_heap_t *heap = nullptr;
   dict_index_t *index = node->table->first_index();
+  bool new_val_v_cols_dup = false;
+  const ulint n_upd = update ? upd_get_n_fields(update) : 0;
 
   for (ulint col_no = 0; col_no < dict_table_get_n_v_cols(node->table);
        col_no++) {
@@ -1824,7 +1853,6 @@ static void row_upd_store_v_row(upd_node_t *node, const upd_t *update, THD *thd,
 
     if (col->m_col.ord_part) {
       dfield_t *dfield = dtuple_get_nth_v_field(node->row, col_no);
-      ulint n_upd = update ? upd_get_n_fields(update) : 0;
       ulint i = 0;
 
       /* Check if the value is already in update vector */
@@ -1864,6 +1892,10 @@ static void row_upd_store_v_row(upd_node_t *node, const upd_t *update, THD *thd,
               dfield_dup(dfield, node->heap);
             }
             if (dfield_is_null(dfield)) {
+              if (!new_val_v_cols_dup) {
+                row_upd_dup_v_new_vals(update);
+                new_val_v_cols_dup = true;
+              }
               innobase_get_computed_value(node->row, col, index, &heap,
                                           node->heap, nullptr, thd, mysql_table,
                                           nullptr, nullptr, nullptr);
@@ -1904,7 +1936,8 @@ void row_upd_store_row(upd_node_t *node, THD *thd, TABLE *mysql_table) {
 
   rec = node->pcur->get_rec();
 
-  offsets = rec_get_offsets(rec, clust_index, offsets_, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, clust_index, offsets_, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (dict_table_has_atomic_blobs(node->table)) {
     /* There is no prefix of externally stored columns in
@@ -2187,7 +2220,7 @@ code or DB_LOCK_WAIT */
   }
 
   ut_ad(trx_can_be_handled_by_current_thread(trx));
-  DEBUG_SYNC_C_IF_THD(trx->mysql_thd, "before_row_upd_sec_index_entry");
+  DEBUG_SYNC(trx->mysql_thd, "before_row_upd_sec_index_entry");
 
   mtr_start(&mtr);
 
@@ -2334,7 +2367,8 @@ code or DB_LOCK_WAIT */
       if (referenced) {
         ulint *offsets;
 
-        offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+        offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                                  UT_LOCATION_HERE, &heap);
 
         /* NOTE that the following call loses
         the position of pcur ! */
@@ -2588,7 +2622,8 @@ static inline bool row_upd_clust_rec_by_insert_inherit(
       we update the primary key.  Delete-mark the old record
       in the clustered index and prepare to insert a new entry. */
       rec = btr_cur_get_rec(btr_cur);
-      offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       ut_ad(page_rec_is_user_rec(rec));
 
       if (rec_get_deleted_flag(rec, rec_offs_comp(offsets))) {
@@ -2756,7 +2791,8 @@ static bool row_upd_check_autoinc_counter(const upd_node_t *node, mtr_t *mtr) {
   big_rec_t *big_rec = nullptr;
   btr_pcur_t *pcur;
   btr_cur_t *btr_cur;
-  dberr_t err;
+  dberr_t err = DB_SUCCESS;
+  bool persist_autoinc = false;
   const dtuple_t *rebuilt_old_pk = nullptr;
   trx_id_t trx_id = thr_get_trx(thr)->id;
   trx_t *trx = thr_get_trx(thr);
@@ -2776,11 +2812,17 @@ static bool row_upd_check_autoinc_counter(const upd_node_t *node, mtr_t *mtr) {
   if (dict_index_is_online_ddl(index)) {
     rebuilt_old_pk = row_log_table_get_pk(btr_cur_get_rec(btr_cur), index,
                                           offsets, nullptr, &heap);
+    if (row_log_table_get_error(index) == DB_INDEX_CORRUPT) {
+      err = DB_CORRUPTION;
+
+      mtr->commit();
+      goto func_exit;
+    }
   }
 
   /* Check and log if necessary at the beginning, to prevent any
   further potential deadlock */
-  bool persist_autoinc = row_upd_check_autoinc_counter(node, mtr);
+  persist_autoinc = row_upd_check_autoinc_counter(node, mtr);
 
   /* Try optimistic updating of the record, keeping changes within
   the page; we do not check locks because we assume the x-lock on the
@@ -2992,7 +3034,7 @@ func_exit:
   ulint mode;
 
   ut_ad(trx_can_be_handled_by_current_thread(trx));
-  DEBUG_SYNC_C_IF_THD(trx->mysql_thd, "innodb_row_upd_clust_step_enter");
+  DEBUG_SYNC(trx->mysql_thd, "innodb_row_upd_clust_step_enter");
 
   if (dict_index_is_online_ddl(index)) {
     ut_ad(node->table->id != DICT_INDEXES_ID);
@@ -3013,7 +3055,8 @@ func_exit:
   }
 
   rec = pcur->get_rec();
-  offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (!node->has_clust_rec_x_lock) {
     err = lock_clust_rec_modify_check_and_lock(flags, pcur->get_block(), rec,
@@ -3147,7 +3190,7 @@ static dberr_t row_upd(upd_node_t *node, /*!< in: row update node */
   }
 
   ut_ad(trx_can_be_handled_by_current_thread(thr_get_trx(thr)));
-  DEBUG_SYNC_C_IF_THD(thr_get_trx(thr)->mysql_thd, "after_row_upd_clust");
+  DEBUG_SYNC(thr_get_trx(thr)->mysql_thd, "after_row_upd_clust");
 
   if (node->index == nullptr ||
       (!node->is_delete && (node->cmpl_info & UPD_NODE_NO_ORD_CHANGE))) {

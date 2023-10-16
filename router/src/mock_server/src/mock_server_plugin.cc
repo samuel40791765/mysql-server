@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2018, 2021, Oracle and/or its affiliates.
+  Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -30,7 +30,8 @@
 #include <string>
 #include <system_error>  // error_code
 
-#include "mysql.h"  // mysql_ssl_mode
+#include "my_thread.h"  // my_thread_self_setname
+#include "mysql.h"      // mysql_ssl_mode
 #include "mysql/harness/config_option.h"
 #include "mysql/harness/config_parser.h"
 #include "mysql/harness/logging/logging.h"
@@ -40,6 +41,7 @@
 #include "mysql/harness/string_utils.h"  // split_string
 #include "mysql/harness/tls_context.h"
 #include "mysql/harness/tls_server_context.h"
+#include "mysql/harness/utility/string.h"
 #include "mysql_server_mock.h"
 #include "mysqlrouter/io_component.h"
 
@@ -60,7 +62,7 @@ class SslModeOption {
   mysql_ssl_mode operator()(const std::string &value,
                             const std::string &option_desc) {
     std::string name = value;
-    // convert name to upper-case to get case-insenstive comparison.
+    // convert name to upper-case to get case-insensitive comparison.
     std::transform(value.begin(), value.end(), name.begin(), ::toupper);
 
     // check if the mode is known
@@ -101,6 +103,14 @@ class StringsOption {
 using mysql_harness::IntOption;
 using mysql_harness::StringOption;
 
+static constexpr std::array<const char *, 14> supported_options{
+    "filename", "module_prefix", "bind_address", "port",       "protocol",
+    "ssl_ca",   "ssl_capath",    "ssl_cert",     "ssl_key",    "ssl_cipher",
+    "ssl_crl",  "ssl_crlpath",   "ssl_mode",     "tls_version"};
+
+#define GET_OPTION_CHECKED(option, section, name, value)                    \
+  static_assert(mysql_harness::str_in_collection(supported_options, name)); \
+  option = get_option(section, name, value);
 class PluginConfig : public mysql_harness::BasePluginConfig {
  public:
   std::string trace_filename;
@@ -119,21 +129,25 @@ class PluginConfig : public mysql_harness::BasePluginConfig {
   std::string tls_version;
 
   explicit PluginConfig(const mysql_harness::ConfigSection *section)
-      : mysql_harness::BasePluginConfig(section),
-        trace_filename(get_option(section, "filename", StringOption{})),
-        module_prefixes(get_option(section, "module_prefix", StringsOption{})),
-        srv_address(get_option(section, "bind_address", StringOption{})),
-        srv_port(get_option(section, "port", IntOption<uint16_t>{})),
-        srv_protocol(get_option(section, "protocol", StringOption{})),
-        ssl_ca(get_option(section, "ssl_ca", StringOption{})),
-        ssl_capath(get_option(section, "ssl_capath", StringOption{})),
-        ssl_cert(get_option(section, "ssl_cert", StringOption{})),
-        ssl_key(get_option(section, "ssl_key", StringOption{})),
-        ssl_cipher(get_option(section, "ssl_cipher", StringOption{})),
-        ssl_crl(get_option(section, "ssl_crl", StringOption{})),
-        ssl_crlpath(get_option(section, "ssl_crlpath", StringOption{})),
-        ssl_mode(get_option(section, "ssl_mode", SslModeOption{})),
-        tls_version(get_option(section, "tls_version", StringOption{})) {}
+      : mysql_harness::BasePluginConfig(section) {
+    GET_OPTION_CHECKED(trace_filename, section, "filename", StringOption{});
+    std::string module_prefix_str;
+    GET_OPTION_CHECKED(module_prefix_str, section, "module_prefix",
+                       StringOption{});
+    module_prefixes.push_back(module_prefix_str);
+    GET_OPTION_CHECKED(srv_address, section, "bind_address", StringOption{});
+    GET_OPTION_CHECKED(srv_port, section, "port", IntOption<uint16_t>{});
+    GET_OPTION_CHECKED(srv_protocol, section, "protocol", StringOption{});
+    GET_OPTION_CHECKED(ssl_ca, section, "ssl_ca", StringOption{});
+    GET_OPTION_CHECKED(ssl_capath, section, "ssl_capath", StringOption{});
+    GET_OPTION_CHECKED(ssl_cert, section, "ssl_cert", StringOption{});
+    GET_OPTION_CHECKED(ssl_key, section, "ssl_key", StringOption{});
+    GET_OPTION_CHECKED(ssl_cipher, section, "ssl_cipher", StringOption{});
+    GET_OPTION_CHECKED(ssl_crl, section, "ssl_crl", StringOption{});
+    GET_OPTION_CHECKED(ssl_crlpath, section, "ssl_crlpath", StringOption{});
+    GET_OPTION_CHECKED(ssl_mode, section, "ssl_mode", SslModeOption{});
+    GET_OPTION_CHECKED(tls_version, section, "tls_version", StringOption{});
+  }
 
   std::string get_default(const std::string &option) const override {
     std::error_code ec;
@@ -206,11 +220,14 @@ static void start(mysql_harness::PluginFuncEnv *env) {
     name = section->name;
   }
 
+  my_thread_self_setname(std::string("MockSrv:" + section->key).c_str());
+
   try {
     PluginConfig config{section};
     const std::string key = section->name + ":" + section->key;
 
-    TlsServerContext tls_server_ctx;
+    TlsServerContext tls_server_ctx{TlsVersion::TLS_1_2, TlsVersion::AUTO, true,
+                                    1024, 300};
 
     if (config.ssl_mode != SSL_MODE_DISABLED) {
       if (!config.tls_version.empty()) {
@@ -282,6 +299,12 @@ static void start(mysql_harness::PluginFuncEnv *env) {
 
       // if the client presents a cert, verify it.
       tls_server_ctx.verify(TlsVerify::PEER);
+
+      // set the context object's address as a session id context to enable TLS
+      // sessions reuse
+      tls_server_ctx.session_id_context(
+          (const unsigned char *)tls_server_ctx.get(),
+          sizeof(tls_server_ctx.get()));
     }
 
     net::io_context &io_ctx = IoComponent::get_instance().io_context();
@@ -321,11 +344,6 @@ static const std::array<const char *, 4> required = {{
     "router_protobuf",
     "io",
 }};
-
-static const std::array<const char *, 14> supported_options{
-    "filename", "module_prefix", "bind_address", "port",       "protocol",
-    "ssl_ca",   "ssl_capath",    "ssl_cert",     "ssl_key",    "ssl_cipher",
-    "ssl_crl",  "ssl_crlpath",   "ssl_mode",     "tls_version"};
 
 extern "C" {
 mysql_harness::Plugin MOCK_SERVER_EXPORT harness_plugin_mock_server = {

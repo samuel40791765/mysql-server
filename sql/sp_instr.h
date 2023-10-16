@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2012, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,7 +30,6 @@
 
 #include "field_types.h"
 #include "lex_string.h"
-#include "m_string.h"
 #include "my_alloc.h"
 #include "my_compiler.h"
 
@@ -44,6 +43,7 @@
 #include "sql/sql_lex.h"
 #include "sql/sql_list.h"
 #include "sql_string.h"
+#include "string_with_len.h"
 
 class Item;
 class Item_case_expr;
@@ -53,7 +53,7 @@ class sp_handler;
 class sp_head;
 class sp_pcontext;
 class sp_variable;
-struct TABLE_LIST;
+class Table_ref;
 
 ///////////////////////////////////////////////////////////////////////////
 // This file contains SP-instruction classes.
@@ -288,6 +288,8 @@ class sp_lex_instr : public sp_instr {
   */
   bool reset_lex_and_exec_core(THD *thd, uint *nextp, bool open_tables);
 
+  bool execute_expression(THD *thd, uint *nextp);
+
   /**
     (Re-)parse the query corresponding to this instruction and return a new
     LEX-object.
@@ -444,13 +446,13 @@ class sp_lex_instr : public sp_instr {
     List of additional tables this statement needs to lock when it
     enters/leaves prelocked mode on its own.
   */
-  TABLE_LIST *m_prelocking_tables;
+  Table_ref *m_prelocking_tables;
 
   /**
     The value m_lex->query_tables_own_last should be set to this when the
     statement enters/leaves prelocked mode on its own.
   */
-  TABLE_LIST **m_lex_query_tables_own_last;
+  Table_ref **m_lex_query_tables_own_last;
 
   /**
     List of all the Item_trigger_field's of instruction.
@@ -950,7 +952,7 @@ class sp_instr_set_case_expr : public sp_lex_branch_instr {
   /////////////////////////////////////////////////////////////////////////
 
   /*
-    NOTE: set_destination() and backpatch() are overriden here just because the
+    NOTE: set_destination() and backpatch() are overridden here just because the
     m_dest attribute is not used by this class, so there is no need to do
     anything about it.
 

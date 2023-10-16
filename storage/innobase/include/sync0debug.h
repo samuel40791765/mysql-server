@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -114,12 +114,12 @@ class Sync_point {
   ~Sync_point() = default;
 
   /** Add a target to the list of sync points, nop for duplicates.
-  @param[in] thd                Server conenction/session context.
+  @param[in] thd                Server connection/session context.
   @param[in] target             Target to add. */
   static void add(const THD *thd, const std::string &target) noexcept;
 
   /** Check if a target is enabled. Disable it if found.
-  @param[in] thd                Server conenction/session context.
+  @param[in] thd                Server connection/session context.
   @param[in] target             Check if target is enabled.
   @return true if was enabled. */
   static bool enabled(const THD *thd, const std::string &target) noexcept;
@@ -130,7 +130,7 @@ class Sync_point {
   static bool enabled(const std::string &target) noexcept;
 
   /** Clear the named target.
-  @param[in] thd                Server conenction/session context.
+  @param[in] thd                Server connection/session context.
   @param[in] target             Check if target is enabled. */
   static void erase(const THD *thd, const std::string &target) noexcept;
 

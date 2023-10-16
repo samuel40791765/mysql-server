@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -82,7 +82,7 @@ class PFS_index_processlist_by_processlist_id : public PFS_index_threads {
 
   ~PFS_index_processlist_by_processlist_id() override = default;
 
-  virtual bool match(PFS_thread *pfs) override;
+  bool match(PFS_thread *pfs) override;
 
  private:
   PFS_key_processlist_id m_key;
@@ -91,9 +91,9 @@ class PFS_index_processlist_by_processlist_id : public PFS_index_threads {
 enum enum_priv_processlist {
   /** User is not allowed to see any data. */
   PROCESSLIST_DENIED,
-  /** User does not have the PROCESS_ACL priviledge. */
+  /** User does not have the PROCESS_ACL privilege. */
   PROCESSLIST_USER_ONLY,
-  /** User has the PROCESS_ACL priviledge. */
+  /** User has the PROCESS_ACL privilege. */
   PROCESSLIST_ALL
 };
 
@@ -119,13 +119,13 @@ class table_processlist : public cursor_by_thread {
   int index_init(uint idx, bool sorted) override;
   int read_row_values(TABLE *table, unsigned char *buf, Field **fields,
                       bool read_all) override;
-  int set_access(void);
+  int set_access();
 
  public:
   ~table_processlist() override = default;
 
  private:
-  virtual int make_row(PFS_thread *pfs) override;
+  int make_row(PFS_thread *pfs) override;
   /** Table share lock. */
   static THR_LOCK m_table_lock;
   /** Table definition. */

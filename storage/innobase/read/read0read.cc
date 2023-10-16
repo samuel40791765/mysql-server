@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -409,7 +409,7 @@ void ReadView::copy_trx_ids(const trx_ids_t &trx_ids) {
 #ifdef UNIV_DEBUG
   /* The check is done randomly from time to time, because the check adds
   a kind of extra synchronization which itself could hide existing bugs. */
-  if (ut_rnd_interval(0, 99) == 0) {
+  if (ut::random_from_interval_fast(0, 99) == 0) {
     /* Assert that all transaction ids in list are active. */
     for (auto trx_id : trx_ids) {
       while (trx_sys->latch_and_execute_with_active_trx(
@@ -538,7 +538,7 @@ void MVCC::view_open(ReadView *&view, trx_t *trx) {
     ut_ad(view->m_closed);
 
     /* NOTE: This can be optimised further, for now we only
-    resuse the view iff there are no active RW transactions.
+    reuse the view if there are no active RW transactions.
 
     There is an inherent race here between purge and this
     thread. Purge will skip views that are marked as closed.

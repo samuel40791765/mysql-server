@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+Copyright (c) 2008, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -61,6 +61,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "row0vers.h"
 #include "srv0start.h"
 #include "trx0roll.h"
+
+struct CHARSET_INFO;
 
 /** configure variable for binlog option with InnoDB APIs */
 bool ib_binlog_enabled = false;
@@ -282,7 +284,8 @@ static ib_err_t ib_read_tuple(
 
   rec_offs_init(offsets_);
 
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &tuple->heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &tuple->heap);
 
   rec_meta_data = rec_get_info_bits(rec, page_format);
   dtuple_set_info_bits(dtuple, rec_meta_data);
@@ -290,7 +293,7 @@ static ib_err_t ib_read_tuple(
   offset_size = rec_offs_size(offsets);
 
   if (cmp_tuple && mode) {
-    /* This is a case of "read upto" certain value. Used for
+    /* This is a case of "read up to" certain value. Used for
     index scan for "<" or "<=" case */
     cmp = cmp_tuple->ptr->compare(rec, index, offsets, &match);
 
@@ -902,6 +905,9 @@ static void ib_qry_proc_free(
   que_graph_free_recursive(q_proc->grph.ins);
   que_graph_free_recursive(q_proc->grph.upd);
   que_graph_free_recursive(q_proc->grph.sel);
+  if (q_proc->node.upd && q_proc->node.upd->update) {
+    q_proc->node.upd->update->free_per_stmt_heap();
+  }
 
   memset(q_proc, 0x0, sizeof(*q_proc));
 }
@@ -1562,10 +1568,11 @@ ib_err_t ib_cursor_delete_row(
 
       rec = pcur->get_rec();
 
-      /* Since mtr will be commited, the rec
+      /* Since mtr will be committed, the rec
       will not be protected. Make a copy of
       the rec. */
-      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
       ut_ad(rec_offs_size(offsets) < UNIV_PAGE_SIZE_MAX);
       copy = rec_copy(ptr, rec, offsets);
     }
@@ -1911,14 +1918,13 @@ ib_err_t ib_col_set_value(ib_tpl_t ib_tpl, ib_ulint_t col_no, const void *src,
     case DATA_MYSQL:
     case DATA_VARMYSQL: {
       ulint cset;
-      CHARSET_INFO *cs;
       int error = 0;
       ulint true_len = len;
 
       /* For multi byte character sets we need to
       calculate the true length of the data. */
       cset = dtype_get_charset_coll(dtype_get_prtype(dtype));
-      cs = all_charsets[cset];
+      const CHARSET_INFO *cs = all_charsets[cset];
       if (cs) {
         uint pos = (uint)(col_len / cs->mbmaxlen);
 
@@ -2787,7 +2793,7 @@ dberr_t ib_sdi_set(uint32_t tablespace_id, const ib_sdi_key_t *ib_sdi_key,
     /* Existing row found. We should update it. */
 
     /* First check if the new row and old row are same */
-    /* We only S-lock the record when doing the comparision. */
+    /* We only S-lock the record when doing the comparison. */
 
     ib_tpl_t key_tpl = ib_sdi_create_search_tuple(ib_crsr, ib_sdi_key->sdi_key);
 
@@ -3349,7 +3355,7 @@ ib_err_t ib_memc_sdi_drop(ib_crsr_t crsr) {
   return (ib_sdi_drop(tablespace_id));
 }
 
-/** Wrapper function to retreive list of SDI keys into the buffer
+/** Wrapper function to retrieve list of SDI keys into the buffer
 The SDI keys are copied in the from x:y and separated by '|'
 @param[in,out]  crsr            Memcached cursor
 @param[in]      key_str         Memcached key

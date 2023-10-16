@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -690,7 +690,7 @@ class Clone_Handle {
   @param[in]    state   clone handle state */
   void set_state(Clone_Handle_State state) { m_clone_handle_state = state; }
 
-  /** Set clone to ABORT sate end any attached snapshot. */
+  /** Set clone to ABORT state end any attached snapshot. */
   void set_abort();
 
   /** Check if clone state is active
@@ -711,7 +711,7 @@ class Clone_Handle {
 
   /** Restart copy after a network failure
   @param[in]    thd     server THD object
-  @param[in]    loc     locator wit copy state from remote client
+  @param[in]    loc     locator with copy state from remote client
   @param[in]    loc_len locator length in bytes
   @return error code */
   int restart_copy(THD *thd, const byte *loc, uint loc_len);
@@ -819,19 +819,18 @@ class Clone_Handle {
                                    const Clone_file_ctx *file_ctx);
 
   /** Callback providing the file reference and data length to copy
-  @param[in]    cbk     callback interface
-  @param[in]    task    clone task
-  @param[in]    len     data length
-  @param[in]    buf_cbk invoke buffer callback
-  @param[in]    offset  file offset
-  @param[in]    name    file name where func invoked
-  @param[in]    line    line where the func invoked
+  @param[in]    cbk             callback interface
+  @param[in]    task            clone task
+  @param[in]    len             data length
+  @param[in]    buf_cbk         invoke buffer callback
+  @param[in]    offset          file offset
+  @param[in]    location        location where func invoked
   @return error code */
   int file_callback(Ha_clone_cbk *cbk, Clone_Task *task, uint len, bool buf_cbk,
                     uint64_t offset
 #ifdef UNIV_PFS_IO
                     ,
-                    const char *name, uint line
+                    ut::Location location
 #endif /* UNIV_PFS_IO */
   );
 
@@ -1224,7 +1223,7 @@ class Clone_Sys {
     /* Call function once before waiting. */
     err = func(false, wait);
 
-    /* Start with 1 ms sleep and increase upto target sleep time. */
+    /* Start with 1 ms sleep and increase up to target sleep time. */
     Clone_Msec cur_sleep_time{1};
 
     while (!is_timeout && wait && err == 0) {

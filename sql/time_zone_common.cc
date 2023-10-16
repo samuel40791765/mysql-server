@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2004, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,8 +34,6 @@
 #include <time.h>
 
 #include "lex_string.h"
-#include "m_ctype.h"
-#include "m_string.h"  // strmake
 #include "map_helpers.h"
 #include "my_alloc.h"
 #include "my_base.h"
@@ -44,7 +42,6 @@
 #include "my_dir.h"
 #include "my_inttypes.h"
 #include "my_io.h"
-#include "my_loglevel.h"
 #include "my_macros.h"
 #include "my_pointer_arithmetic.h"
 #include "my_psi_config.h"
@@ -56,9 +53,11 @@
 #include "mysql/components/services/bits/psi_mutex_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/psi/mysql_file.h"
 #include "mysql/psi/mysql_memory.h"
 #include "mysql/psi/mysql_mutex.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysqld_error.h"
 #include "sql/dd/types/event.h"
 #include "sql/field.h"
@@ -150,7 +149,7 @@ bool prepare_tz_info(TIME_ZONE_INFO *sp, MEM_ROOT *storage) {
   else
     cur_corr = 0;
 
-  /* Iterate trough t space */
+  /* Iterate through t space */
   while (sp->revcnt < TZ_MAX_REV_RANGES - 1) {
     cur_off_and_corr = cur_offset - cur_corr;
 

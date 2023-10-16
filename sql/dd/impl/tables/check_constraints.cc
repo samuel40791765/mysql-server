@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2019, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,8 @@
 #include "sql/dd/impl/transaction_impl.h"  // Transaction_ro
 #include "sql/dd/impl/types/object_table_definition_impl.h"
 
+struct CHARSET_INFO;
+
 namespace dd {
 namespace tables {
 
@@ -43,7 +45,7 @@ const Check_constraints &Check_constraints::instance() {
 ///////////////////////////////////////////////////////////////////////////
 
 const CHARSET_INFO *Check_constraints::name_collation() {
-  return &my_charset_utf8_tolower_ci;
+  return &my_charset_utf8mb3_tolower_ci;
 }
 
 ///////////////////////////////////////////////////////////////////////////

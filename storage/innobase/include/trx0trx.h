@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -43,7 +43,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0new.h"
 
 #include "lock0types.h"
-#include "log0log.h"
 #include "mem0mem.h"
 #include "que0types.h"
 #include "trx0xa.h"
@@ -53,7 +52,13 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "fts0fts.h"
 #endif /* !UNIV_HOTBACKUP */
 #include "read0read.h"
+#include "sql/handler.h"  // Xa_state_list
 #include "srv0srv.h"
+
+/* std::vector to store the trx id & table id of tables that needs to be
+ * rollbacked. We take SHARED MDL on these tables inside
+ * trx_recovery_rollback_thread before letting server accept connections */
+extern std::vector<std::pair<trx_id_t, table_id_t>> to_rollback_trx_tables;
 
 // Forward declaration
 struct mtr_t;
@@ -183,6 +188,12 @@ int trx_recover_for_mysql(
     XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
     ulint len,                /*!< in: number of slots in xid_list */
     MEM_ROOT *mem_root);      /*!< in: memory for table names */
+
+/** Find prepared transactions that are marked as prepared in TC, for recovery
+purposes.
+@param[in,out] xa_list prepared transactions state
+@return 0 if successful or error number */
+int trx_recover_tc_for_mysql(Xa_state_list &xa_list);
 
 /** This function is used to find one X/Open XA distributed transaction
  which is in the prepared state
@@ -1070,7 +1081,7 @@ struct trx_t {
   instance is re-used in trx_start_low(). It is used to track
   whether a transaction has been restarted since it was tagged
   for asynchronous rollback. */
-  ulint version;
+  std::atomic_uint64_t version;
 
   XID *xid;                    /*!< X/Open XA transaction
                                identification to identify a
@@ -1198,7 +1209,7 @@ static inline void assert_trx_is_inactive(const trx_t *t) {
 #ifdef UNIV_DEBUG
 /** Assert that an autocommit non-locking select cannot be in the
  rw_trx_list and that it is a read-only transaction.
- The tranasction must be in the mysql_trx_list. */
+ The transaction must be in the mysql_trx_list. */
 static inline void assert_trx_nonlocking_or_in_list(const trx_t *t) {
   if (trx_is_autocommit_non_locking(t)) {
     trx_state_t t_state = t->state;
@@ -1213,9 +1224,9 @@ static inline void assert_trx_nonlocking_or_in_list(const trx_t *t) {
   }
 }
 #else /* UNIV_DEBUG */
-/** Assert that an autocommit non-locking slect cannot be in the
+/** Assert that an autocommit non-locking select cannot be in the
  rw_trx_list and that it is a read-only transaction.
- The tranasction must be in the mysql_trx_list. */
+ The transaction must be in the mysql_trx_list. */
 #define assert_trx_nonlocking_or_in_list(trx) ((void)0)
 #endif /* UNIV_DEBUG */
 
@@ -1338,10 +1349,11 @@ struct commit_node_t {
   enum commit_node_state state; /*!< node execution state */
 };
 
-/** Test if trx->mutex is owned by the current thread. */
-#define trx_mutex_own(t) mutex_own(&t->mutex)
-
 #ifdef UNIV_DEBUG
+
+/** Test if trx->mutex is owned by the current thread. */
+bool inline trx_mutex_own(const trx_t *trx) { return mutex_own(&trx->mutex); }
+
 /**
 Verifies the invariants and records debug state related to latching rules.
 Called during trx_mutex_enter before the actual mutex acquisition.
@@ -1588,8 +1600,18 @@ class TrxInInnoDB {
 bool trx_is_mysql_xa(const trx_t *trx);
 
 /** Update transaction binlog file name and position from session THD.
-@param[in,out]  trx     current transaction. */
+@param[in,out] trx     current transaction. */
 void trx_sys_update_binlog_position(trx_t *trx);
+
+/** Checks whether or not the transaction has been marked as prepared in TC.
+@param[in]     trx the transaction
+@return true if the transaction is marked as prepared in TC, false otherwise. */
+bool trx_is_prepared_in_tc(trx_t const *trx);
+
+/** Does the 2nd phase of an XA transaction prepare for MySQL.
+@param[in,out] trx Transaction instance to finish prepare
+@return DB_SUCCESS or error number */
+dberr_t trx_set_prepared_in_tc_for_mysql(trx_t *trx);
 
 #include "trx0trx.ic"
 #endif /* !UNIV_HOTBACKUP */

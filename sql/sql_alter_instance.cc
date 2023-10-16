@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -25,7 +25,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <utility>
 
 #include "lex_string.h"
-#include "m_string.h"
 #include "mutex_lock.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
@@ -46,6 +45,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql/sql_plugin.h"
 #include "sql/sql_plugin_ref.h"
 #include "sql/sql_table.h" /* write_to_binlog */
+#include "string_with_len.h"
 
 /*
   @brief
@@ -137,7 +137,7 @@ bool Rotate_innodb_master_key::execute() {
     /*
       Though we failed to write to binlog,
       there is no way we can undo this operation.
-      So, covert error to a warning and let user
+      So, convert error to a warning and let user
       know that something went wrong while trying
       to make entry in binlog.
     */
@@ -245,7 +245,7 @@ bool Reload_keyring::execute() {
 
   /*
     Persisted variables require keyring support to
-    persist SENSITIVE varaiables in a secure manner.
+    persist SENSITIVE variables in a secure manner.
   */
   persisted_variables_refresh_keyring_support();
 

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2004, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2004, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -39,6 +39,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+#include "my_config.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include <mysql/service_mysql_alloc.h>
@@ -164,8 +165,8 @@ extern "C" {
 #endif
 
 /*
-  Dont allow use of min() or max() macros
-   - in order to enforce forward compatibilty
+  Don't allow use of min() or max() macros
+   - in order to enforce forward compatibility
 */
 
 #ifdef min
@@ -214,7 +215,7 @@ extern "C" {
 struct LinearSectionPtr
 {
   Uint32 sz;
-  Uint32 * p;
+  const Uint32* p;
 };
 
 struct SegmentedSectionPtrPOD
@@ -224,8 +225,8 @@ struct SegmentedSectionPtrPOD
   struct SectionSegment * p;
 
 #ifdef __cplusplus
-  void setNull() { p = 0;}
-  bool isNull() const { return p == 0;}
+  void setNull() { p = nullptr;}
+  bool isNull() const { return p == nullptr;}
   inline SegmentedSectionPtrPOD& assign(struct SegmentedSectionPtr&);
 #endif
 };
@@ -246,8 +247,8 @@ struct SegmentedSectionPtr
     :sz(src.sz), i(src.i), p(src.p)
   {}
 
-  void setNull() { p = 0;}
-  bool isNull() const { return p == 0;}
+  void setNull() { p = nullptr;}
+  bool isNull() const { return p == nullptr;}
 #endif
 };
 

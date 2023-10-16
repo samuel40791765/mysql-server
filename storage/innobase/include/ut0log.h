@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -26,8 +26,9 @@
 #ifndef ut0log_h
 #define ut0log_h
 
-#include "my_loglevel.h"
 #include "mysql/components/services/log_shared.h"
+#include "mysql/my_loglevel.h"
+#include "mysqld_error.h"
 #include "ut0core.h"
 
 /** Get the format string for the logger.

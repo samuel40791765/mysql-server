@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -131,7 +131,7 @@ public:
 
     0  No more data
     1  More rows available
-    >1 Error occured
+    >1 Error occurred
   */
   virtual int read_row(VirtualScanContext* ctx, Row& row, Uint32 row_number) const = 0;
 
@@ -175,14 +175,14 @@ int index_seek(const std::map<int, int> &index,
   if(iter == index.cend()) return -1;
 
   /* Check for exact match */
-  if(! (seek.inclusive && (iter->first == key)))
+  if(! (seek.inclusive() && (iter->first == key)))
   {
     /* Exact match failed. Check for bounded ranges */
-    if(seek.high || seek.low)
+    if(seek.high() || seek.low())
     {
-      if(seek.high && iter->first == key) iter++;
-      else if(seek.low)
-      {
+      if (seek.high() && iter->first == key) {
+        iter++;
+      } else if (seek.low()) {
         if(iter == index.cbegin()) return -1; // nothing lower than first rec
         iter--;
       }
@@ -342,7 +342,7 @@ int NdbInfoScanVirtual::nextResult()
     DBUG_RETURN(1);  // More rows
   }
 
-  // Error occured
+  // Error occurred
   m_state = End;
   DBUG_RETURN(result);
 }
@@ -460,8 +460,8 @@ class VirtualScanContext {
 
   bool scanTable(const NdbRecord *result_record,
                  NdbOperation::LockMode lock_mode = NdbOperation::LM_Read,
-                 const unsigned char *result_mask = 0,
-                 const NdbScanOperation::ScanOptions *options = 0,
+                 const unsigned char *result_mask = nullptr,
+                 const NdbScanOperation::ScanOptions *options = nullptr,
                  Uint32 sizeOfOptions = 0) {
     assert(m_trans != nullptr);
     m_scan_op = m_trans->scanTable(result_record, lock_mode, result_mask,
@@ -619,7 +619,7 @@ NdbInfoScanVirtual::NdbInfoScanVirtual(Ndb_cluster_connection *connection,
       m_table(table),
       m_virt(virt),
       m_recAttrs(table->columns()),
-      m_buffer(NULL),
+      m_buffer(nullptr),
       m_buffer_size(0),
       m_row_counter(0),
       m_ctx(new VirtualScanContext(connection))
@@ -691,12 +691,12 @@ public:
     NdbInfo::Table* tab = new NdbInfo::Table("blocks", this,
                                              NO_OF_BLOCK_NAMES);
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("block_number", 0,
                                         NdbInfo::Column::Number)) ||
         !tab->addColumn(NdbInfo::Column("block_name", 1,
                                         NdbInfo::Column::String)))
-      return NULL;
+      return nullptr;
     return tab;
   }
 };
@@ -766,12 +766,12 @@ public:
     NdbInfo::Table* tab = new NdbInfo::Table("dict_obj_types", this,
                                              OBJ_TYPES_TABLE_SIZE);
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("type_id", 0,
                                         NdbInfo::Column::Number)) ||
         !tab->addColumn(NdbInfo::Column("type_name", 1,
                                         NdbInfo::Column::String)))
-      return NULL;
+      return nullptr;
     return tab;
   }
 };
@@ -898,7 +898,7 @@ public:
     NdbInfo::Table* tab = new NdbInfo::Table("error_messages", this,
                                              m_error_messages.size());
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("error_code", 0,
                                         NdbInfo::Column::Number)) ||
         !tab->addColumn(NdbInfo::Column("error_description", 1,
@@ -907,14 +907,14 @@ public:
                                         NdbInfo::Column::String)) ||
         !tab->addColumn(NdbInfo::Column("error_classification", 3,
                                         NdbInfo::Column::String)))
-      return NULL;
+      return nullptr;
     return tab;
   }
 
 };
 
 #include "mgmapi/mgmapi_config_parameters.h"
-#include "../mgmsrv/ConfigInfo.hpp"
+#include "mgmcommon/ConfigInfo.hpp"
 class ConfigParamsTable : public VirtualTable
 {
   ConfigInfo m_config_info;
@@ -925,7 +925,7 @@ public:
   {
     // Build an index to allow further lookup
     // of the values by "row_number"
-    const ConfigInfo::ParamInfo* pinfo= NULL;
+    const ConfigInfo::ParamInfo* pinfo= nullptr;
     ConfigInfo::ParamInfoIter param_iter(m_config_info,
                                          CFG_SECTION_NODE,
                                          NODE_TYPE_DB);
@@ -1076,7 +1076,7 @@ public:
     NdbInfo::Table* tab = new NdbInfo::Table("config_params", this,
                                              m_config_params.size());
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("param_number", 0,
                                         NdbInfo::Column::Number)) ||
         !tab->addColumn(NdbInfo::Column("param_name", 1,
@@ -1096,7 +1096,7 @@ public:
         !tab->addColumn(NdbInfo::Column("param_status", 8,
                                         NdbInfo::Column::String)))
 
-      return NULL;
+      return nullptr;
     return tab;
   }
 };
@@ -1119,7 +1119,7 @@ public:
     m_array_count(0),
     m_table_name(table_name)
   {
-    while(m_array[m_array_count].name != 0)
+    while(m_array[m_array_count].name != nullptr)
     {
        m_index[m_array[m_array_count].value] = m_array_count;
        m_array_count++;
@@ -1151,7 +1151,7 @@ public:
     NdbInfo::Table* tab = new NdbInfo::Table(m_table_name, this, m_array_count);
 
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("state_int_value", 0,
                                         NdbInfo::Column::Number)) ||
         !tab->addColumn(NdbInfo::Column("state_name", 1,
@@ -1160,7 +1160,7 @@ public:
                                         NdbInfo::Column::String)) ||
         !tab->addColumn(NdbInfo::Column("state_description", 3,
                                         NdbInfo::Column::String)))
-      return NULL;
+      return nullptr;
     return tab;
   }
 };
@@ -1187,13 +1187,13 @@ class BackupIdTable : public VirtualTable
       return false;
     }
 
-    NdbRecAttr* nextid;
-    NdbRecAttr *frag;
-    NdbRecAttr *row;
+    NdbRecAttr *nextid = op->getValue("NEXTID");
+    NdbRecAttr *frag = op->getValue(NdbDictionary::Column::FRAGMENT);
+    NdbRecAttr *row = op->getValue(NdbDictionary::Column::ROWID);
+
     // Specify columns to reads, the backup id and two pseudo columns
-    if ((nextid = op->getValue("NEXTID")) == nullptr ||
-        (frag = op->getValue(NdbDictionary::Column::FRAGMENT)) == nullptr ||
-        (row = op->getValue(NdbDictionary::Column::ROWID)) == nullptr) {
+    if ((nextid == nullptr) || (frag == nullptr) || (row == nullptr))
+    {
       assert(false);
       return false;
     }
@@ -1203,7 +1203,7 @@ class BackupIdTable : public VirtualTable
       return false;
     }
 
-    // Sucessful read, assign return value
+    // Successful read, assign return value
     *backup_id = nextid->u_64_value();
     *fragment = frag->u_32_value();
     *rowid = row->u_64_value();
@@ -1251,16 +1251,16 @@ public:
     NdbInfo::Table* tab = new NdbInfo::Table("backup_id", this, 1);
 
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("id", 0,
                                         NdbInfo::Column::Number64)))
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("fragment", 1,
                                         NdbInfo::Column::Number)))
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("row_id", 2,
                                         NdbInfo::Column::Number64)))
-      return NULL;
+      return nullptr;
     return tab;
   }
 };
@@ -1270,6 +1270,8 @@ class IndexStatsTable : public VirtualTable {
     Uint32 index_id;
     Uint32 index_version;
     Uint32 sample_version;
+    Uint32 load_time;
+    Uint32 sample_count;
   };
 
 public:
@@ -1285,9 +1287,13 @@ public:
         ndbtab->getColumn("index_version");
     const NdbDictionary::Column *const sample_version_col =
         ndbtab->getColumn("sample_version");
+    const NdbDictionary::Column *const load_time_col =
+        ndbtab->getColumn("load_time");
+    const NdbDictionary::Column *const sample_count_col =
+        ndbtab->getColumn("sample_count");
 
-    // Set up record specification for the 3 columns
-    NdbDictionary::RecordSpecification record_spec[3];
+    // Set up record specification for the 5 columns
+    NdbDictionary::RecordSpecification record_spec[5];
     record_spec[0].column = index_id_col;
     record_spec[0].offset = offsetof(IndexStatRow, index_id);
     record_spec[0].nullbit_byte_offset = 0;  // Not nullable
@@ -1302,14 +1308,26 @@ public:
     record_spec[2].offset = offsetof(IndexStatRow, sample_version);
     record_spec[2].nullbit_byte_offset = 0;  // Not nullable
     record_spec[2].nullbit_bit_in_byte = 0;
-    if (!ctx->createRecord(record_spec, 3, sizeof(record_spec[0]))) {
+
+    record_spec[3].column = load_time_col;
+    record_spec[3].offset = offsetof(IndexStatRow, load_time);
+    record_spec[3].nullbit_byte_offset = 0;  // Not nullable
+    record_spec[3].nullbit_bit_in_byte = 0;
+
+    record_spec[4].column = sample_count_col;
+    record_spec[4].offset = offsetof(IndexStatRow, sample_count);
+    record_spec[4].nullbit_byte_offset = 0;  // Not nullable
+    record_spec[4].nullbit_bit_in_byte = 0;
+    if (!ctx->createRecord(record_spec, 5, sizeof(record_spec[0]))) {
       return false;
     }
 
-    // Set up attribute mask to scan only the 3 columns of interest
+    // Set up attribute mask to scan only the 5 columns of interest
     const unsigned char attr_mask = ((1 << index_id_col->getColumnNo()) |
                                      (1 << index_version_col->getColumnNo()) |
-                                     (1 << sample_version_col->getColumnNo()));
+                                     (1 << sample_version_col->getColumnNo()) |
+                                     (1 << load_time_col->getColumnNo()) |
+                                     (1 << sample_count_col->getColumnNo()));
     if (!ctx->scanTable(ctx->getRecord(), NdbOperation::LM_Read, &attr_mask)) {
       return false;
     }
@@ -1318,7 +1336,7 @@ public:
 
   int read_row(VirtualScanContext *ctx, VirtualTable::Row &w,
                Uint32) const override {
-    IndexStatRow *row_data;
+    const IndexStatRow *row_data;
     const int scan_next_result =
         ctx->getScanOp()->nextResult((const char **)&row_data, true, false);
     if (scan_next_result == 0) {
@@ -1326,6 +1344,8 @@ public:
       w.write_number(row_data->index_id);
       w.write_number(row_data->index_version);
       w.write_number(row_data->sample_version);
+      w.write_number(row_data->load_time);
+      w.write_number(row_data->sample_count);
       return 1;
     }
     if (scan_next_result == 1) {
@@ -1341,16 +1361,22 @@ public:
                                              64, // Hard-coded estimate
                                              false);
     if (!tab)
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("index_id", 0,
                                         NdbInfo::Column::Number)))
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("index_version", 1,
                                         NdbInfo::Column::Number)))
-      return NULL;
+      return nullptr;
     if (!tab->addColumn(NdbInfo::Column("sample_version", 2,
                                         NdbInfo::Column::Number)))
-      return NULL;
+      return nullptr;
+    if (!tab->addColumn(NdbInfo::Column("load_time", 3,
+                                        NdbInfo::Column::Number)))
+      return nullptr;
+    if (!tab->addColumn(NdbInfo::Column("sample_count", 4,
+                                        NdbInfo::Column::Number)))
+      return nullptr;
     return tab;
   }
 };
@@ -1596,7 +1622,7 @@ class EventsTable : public VirtualTable {
       const override {
 
     const DictionaryList::Element * elem;
-    std::unique_ptr<const NdbDictionary::Event> event;
+    NdbDictionary::Event_ptr event;
 
     do {
       elem = ctx->nextInList(row);
@@ -1609,7 +1635,7 @@ class EventsTable : public VirtualTable {
     {
       char event_columns[column_buff_size];
       size_t s = 0;
-      Uint32 event_report = 0;
+      Uint32 reporting = 0;
       Uint32 table_event = 0;
 
       /* columns */
@@ -1619,21 +1645,17 @@ class EventsTable : public VirtualTable {
                       event->getEventColumn(i)->getName());
       }
 
-      /* reporting */
-      switch(event->getReport()) {
-        case NdbDictionary::Event::ER_UPDATED:
-          event_report = 1;
-          break;
-        case NdbDictionary::Event::ER_ALL:
-          event_report = 2;
-          break;
-        case NdbDictionary::Event::ER_SUBSCRIBE:
-          event_report = 3;
-          break;
-        case NdbDictionary::Event::ER_DDL:
-          event_report = 4;
-          break;
-      }
+      /* reporting
+         The options describing how the Event is configured to report are
+         translated into a SET
+      */
+      const Uint32 report_options = event->getReportOptions();
+      if ((report_options & NdbDictionary::Event::ER_ALL) == 0)
+        reporting |= 1;  // ER_UPDATED
+      else
+        reporting |= 2;
+      if (report_options & NdbDictionary::Event::ER_SUBSCRIBE) reporting |= 4;
+      if (report_options & NdbDictionary::Event::ER_DDL) reporting |= 8;
 
       /* table_event
          The first 13 bits are contiguous in the bitfield.
@@ -1650,7 +1672,7 @@ class EventsTable : public VirtualTable {
       w.write_number(elem->id);                             // id
       w.write_string(elem->name);                           // name
       w.write_number(event->getTable()->getObjectId());     // table_id
-      w.write_number(event_report + 1);                     // reporting
+      w.write_number(reporting);                            // reporting
       w.write_string(event_columns);                        // columns
       w.write_number(table_event);                          // table_event
     }

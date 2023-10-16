@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2021, Oracle and/or its affiliates.
+Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -33,7 +33,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <mutex>
 #include <string>
 #include <vector>
-#include "my_loglevel.h"
+#include "mysql/my_loglevel.h"
 const constexpr char *jemalloc_dll_name = "jemalloc.dll";
 const constexpr char *jemalloc_malloc_function_name = "je_malloc";
 const constexpr char *jemalloc_calloc_function_name = "je_calloc";

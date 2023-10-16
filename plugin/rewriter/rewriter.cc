@@ -1,4 +1,4 @@
-/*  Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/*  Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License, version 2.0,
@@ -39,6 +39,7 @@
 #include "plugin/rewriter/persisted_rule.h"
 #include "plugin/rewriter/rule.h"
 #include "sql/debug_sync.h"
+#include "string_with_len.h"
 #include "template_utils.h"
 
 using rules_table_service::Cursor;

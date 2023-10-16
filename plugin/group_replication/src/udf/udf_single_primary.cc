@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2018, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -21,9 +21,11 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include "plugin/group_replication/include/udf/udf_single_primary.h"
+#include "m_string.h"
 #include "plugin/group_replication/include/group_actions/primary_election_action.h"
 #include "plugin/group_replication/include/plugin.h"
 #include "plugin/group_replication/include/udf/udf_utils.h"
+#include "string_with_len.h"
 
 static char *group_replication_set_as_primary(UDF_INIT *, UDF_ARGS *args,
                                               char *result,
@@ -90,7 +92,8 @@ static char *group_replication_set_as_primary(UDF_INIT *, UDF_ARGS *args,
                                        running_transactions_timeout);
   Group_action_diagnostics execution_message_area;
   group_action_coordinator->coordinate_action_execution(
-      &group_action, &execution_message_area);
+      &group_action, &execution_message_area,
+      Group_action_message::ACTION_UDF_SET_PRIMARY);
   if (log_group_action_result_message(&execution_message_area, action_name,
                                       result, length)) {
     *error = 1;
@@ -178,7 +181,7 @@ static bool group_replication_set_as_primary_init(UDF_INIT *init_id,
   }
 
   if (args->arg_count >= 2) {
-    std::vector<Group_member_info *> *all_members_info =
+    Group_member_info_list *all_members_info =
         (group_member_mgr == nullptr ? nullptr
                                      : group_member_mgr->get_all_members());
     bool is_version_lower_for_running_transactions_timeout = false;
@@ -275,7 +278,11 @@ static char *group_replication_switch_to_single_primary_mode(
 
   Group_action_diagnostics execution_message_area;
   group_action_coordinator->coordinate_action_execution(
-      &group_action, &execution_message_area);
+      &group_action, &execution_message_area,
+      uuid.empty()
+          ? Group_action_message::ACTION_UDF_SWITCH_TO_SINGLE_PRIMARY_MODE
+          : Group_action_message::
+                ACTION_UDF_SWITCH_TO_SINGLE_PRIMARY_MODE_UUID);
   if (log_group_action_result_message(&execution_message_area, action_name,
                                       result, length)) {
     *error = 1;

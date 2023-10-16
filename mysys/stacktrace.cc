@@ -1,4 +1,4 @@
-/* Copyright (c) 2001, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2001, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -434,13 +434,19 @@ void my_print_stacktrace(const uchar * /* stack_bottom */,
   /*Prepare stackframe for the first StackWalk64 call*/
   frame.AddrFrame.Mode = frame.AddrPC.Mode = frame.AddrStack.Mode =
       AddrModeFlat;
-#if (defined _M_X64)
+#if (defined _M_IX86)
+  machine = IMAGE_FILE_MACHINE_I386;
+  frame.AddrFrame.Offset = context.Ebp;
+  frame.AddrPC.Offset = context.Eip;
+  frame.AddrStack.Offset = context.Esp;
+#elif (defined _M_X64)
   machine = IMAGE_FILE_MACHINE_AMD64;
   frame.AddrFrame.Offset = context.Rbp;
   frame.AddrPC.Offset = context.Rip;
   frame.AddrStack.Offset = context.Rsp;
 #else
   /*There is currently no need to support IA64*/
+  /* Warning C4068: unknown pragma 'error' */
 #pragma error("unsupported architecture")
 #endif
 
@@ -546,7 +552,7 @@ void my_create_minidump(const char *name, HANDLE process, DWORD pid) {
   hFile = CreateFile(name, GENERIC_WRITE, 0, 0, CREATE_ALWAYS,
                      FILE_ATTRIBUTE_NORMAL, 0);
   if (hFile) {
-    MINIDUMP_TYPE mdt =
+    const MINIDUMP_TYPE mdt =
         (MINIDUMP_TYPE)(MiniDumpNormal | MiniDumpWithThreadInfo |
                         MiniDumpWithProcessThreadData);
     /* Create minidump, use info only if same process. */
@@ -781,7 +787,7 @@ void my_safe_print_system_time() {
   char hrs_buf[3] = "00";
   char mins_buf[3] = "00";
   char secs_buf[3] = "00";
-  int base = 10;
+  const int base = 10;
 #ifdef _WIN32
   SYSTEMTIME utc_time;
   long hrs, mins, secs;

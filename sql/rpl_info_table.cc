@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -26,15 +26,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "m_ctype.h"
 #include "m_string.h"
 #include "my_base.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
-#include "my_loglevel.h"
 #include "my_sys.h"
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/my_loglevel.h"
 #include "mysql/service_mysql_alloc.h"
+#include "mysql/strings/dtoa.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql/thread_type.h"
 #include "mysqld_error.h"
 #include "sql/dynamic_ids.h"  // Server_ids
@@ -51,6 +52,7 @@
 #include "sql/system_variables.h"
 #include "sql/table.h"
 #include "sql_string.h"
+#include "strmake.h"
 #include "thr_lock.h"
 
 Rpl_info_table::Rpl_info_table(uint nparam, const char *param_schema,

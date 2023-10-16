@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -40,23 +40,23 @@ Is the entry point. Forwards the job to explain_query_expression().
 
 (2) explain_query_expression()
 
-Is for a Query_expression, prepares, optimizes, explains one JOIN for
-each "top-level" Query_blocks of the unit (like: all SELECTs of a
-UNION; but not subqueries), and one JOIN for the fake Query_block of
-UNION); each JOIN explain (JOIN::exec()) calls explain_query_specification()
+Is for a Query_expression, prepares, optimizes, explains one JOIN for each
+"top-level" Query_blocks of the unit (like: all SELECTs of a UNION; but not
+subqueries), and one or more JOIN for the post processing block Query_block of
+set operations (e.g. UNION), see query_term.h; each JOIN explain (JOIN::exec())
+calls explain_query_specification()
 
 (3) explain_query_specification()
 
-Is for a single Query_block (fake or not). It needs a prepared and
-optimized JOIN, for which it builds the EXPLAIN rows. But it also
-launches the EXPLAIN process for "inner units" (==subqueries of this
+Is for a single Query_block (post processing or not, see query_term.h).
+It needs a prepared and optimized JOIN, for which it builds the EXPLAIN rows.
+But it also launches the EXPLAIN process for "inner units" (==subqueries of this
 Query_block), by calling explain_query_expression() for each of them.
 */
 
 #include "my_base.h"
 #include "my_sqlcommand.h"
 #include "my_thread_local.h"
-#include "sql/iterators/row_iterator.h"
 #include "sql/opt_explain_format.h"
 #include "sql/parse_tree_node_base.h"
 #include "sql/query_result.h"  // Query_result_send
@@ -65,15 +65,15 @@ Query_block), by calling explain_query_expression() for each of them.
 #include "sys/types.h"
 
 class Item;
-class JOIN;
-class QEP_TAB;
 class Query_block;
 class Query_expression;
+class Query_term;
+class String;
 class THD;
 struct AccessPath;
 struct TABLE;
 template <class T>
-class List;
+class mem_root_deque;
 
 extern const char *join_type_str[];
 
@@ -132,7 +132,7 @@ class Modification_plan {
      to mark modified tables etc.
 */
 
-class Query_result_explain final : public Query_result_send {
+class Query_result_explain : public Query_result_send {
  protected:
   /**
     Pointer to underlying Query_result_insert, Query_result_update or
@@ -159,26 +159,44 @@ class Query_result_explain final : public Query_result_send {
            interceptor->start_execution(thd);
   }
 
-  bool optimize() override {
-    return Query_result_send::optimize() || interceptor->optimize();
-  }
-
-  void cleanup(THD *thd) override {
-    Query_result_send::cleanup(thd);
-    interceptor->cleanup(thd);
+  void cleanup() override {
+    Query_result_send::cleanup();
+    interceptor->cleanup();
   }
 };
 
-bool explain_no_table(THD *explain_thd, const THD *query_thd,
-                      Query_block *query_block, const char *message,
-                      enum_parsing_context ctx);
+/**
+ * Wrapper class for writing EXPLAIN output to a user variable.
+ *
+ * This class overrides Query_result_send::send_data() to write the output of
+ * the EXPLAIN query to the user variable specified by m_variable_name.
+ */
+class Query_result_explain_into_var final : public Query_result_explain {
+ public:
+  Query_result_explain_into_var(Query_expression *expr, Query_result *child,
+                                std::string_view variable_name)
+      : Query_result_explain(expr, child), m_variable_name(variable_name) {}
+
+  bool send_result_set_metadata(THD *, const mem_root_deque<Item *> &,
+                                uint) override {
+    return false;
+  }
+
+  bool send_data(THD *thd, const mem_root_deque<Item *> &items) override;
+
+  bool send_eof(THD *thd) override;
+
+ private:
+  std::string_view m_variable_name;
+};
+
 bool explain_single_table_modification(THD *explain_thd, const THD *query_thd,
                                        const Modification_plan *plan,
                                        Query_block *select);
 bool explain_query(THD *explain_thd, const THD *query_thd,
                    Query_expression *unit);
 bool explain_query_specification(THD *explain_thd, const THD *query_thd,
-                                 Query_block *query_block,
+                                 Query_term *query_term,
                                  enum_parsing_context ctx);
 
 class Sql_cmd_explain_other_thread final : public Sql_cmd {
@@ -196,5 +214,9 @@ class Sql_cmd_explain_other_thread final : public Sql_cmd {
   /// connection_id in EXPLAIN FOR CONNECTION \<connection_id\>
   my_thread_id m_thread_id;
 };
+
+// Used to generate the "query" field in JSON explain object.
+void print_query_for_explain(const THD *query_thd, Query_expression *unit,
+                             String *str);
 
 #endif /* OPT_EXPLAIN_INCLUDED */

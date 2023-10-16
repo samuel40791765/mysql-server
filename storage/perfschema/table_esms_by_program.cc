@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -85,6 +85,8 @@ Plugin_table table_esms_by_program::m_table_def(
     "  SUM_NO_INDEX_USED bigint(20) unsigned NOT NULL,\n"
     "  SUM_NO_GOOD_INDEX_USED bigint(20) unsigned NOT NULL,\n"
     "  SUM_CPU_TIME BIGINT unsigned not null,\n"
+    "  MAX_CONTROLLED_MEMORY BIGINT unsigned not null,\n"
+    "  MAX_TOTAL_MEMORY BIGINT unsigned not null,\n"
     "  COUNT_SECONDARY bigint(20) unsigned NOT NULL,\n"
     "  PRIMARY KEY (OBJECT_TYPE, OBJECT_SCHEMA, OBJECT_NAME) USING HASH\n",
     /* Options */
@@ -133,12 +135,12 @@ PFS_engine_table *table_esms_by_program::create(PFS_engine_table_share *) {
   return new table_esms_by_program();
 }
 
-int table_esms_by_program::delete_all_rows(void) {
+int table_esms_by_program::delete_all_rows() {
   reset_esms_by_program();
   return 0;
 }
 
-ha_rows table_esms_by_program::get_row_count(void) {
+ha_rows table_esms_by_program::get_row_count() {
   return global_program_container.get_row_count();
 }
 
@@ -147,12 +149,12 @@ table_esms_by_program::table_esms_by_program()
   m_normalizer = time_normalizer::get_statement();
 }
 
-void table_esms_by_program::reset_position(void) {
+void table_esms_by_program::reset_position() {
   m_pos = 0;
   m_next_pos = 0;
 }
 
-int table_esms_by_program::rnd_next(void) {
+int table_esms_by_program::rnd_next() {
   PFS_program *pfs;
 
   m_pos.set_at(&m_next_pos);
@@ -188,7 +190,7 @@ int table_esms_by_program::index_init(uint idx [[maybe_unused]], bool) {
   return 0;
 }
 
-int table_esms_by_program::index_next(void) {
+int table_esms_by_program::index_next() {
   PFS_program *pfs;
   bool has_more_program = true;
 

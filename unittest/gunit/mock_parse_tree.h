@@ -1,6 +1,6 @@
 #ifndef MOCK_PARSE_TREE_INCLUDED
 #define MOCK_PARSE_TREE_INCLUDED
-/* Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -57,12 +57,13 @@ inline Item *make_fixed_literal(THD *thd, const char *pattern) {
 
 class Mock_pt_item_list : public PT_item_list {
  public:
-  Mock_pt_item_list(std::initializer_list<const char *> strings) {
+  Mock_pt_item_list(std::initializer_list<const char *> strings)
+      : PT_item_list(POS()) {
     for (auto string : strings) push_back(new Mock_text_literal(string));
   }
 
   template <typename T>
-  Mock_pt_item_list(T t) {
+  explicit Mock_pt_item_list(T t) : PT_item_list(POS()) {
     push_back(t);
   }
 

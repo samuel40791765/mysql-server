@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -135,7 +135,7 @@ computeXorChecksum(const Uint32 *const buf, const size_t words,
   Uint32 tmp1 = 0;
   const Uint32 middle = words / 2;
   for (auto ptr{buf}; ptr < (buf + middle); ++ptr) {
-    // Use two seperate 'Xor-streams'
+    // Use two separate 'Xor-streams'
     tmp0 ^= *ptr;
     tmp1 ^= *(ptr+middle);
   }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -27,11 +27,11 @@
 #include <algorithm>
 #include <memory>
 
-#include "m_ctype.h"
 #include "my_alloc.h"
 #include "my_base.h"
 #include "my_inttypes.h"
 #include "my_sys.h"
+#include "mysql/strings/m_ctype.h"
 #include "sql/join_optimizer/access_path.h"
 #include "sql/key.h"
 #include "sql/mem_root_array.h"
@@ -714,7 +714,7 @@ ha_rows check_quick_select(THD *thd, RANGE_OPT_PARAM *param, uint idx,
 
       PRIMARY KEY(a_1, ..., a_n, b1, ..., b_k)
 
-    i.e. the first key parts of it are identical to uncovered parts ot the
+    i.e. the first key parts of it are identical to uncovered parts of the
     key being scanned. This function assumes that the index flags do not
     include HA_KEY_SCAN_NOT_ROR flag (that is checked elsewhere).
 
@@ -801,7 +801,7 @@ void trace_basic_info_index_range_scan(THD *thd, const AccessPath *path,
 
   trace_object->add_alnum("type", "range_scan")
       .add_utf8("index", cur_key.name)
-      .add("rows", path->num_output_rows);
+      .add("rows", path->num_output_rows());
 
   Opt_trace_array trace_range(&thd->opt_trace, "ranges");
 
@@ -821,7 +821,8 @@ AccessPath *get_key_scans_params(THD *thd, RANGE_OPT_PARAM *param,
                                  bool update_tbl_stats,
                                  enum_order order_direction,
                                  bool skip_records_in_range,
-                                 const double cost_est, Key_map *needed_reg) {
+                                 const double cost_est, bool ror_only,
+                                 Key_map *needed_reg) {
   uint idx, best_idx = 0;
   SEL_ROOT *key, *key_to_read = nullptr;
   ha_rows best_records = 0; /* protected by key_to_read */
@@ -867,7 +868,10 @@ AccessPath *get_key_scans_params(THD *thd, RANGE_OPT_PARAM *param,
           thd, param, idx, read_index_only, key, update_tbl_stats,
           order_direction, skip_records_in_range, &mrr_flags, &buf_size, &cost,
           &is_ror_scan, &is_imerge_scan);
-
+      if (found_records != HA_POS_ERROR && ror_only && !is_ror_scan) {
+        trace_idx.add("chosen", false).add_alnum("cause", "not_rowid_ordered");
+        continue;
+      }
       if (!compound_hint_key_enabled(param->table, keynr,
                                      INDEX_MERGE_HINT_ENUM)) {
         trace_idx.add("chosen", false).add_alnum("cause", "index_merge_hint");
@@ -966,7 +970,7 @@ AccessPath *get_key_scans_params(THD *thd, RANGE_OPT_PARAM *param,
   AccessPath *path = new (param->return_mem_root) AccessPath;
   path->type = AccessPath::INDEX_RANGE_SCAN;
   path->cost = read_cost;
-  path->num_output_rows = best_records;
+  path->set_num_output_rows(best_records);
   path->index_range_scan().index = param->real_keynr[best_idx];
   path->index_range_scan().num_used_key_parts = used_key_parts;
   path->index_range_scan().used_key_part = param->key[best_idx];
@@ -984,7 +988,7 @@ AccessPath *get_key_scans_params(THD *thd, RANGE_OPT_PARAM *param,
   path->index_range_scan().reverse =
       false;  // May be changed by make_reverse() later.
   DBUG_PRINT("info", ("Returning range plan for key %s, cost %g, records %g",
-                      used_key->name, path->cost, path->num_output_rows));
+                      used_key->name, path->cost, path->num_output_rows()));
   return path;
 }
 
@@ -1182,7 +1186,7 @@ static bool get_ranges_from_tree_given_base(
       flag |= DESC_FLAG;
     }
 
-    assert(!thd->mem_cnt->is_error());
+    assert(!thd->m_mem_cnt.is_error());
     /* Get range for retrieving rows in RowIterator::Read() */
     QUICK_RANGE *range = new (return_mem_root) QUICK_RANGE(
         return_mem_root, base_min_key, (uint)(tmp_min_key - base_min_key),

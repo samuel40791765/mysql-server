@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2022, Oracle and/or its affiliates.
+Copyright (c) 2011, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -39,6 +39,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "que0que.h"
 #include "que0types.h"
 #include "univ.i"
+
+struct CHARSET_INFO;
 
 /* The various states of the FTS sub system pertaining to a table with
 FTS indexes defined on it. */

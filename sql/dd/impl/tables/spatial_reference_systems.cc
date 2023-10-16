@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2016, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -25,7 +25,7 @@
 #include <string.h>
 #include <new>
 
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 #include "sql/dd/impl/raw/object_keys.h"  // Parent_id_range_key
 #include "sql/dd/impl/raw/raw_record.h"
 #include "sql/dd/impl/tables/dd_properties.h"  // TARGET_DD_VERSION
@@ -44,7 +44,7 @@ const Spatial_reference_systems &Spatial_reference_systems::instance() {
 ///////////////////////////////////////////////////////////////////////////
 
 const CHARSET_INFO *Spatial_reference_systems::name_collation() {
-  return &my_charset_utf8_general_ci;
+  return &my_charset_utf8mb3_general_ci;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -73,7 +73,7 @@ Spatial_reference_systems::Spatial_reference_systems() {
                          "DEFAULT CURRENT_TIMESTAMP");
   m_target_def.add_field(FIELD_ORGANIZATION, "FIELD_ORGANIZATION",
                          "organization CHARACTER VARYING(256)\n"
-                         "COLLATE utf8_general_ci");
+                         "COLLATE utf8mb3_general_ci");
   m_target_def.add_field(FIELD_ORGANIZATION_COORDSYS_ID,
                          "FIELD_ORGANIZATION_COORDSYS_ID",
                          "organization_coordsys_id INTEGER UNSIGNED");

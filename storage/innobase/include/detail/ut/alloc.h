@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2021, Oracle and/or its affiliates.
+Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -228,7 +228,7 @@ struct Alloc_arr : public allocator_traits<false> {
     sizeof(PFS-META)). In code that would be std::abs(alignof(max_align_t) -
     PFS_metadata::size). Not used by this implementation.
 
-    PFS-META-OFFSET, strictly speaking, isn't neccesary in this case of
+    PFS-META-OFFSET, strictly speaking, isn't necessary in this case of
     non-extended alignments, where alignment is always known in compile-time and
     thus the offset we will be storing into the PFS-META-OFFSET field is always
     going to be the same for the given platform. So, rather than serializing

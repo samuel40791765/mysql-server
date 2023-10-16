@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2009, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -36,6 +36,7 @@
 #include "sql/sql_list.h"
 #include "sql/thr_malloc.h"
 #include "sql_string.h"
+#include "template_utils.h"
 #include "unittest/gunit/gunit_test_main.h"
 
 namespace sql_list_unittest {
@@ -73,8 +74,8 @@ class SqlListTest : public ::testing::Test {
   List_iterator<int> m_int_list_iter;
 
  private:
-  // Declares (but does not define) copy constructor and assignment operator.
-  GTEST_DISALLOW_COPY_AND_ASSIGN_(SqlListTest);
+  SqlListTest(SqlListTest const &) = delete;
+  SqlListTest &operator=(SqlListTest const &) = delete;
 };
 
 // Tests that we can construct and destruct lists.

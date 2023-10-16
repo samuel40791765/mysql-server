@@ -1,4 +1,4 @@
-# Copyright (c) 2017, 2021, Oracle and/or its affiliates.
+# Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -33,6 +33,10 @@ ADD_CUSTOM_COMMAND(OUTPUT mysql_server_mock_schema.cc mysql_server_mock_schema.h
                      "SqlQueryJsonSchema"
                    DEPENDS mysql_server_mock_schema.js)
 
+ADD_CUSTOM_TARGET(mysql_server_mock_schema
+  DEPENDS mysql_server_mock_schema.cc mysql_server_mock_schema.h
+  )
+ADD_DEPENDENCIES(clang_tidy_prerequisites mysql_server_mock_schema)
 
 SET(common_libraries)
 SET(math_libraries)
@@ -46,7 +50,7 @@ ELSE()
   LIST(APPEND math_libraries -lm)
 ENDIF()
 
-SET(DUKTAPE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/extra/duktape/duktape-2.6.0/)
+SET(DUKTAPE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/extra/duktape/duktape-2.7.0/)
 
 SET(DUKTAPE_SRCS
   ${DUKTAPE_SOURCE_DIR}/src/duktape.c
@@ -57,6 +61,11 @@ SET(MOCK_SERVER_HTTP_CLIENT_SRCS
     mock_server_rest_client.cc)
 
 # disable compiler warnings in duktape
+MY_CHECK_CXX_COMPILER_WARNING("-Wunused-function" HAS_WARN_FLAG)
+IF(HAS_WARN_FLAG)
+  ADD_COMPILE_FLAGS(${DUKTAPE_SRCS} COMPILE_FLAGS "${HAS_WARN_FLAG}")
+ENDIF()
+
 MY_CHECK_CXX_COMPILER_WARNING("-Werror" HAS_WARN_FLAG)
 IF(HAS_WARN_FLAG)
   ADD_COMPILE_FLAGS(${DUKTAPE_SRCS} COMPILE_FLAGS "${HAS_WARN_FLAG}")
@@ -97,6 +106,11 @@ IF(HAS_WARN_FLAG)
   ADD_COMPILE_FLAGS(${DUKTAPE_SRCS} COMPILE_FLAGS "${HAS_WARN_FLAG}")
 ENDIF()
 MY_CHECK_CXX_COMPILER_WARNING("-Wmissing-profile" HAS_WARN_FLAG)
+IF(HAS_WARN_FLAG)
+  ADD_COMPILE_FLAGS(${DUKTAPE_SRCS} COMPILE_FLAGS "${HAS_WARN_FLAG}")
+ENDIF()
+
+MY_CHECK_CXX_COMPILER_WARNING("-Wmaybe-uninitialized" HAS_WARN_FLAG)
 IF(HAS_WARN_FLAG)
   ADD_COMPILE_FLAGS(${DUKTAPE_SRCS} COMPILE_FLAGS "${HAS_WARN_FLAG}")
 ENDIF()
@@ -149,6 +163,7 @@ add_harness_plugin(mock_server
     router_lib
     harness_tls
   )
+ADD_DEPENDENCIES(mock_server mysql_server_mock_schema)
 
 TARGET_INCLUDE_DIRECTORIES(mock_server SYSTEM PUBLIC
   ${DUKTAPE_SOURCE_DIR}/src/
@@ -188,7 +203,7 @@ TARGET_INCLUDE_DIRECTORIES(mock_server_rest_client PUBLIC
   ${PROJECT_SOURCE_DIR}/src/mock_server/include/
   ${PROJECT_SOURCE_DIR}/src/http/include/
   )
-TARGET_LINK_LIBRARIES(mock_server_rest_client http_client)
+TARGET_LINK_LIBRARIES(mock_server_rest_client http_client extra::rapidjson)
 ADD_DEPENDENCIES(mysqlrouter_all mock_server_rest_client)
 
 TARGET_COMPILE_DEFINITIONS(mysql_server_mock

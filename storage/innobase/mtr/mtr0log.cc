@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -43,6 +43,14 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef UNIV_HOTBACKUP
 #include "dict0boot.h"
 #endif /* !UNIV_HOTBACKUP */
+
+/** Parses a log record written by mlog_open_and_write_index.
+@param[in]  ptr      buffer
+@param[in]  end_ptr  buffer end
+@param[out] index    own: dummy index
+@return parsed record end, NULL if not a complete record */
+[[nodiscard]] static byte *mlog_parse_index_v1(byte *ptr, const byte *end_ptr,
+                                               dict_index_t **index);
 
 /** Catenates n bytes to the mtr log.
 @param[in] mtr Mini-transaction
@@ -496,8 +504,8 @@ byte *mlog_parse_index_8027(byte *ptr, const byte *end_ptr, bool comp,
 }
 
 #ifndef UNIV_HOTBACKUP
-/* phy_pos 2 bytes, v_added 1 byte, v_dropped 1 byte */
-constexpr size_t inst_col_info_size = 4;
+/* logical_pos 2 bytes, phy_pos 2 bytes, v_added 1 byte, v_dropped 1 byte */
+constexpr size_t inst_col_info_size = 6;
 
 /** Calculate total size needed to log index information.
 @param[in]   index         index
@@ -505,7 +513,7 @@ constexpr size_t inst_col_info_size = 4;
 @param[in]   n             number of fields in index
 @param[in]   is_comp       true if COMP
 @param[in]   is_versioned  if table has row versions
-@param[in]   is_instant    ture if table has INSTANT cols
+@param[in]   is_instant    true if table has INSTANT cols
 @param[out]  size_needed   total size needed on REDO LOG */
 static void log_index_get_size_needed(const dict_index_t *index, size_t size,
                                       uint16_t n, bool is_comp,
@@ -584,8 +592,8 @@ static void log_index_flag(uint8_t flag, byte *&log_ptr) {
 @param[in]      n             number of fields
 @param[in]      rec           index record
 @param[in]      is_comp       true if COMP
-@param[in]      is_versioned  ture if table has row versions
-@param[in]      is_instant    ture if table has INSTANT cols
+@param[in]      is_versioned  true if table has row versions
+@param[in]      is_instant    true if table has INSTANT cols
 @param[in,out]  log_ptr       REDO LOG buffer pointer */
 static void log_index_column_counts(const dict_index_t *index, uint16_t n,
                                     const byte *rec, bool is_comp,
@@ -624,7 +632,7 @@ static void log_index_column_counts(const dict_index_t *index, uint16_t n,
   log_ptr += 2;
 }
 
-/** Close, alocate and reopen LOG pointer buffer.
+/** Close, allocate and reopen LOG pointer buffer.
 @param[in]      log_ptr   pointer to log buffer
 @param[in,out]  log_start start of currently allocated buffer
 @param[in,out]  log_end   end of currently allocated buffer
@@ -664,9 +672,9 @@ template <typename F>
 static bool log_index_fields(const dict_index_t *index, uint16_t n,
                              bool is_versioned, std::vector<dict_field_t *> &f,
                              byte *&log_ptr, F &func) {
-  /* Write metadata for each field. Log the fields in their physical order. */
+  /* Write metadata for each field. Log the fields in their logical order. */
   for (size_t i = 0; i < n; i++) {
-    dict_field_t *field = index->get_physical_field(i);
+    dict_field_t *field = index->get_field(i);
     const dict_col_t *col = field->col;
     ulint len = field->fixed_len;
     ut_ad(len < 0x7fff);
@@ -701,9 +709,11 @@ template <typename F>
 /** Log fields with version.
 @param[in]  f             vector of fields with versions
 @param[in]  log_ptr       log buffer pointer
-@param[in]  func          callback to check size reopen log buffer */
+@param[in]  func          callback to check size reopen log buffer
+@param[in]  index         index to fetch field's logical position */
 static bool log_index_versioned_fields(const std::vector<dict_field_t *> &f,
-                                       byte *&log_ptr, F &func) {
+                                       byte *&log_ptr, F &func,
+                                       const dict_index_t *index) {
   uint16_t n_inst = f.size();
   ut_ad(n_inst > 0);
 
@@ -714,6 +724,9 @@ static bool log_index_versioned_fields(const std::vector<dict_field_t *> &f,
   log_ptr += 2;
 
   for (auto field : f) {
+    uint16_t logical_pos = index->get_logical_pos(field->get_phy_pos());
+    ut_a(logical_pos != UINT16_UNDEFINED);
+
     /* Maximum columns could be 1017. Which needs maximum 10 bits. So we can
     use MSB to indicate if version info follows.
            - - - - - -[----------]
@@ -737,9 +750,12 @@ static bool log_index_versioned_fields(const std::vector<dict_field_t *> &f,
       phy_pos |= 0x4000;
     }
 
-    if (!func(4)) {
+    if (!func(6)) {
       return false;
     }
+
+    mach_write_to_2(log_ptr, logical_pos);
+    log_ptr += 2;
 
     mach_write_to_2(log_ptr, phy_pos);
     log_ptr += 2;
@@ -799,7 +815,9 @@ bool mlog_open_and_write_index(mtr_t *mtr, const byte *rec,
 
   log_ptr = mlog_write_initial_log_record_fast(rec, type, log_ptr, mtr);
 
-  uint8_t index_log_version = INDEX_LOG_VERSION;
+  uint8_t index_log_version = INDEX_LOG_VERSION_CURRENT;
+  DBUG_EXECUTE_IF("invalid_index_log_version",
+                  index_log_version = INDEX_LOG_VERSION_MAX + 1;);
   log_index_log_version(index_log_version, log_ptr);
 
   uint8_t flag = 0;
@@ -844,7 +862,7 @@ bool mlog_open_and_write_index(mtr_t *mtr, const byte *rec,
   if (!instant_fields_to_log.empty()) {
     ut_ad(is_versioned);
     /* Log INSTANT ADD/DROP fields */
-    if (!log_index_versioned_fields(instant_fields_to_log, log_ptr, f)) {
+    if (!log_index_versioned_fields(instant_fields_to_log, log_ptr, f, index)) {
       return false;
     }
   }
@@ -999,6 +1017,7 @@ static byte *parse_index_fields(byte *ptr, const byte *end_ptr, uint16_t n,
 }
 
 struct Field_instant_info {
+  uint16_t logical_pos{UINT16_UNDEFINED};
   uint16_t phy_pos{UINT16_UNDEFINED};
   uint8_t v_added{UINT8_UNDEFINED};
   uint8_t v_dropped{UINT8_UNDEFINED};
@@ -1017,10 +1036,14 @@ static byte *parse_index_versioned_fields(byte *ptr, const byte *end_ptr,
                                           uint16_t &crv, size_t &n_dropped) {
   uint16_t n_inst = 0;
   ptr = read_2_bytes(ptr, end_ptr, n_inst);
+  if (ptr == nullptr) return (nullptr);
   ut_ad(n_inst > 0);
 
   for (auto i = n_inst; i > 0; --i) {
     Field_instant_info info;
+
+    ptr = read_2_bytes(ptr, end_ptr, info.logical_pos);
+    if (ptr == nullptr) return (nullptr);
 
     ptr = read_2_bytes(ptr, end_ptr, info.phy_pos);
     if (ptr == nullptr) return (nullptr);
@@ -1068,19 +1091,24 @@ static void update_instant_info(instant_fields_list_t f, dict_index_t *index) {
   size_t n_dropped = 0;
 
   for (auto field : f) {
-    dict_col_t *col = index->fields[field.phy_pos].col;
     bool is_added = field.v_added != UINT8_UNDEFINED;
     bool is_dropped = field.v_dropped != UINT8_UNDEFINED;
     ut_ad(is_added || is_dropped);
 
-    if (is_added) {
-      col->set_version_added(field.v_added);
-      n_added++;
-    }
+    dict_col_t *col = index->fields[field.logical_pos].col;
 
     if (is_dropped) {
       col->set_version_dropped(field.v_dropped);
       n_dropped++;
+      if (col->is_nullable()) {
+        ut_a(index->n_nullable > 0);
+        --index->n_nullable;
+      }
+    }
+
+    if (is_added) {
+      col->set_version_added(field.v_added);
+      n_added++;
     }
 
     col->set_phy_pos(field.phy_pos);
@@ -1088,6 +1116,7 @@ static void update_instant_info(instant_fields_list_t f, dict_index_t *index) {
 
   index->table->initial_col_count -= n_added;
   index->table->current_col_count -= n_dropped;
+  index->table->n_cols -= n_dropped;
 }
 
 /** To populate dummy fields. Used only in case of REDUNDANT row format.
@@ -1136,8 +1165,28 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
   if (ptr == nullptr) {
     return nullptr;
   }
-  ut_ad(index_log_version == INDEX_LOG_VERSION);
 
+  byte *ret = nullptr;
+  switch (index_log_version) {
+    case INDEX_LOG_VERSION_CURRENT:
+      ret = mlog_parse_index_v1(ptr, end_ptr, index);
+      break;
+    case INDEX_LOG_VERSION_0:
+      /* INDEX_LOG_VERSION_0 is used in 8.0.29 and in 8.0.30 REDO log format
+      has changed which expects REDOs from < 8.0.30 to be logically empty. Thus
+      we shall never reach here. */
+      ut_error;
+    default:
+      ib::fatal(UT_LOCATION_HERE, ER_IB_INDEX_LOG_VERSION_MISMATCH,
+                (unsigned int)index_log_version,
+                (unsigned int)INDEX_LOG_VERSION_MAX);
+  }
+
+  return ret;
+}
+
+static byte *mlog_parse_index_v1(byte *ptr, const byte *end_ptr,
+                                 dict_index_t **index) {
   /* Read the 1 byte flag */
   uint8_t flag = 0;
   ptr = parse_index_flag(ptr, end_ptr, flag);
@@ -1207,28 +1256,52 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
 
     /* Update fields INSTANT info */
     update_instant_info(f, ind);
+
+    bool *phy_pos_bitmap = new bool[ind->n_def];
+    memset(phy_pos_bitmap, false, (sizeof(bool) * ind->n_def));
+    for (auto field : f) {
+      phy_pos_bitmap[field.phy_pos] = true;
+    }
     f.clear();
 
     /* For the remaining columns, update physical pos */
+    int shift_count = 0;
     for (size_t i = 0; i < ind->n_def; i++) {
       dict_field_t *field = ind->get_field(i);
       if (field->col->get_phy_pos() == UINT32_UNDEFINED) {
-        field->col->set_phy_pos(i);
+        uint16_t phy_pos = i + shift_count;
+        ut_ad(phy_pos < ind->n_def);
+        while (phy_pos_bitmap[phy_pos]) {
+          phy_pos++;
+        }
+        field->col->set_phy_pos(phy_pos);
+        phy_pos_bitmap[phy_pos] = true;
+      } else {
+        ut_ad(field->col->is_instant_added() ||
+              field->col->is_instant_dropped());
+
+        if (field->col->is_instant_added() &&
+            !field->col->is_instant_dropped()) {
+          shift_count--;
+        }
       }
     }
 
+    delete[] phy_pos_bitmap;
     ind->row_versions = true;
-  }
-
-  /* For upgraded table from v1, set following */
-  if (inst_cols > 0) {
-    ind->instant_cols = true;
-    ind->n_instant_nullable =
-        ind->get_n_nullable_before(ind->get_instant_fields());
   }
 
   ind->n_fields = n - n_dropped;
   ind->n_total_fields = n;
+
+  /* For upgraded table from v1, set following */
+  if (inst_cols > 0) {
+    ind->instant_cols = true;
+    const size_t n_instant_fields = ind->get_instant_fields();
+    size_t new_n_nullable = ind->calculate_n_instant_nullable(n_instant_fields);
+    ind->set_instant_nullable(new_n_nullable);
+  }
+
   table->is_system_table = false;
 
   if (is_instant || is_versioned) {

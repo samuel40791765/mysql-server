@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2023, Oracle and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -36,8 +36,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 /** Creates a table memory object.
 @param[in]  name        table name
 @param[in]  space       space where the clustered index of the table is placed
-@param[in]  n_cols      total number of columns ncluding virtual and non-virtual
-                        columns
+@param[in]  n_cols      total number of columns including virtual and
+                        non-virtual columns
 @param[in]  n_v_cols    number of virtual columns
 @param[in]  n_m_v_cols  number of multi-value virtual columns
 @param[in]  flags       table flags

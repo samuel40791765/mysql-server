@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -132,7 +132,7 @@ class OverflowBitset {
   static_assert(alignof(Ext) % 2 == 0, "The lowest bit must be zero.");
 
   union {
-    uintptr_t m_bits;  // Lowest bit must be 1.
+    uint64_t m_bits;  // Lowest bit must be 1.
     Ext *m_ext;
   };
   static constexpr int kInlineBits = sizeof(m_bits) * CHAR_BIT - 1;
@@ -235,6 +235,7 @@ class MutableOverflowBitset : private OverflowBitset {
                        const MutableOverflowBitset &b);
   friend bool IsSubset(const MutableOverflowBitset &a, OverflowBitset b);
   friend bool IsEmpty(const MutableOverflowBitset &x);
+  friend int PopulationCount(const MutableOverflowBitset &x);
   void SetBitOverflow(int bit_num);
   void ClearBitsOverflow(int begin_bit_num, int end_bit_num);
 
@@ -350,6 +351,12 @@ class OverflowBitsetBitsIn {
     int m_base;
 
    public:
+    using iterator_category = std::forward_iterator_tag;
+    using difference_type = size_t;
+    using value_type = size_t;
+    using pointer = value_type *;
+    using reference = value_type &;
+
     // For inline bitsets.
     iterator(uint64_t state, const Combine *combine)
         : m_combine(combine), m_state(state), m_end(nullptr), m_base(0) {
@@ -562,6 +569,11 @@ inline int PopulationCount(OverflowBitset x) {
   } else {
     return PopulationCountOverflow(x);
   }
+}
+
+/// Find the nuber of bits set in 'x'.
+inline int PopulationCount(const MutableOverflowBitset &x) {
+  return PopulationCount(static_cast<const OverflowBitset &>(x));
 }
 
 #endif  // SQL_JOIN_OPTIMIZER_OVERFLOW_BITSET_H

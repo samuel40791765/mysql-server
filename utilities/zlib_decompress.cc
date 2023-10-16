@@ -1,6 +1,5 @@
-
 /*
-   Copyright (c) 2014, 2021, Oracle and/or its affiliates.
+   Copyright (c) 2014, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -28,6 +27,7 @@
 #include <string.h>
 #include <zlib.h>
 
+#include "client/client_priv.h"
 #include "my_sys.h"
 #include "print_version.h"
 #include "welcome_copyright_notice.h"
@@ -46,6 +46,7 @@ static const int INPUT_BUFFER_SIZE = 1024 * 1024;
 static const int OUTPUT_BUFFER_SIZE = 1024 * 1024;
 
 int main(int argc, char **argv) {
+  CLIENT_WARN_DEPRECATED_NO_REPLACEMENT("zlib_decompress");
   MY_INIT(argv[0]);
   if (argc != 3) {
     usage();

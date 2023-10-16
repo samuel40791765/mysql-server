@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -60,7 +60,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ha_prototypes.h"
 #include "ibuf0ibuf.h"
 #include "lock0lock.h"
-#include "log0log.h"
+#include "log0buf.h"
+#include "log0chkp.h"
 #include "pars0pars.h"
 #include "que0que.h"
 #include "rem0cmp.h"
@@ -555,8 +556,8 @@ static void row_mysql_convert_row_to_innobase(
                               NOTE: do not discard as long as
                               row is used, as row may contain
                               pointers to this record! */
-    mem_heap_t **blob_heap)   /*!< in: FIX_ME, remove this after
-                              server fixes its issue */
+    mem_heap_t **heap)        /*!< in: heap will be used to duplicate
+                              multi_value & blob data */
 {
   const mysql_row_templ_t *templ;
   dfield_t *dfield;
@@ -607,14 +608,16 @@ static void row_mysql_convert_row_to_innobase(
                                dfield, &prebuilt->mv_data[n_m_v_col - 1], 0,
                                dict_table_is_comp(prebuilt->table),
                                prebuilt->heap);
-
       /* For multi-value data, the deep copy may cost too much.
       So ideally this should be optimized by keeping and reading the
       raw data. However, once more virtual column data needs to be
       calculated later, for example, insert by modify, server will
       overwrites the memory used here. So the safest way is a deep
       copy. */
-      dfield_multi_value_dup(dfield, prebuilt->heap);
+      if (*heap == nullptr) {
+        *heap = mem_heap_create(128, UT_LOCATION_HERE);
+      }
+      dfield_multi_value_dup(dfield, *heap);
     } else {
       row_mysql_store_col_in_innobase_format(
           dfield, prebuilt->ins_upd_rec_buff + templ->mysql_col_offset,
@@ -626,10 +629,10 @@ static void row_mysql_convert_row_to_innobase(
       and we need to duplicate it with our own memory here */
       if (templ->is_virtual &&
           DATA_LARGE_MTYPE(dfield_get_type(dfield)->mtype)) {
-        if (*blob_heap == nullptr) {
-          *blob_heap = mem_heap_create(dfield->len, UT_LOCATION_HERE);
+        if (*heap == nullptr) {
+          *heap = mem_heap_create(dfield->len, UT_LOCATION_HERE);
         }
-        dfield_dup(dfield, *blob_heap);
+        dfield_dup(dfield, *heap);
       }
     }
   }
@@ -767,7 +770,7 @@ handle_new_error:
 
 /* Maximum size of the buffer needed for conversion of INTs from
 little endian format to big endian format in an index. An index
-can have maximum 16 columns (MAX_REF_PARTS) in it. Therfore
+can have maximum 16 columns (MAX_REF_PARTS) in it. Therefore
 Max size for PK: 16 * 8 bytes (BIGINT's size) = 128 bytes
 Max size Secondary index: 16 * 8 bytes + PK = 256 bytes. */
 constexpr uint32_t MAX_SRCH_KEY_VAL_BUFFER = 2 * 8 * MAX_REF_PARTS;
@@ -1285,7 +1288,7 @@ static dberr_t row_explicit_rollback(dict_index_t *index, const dtuple_t *entry,
                                             &cursor, __FILE__, __LINE__, mtr);
 
   offsets = rec_get_offsets(btr_cur_get_rec(&cursor), index, offsets_,
-                            ULINT_UNDEFINED, &heap);
+                            ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
 
   if (index->is_clustered()) {
     err = btr_cur_del_mark_set_clust_rec(flags, btr_cur_get_block(&cursor),
@@ -1456,7 +1459,7 @@ static dberr_t row_insert_for_mysql_using_cursor(const byte *mysql_rec,
 
   /* Step-5: If error is encountered while inserting entries to any
   of the index then entries inserted to previous indexes are removed
-  explicity. Automatic rollback is not in action as UNDO logs are
+  explicitly. Automatic rollback is not in action as UNDO logs are
   turned-off. */
   if (err != DB_SUCCESS) {
     node->entry = UT_LIST_GET_FIRST(node->entry_list);
@@ -1506,9 +1509,9 @@ static dberr_t row_insert_for_mysql_using_ins_graph(const byte *mysql_rec,
   trx_t *trx = prebuilt->trx;
   ins_node_t *node = prebuilt->ins_node;
   dict_table_t *table = prebuilt->table;
-  /* FIX_ME: This blob heap is used to compensate an issue in server
-  for virtual column blob handling */
-  mem_heap_t *blob_heap = nullptr;
+  /* This temp heap is used to duplicate multi-value data and to compensate an
+  issue in server for virtual column blob handling. */
+  mem_heap_t *temp_heap = nullptr;
 
   ut_ad(trx);
   ut_a(prebuilt->magic_n == ROW_PREBUILT_ALLOCATED);
@@ -1560,7 +1563,7 @@ static dberr_t row_insert_for_mysql_using_ins_graph(const byte *mysql_rec,
   row_get_prebuilt_insert_row(prebuilt);
   node = prebuilt->ins_node;
 
-  row_mysql_convert_row_to_innobase(node->row, prebuilt, mysql_rec, &blob_heap);
+  row_mysql_convert_row_to_innobase(node->row, prebuilt, mysql_rec, &temp_heap);
 
   savept = trx_savept_take(trx);
 
@@ -1604,8 +1607,8 @@ run_again:
 
     trx->op_info = "";
 
-    if (blob_heap != nullptr) {
-      mem_heap_free(blob_heap);
+    if (temp_heap != nullptr) {
+      mem_heap_free(temp_heap);
     }
 
     return (err);
@@ -1691,8 +1694,8 @@ run_again:
   row_update_statistics_if_needed(table);
   trx->op_info = "";
 
-  if (blob_heap != nullptr) {
-    mem_heap_free(blob_heap);
+  if (temp_heap != nullptr) {
+    mem_heap_free(temp_heap);
   }
 
   return (err);
@@ -1793,6 +1796,8 @@ upd_t *row_get_prebuilt_update_vector(
     node = row_create_update_node_for_mysql(table, prebuilt->heap);
 
     prebuilt->upd_node = node;
+    prebuilt->upd_node->update->per_stmt_heap =
+        mem_heap_create(128, UT_LOCATION_HERE);
 
     prebuilt->upd_graph = static_cast<que_fork_t *>(que_node_get_parent(
         pars_complete_graph_for_exec(static_cast<upd_node_t *>(node),
@@ -1857,7 +1862,7 @@ static dberr_t row_fts_update_or_delete(
 /** Initialize the Doc ID system for FK table with FTS index */
 static void init_fts_doc_id_for_ref(
     dict_table_t *table, /*!< in: table */
-    ulint *depth)        /*!< in: recusive call depth */
+    ulint *depth)        /*!< in: recursive call depth */
 {
   dict_foreign_t *foreign;
 
@@ -1930,7 +1935,8 @@ static dberr_t row_update_inplace_for_intrinsic(const upd_node_t *node) {
   ut_ad(!page_rec_is_infimum(rec));
   ut_ad(!page_rec_is_supremum(rec));
 
-  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   ut_ad(!cmp_dtuple_rec(entry, rec, index, offsets));
   ut_ad(!rec_get_deleted_flag(rec, dict_table_is_comp(index->table)));
@@ -1958,7 +1964,7 @@ static dberr_t row_update_inplace_for_intrinsic(const upd_node_t *node) {
 typedef std::vector<btr_pcur_t, ut::allocator<btr_pcur_t>> cursors_t;
 
 /** Delete row from table (corresponding entries from all the indexes).
-Function will maintain cursor to the entries to invoke explicity rollback
+Function will maintain cursor to the entries to invoke explicitly rollback
 just in case update action following delete fails.
 
 @param[in]      node            update node carrying information to delete.
@@ -1994,8 +2000,9 @@ static dberr_t row_delete_for_mysql_using_cursor(const upd_node_t *node,
     ulint *offsets = offsets_;
     rec_offs_init(offsets_);
 
-    offsets = rec_get_offsets(btr_cur_get_rec(pcur.get_btr_cur()), index,
-                              offsets, ULINT_UNDEFINED, &heap);
+    offsets =
+        rec_get_offsets(btr_cur_get_rec(pcur.get_btr_cur()), index, offsets,
+                        ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
 
     ut_ad(!cmp_dtuple_rec(entry, btr_cur_get_rec(pcur.get_btr_cur()), index,
                           offsets));
@@ -2881,17 +2888,15 @@ dberr_t row_create_index_for_mysql(
   dberr_t err;
   ulint i;
   ulint len;
-  char *table_name;
   char *index_name;
   dict_table_t *table = nullptr;
   THD *thd = current_thd;
 
   trx->op_info = "creating index";
 
-  /* Copy the table name because we may want to drop the
-  table later, after the index object is freed (inside
-  que_run_threads()) and thus index->table_name is not available. */
-  table_name = mem_strdup(index->table_name);
+  /* Copy the index name because we may want destroy the index
+     in dict_index_add_to_cache_w_vcol, or in dict_index_add_to_cache
+  */
   index_name = mem_strdup(index->name);
 
   auto is_fts = (index->type == DICT_FTS);
@@ -2901,7 +2906,7 @@ dberr_t row_create_index_for_mysql(
   }
 
   if (table == nullptr) {
-    table = dd_table_open_on_name(thd, nullptr, table_name, false,
+    table = dd_table_open_on_name(thd, nullptr, index->table_name, false,
                                   DICT_ERR_IGNORE_NONE);
   } else {
     table->acquire();
@@ -2934,7 +2939,7 @@ dberr_t row_create_index_for_mysql(
 
   /* For temp-table we avoid insertion into SYSTEM TABLES to
   maintain performance and so we have separate path that directly
-  just updates dictonary cache. */
+  just updates dictionary cache. */
   if (!table->is_temporary()) {
     /* Create B-tree */
     dict_build_index_def(table, index, trx);
@@ -2961,7 +2966,7 @@ dberr_t row_create_index_for_mysql(
 #endif
 
     /* add index to dictionary cache and also free index object.
-    We allow instrinsic table to violate the size limits because
+    We allow intrinsic table to violate the size limits because
     they are used by optimizer for all record formats. */
     err = dict_index_add_to_cache(table, index, FIL_NULL,
                                   !table->is_intrinsic() && trx_is_strict(trx));
@@ -3010,7 +3015,6 @@ error_handling:
   trx->op_info = "";
   trx->dict_operation = TRX_DICT_OP_NONE;
 
-  ut::free(table_name);
   ut::free(index_name);
 
   return (err);
@@ -3086,7 +3090,7 @@ func_exit:
 
 /** Drops a table for MySQL as a background operation. MySQL relies on Unix
  in ALTER TABLE to the fact that the table handler does not remove the
- table before all handles to it has been removed. Furhermore, the MySQL's
+ table before all handles to it has been removed. Furthermore, the MySQL's
  call to drop table must be non-blocking. Therefore we do the drop table
  as a background operation, which is taken care of by the master thread
  in srv0srv.cc.
@@ -3478,13 +3482,6 @@ static dberr_t row_discard_tablespace(trx_t *trx, dict_table_t *table,
       table->flags2 |= DICT_TF2_DISCARDED;
 
       dict_table_change_id_in_cache(table, new_id);
-
-      /* Reset the root page numbers. */
-
-      for (auto index : table->indexes) {
-        index->page = FIL_NULL;
-        index->space = FIL_NULL;
-      }
 
       /* Set SDI tables that ibd is missing */
       {
@@ -4445,7 +4442,8 @@ static dberr_t parallel_check_table(trx_t *trx, dict_index_t *index,
 
     auto prev_tuple = prev_tuples[id];
 
-    auto offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+    auto offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                                   UT_LOCATION_HERE, &heap);
 
     if (prev_tuple != nullptr) {
       ulint matched_fields = 0;
@@ -4489,7 +4487,8 @@ static dberr_t parallel_check_table(trx_t *trx, dict_index_t *index,
 
     if (prev_blocks[id] != block || prev_blocks[id] == nullptr) {
       mem_heap_empty(heap);
-      offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &heap);
+      offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                                UT_LOCATION_HERE, &heap);
 
       prev_blocks[id] = block;
     }
@@ -4667,7 +4666,8 @@ loop:
 
   rec = buf + mach_read_from_4(buf);
 
-  offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED, &heap);
+  offsets = rec_get_offsets(rec, index, offsets_, ULINT_UNDEFINED,
+                            UT_LOCATION_HERE, &heap);
 
   if (prev_entry != nullptr) {
     matched_fields = 0;
@@ -4772,7 +4772,7 @@ bool row_prebuilt_t::can_prefetch_records() const {
 }
 
 bool row_prebuilt_t::skip_concurrency_ticket() const {
-  /* Since there are no locks on instrinsic tables, we should skip
+  /* Since there are no locks on intrinsic tables, we should skip
   this for intrinsic temporary tables. */
 
   /* When InnoDB uses DD APIs, it leaves InnoDB and re-inters InnoDB again.
@@ -4802,4 +4802,12 @@ bool row_prebuilt_t::skip_concurrency_ticket() const {
     }
   }
   return false;
+}
+
+/** Inside this function perform activity that needs to be done at the
+end of statement.  */
+void row_prebuilt_t::end_stmt() {
+  if (upd_node && upd_node->update) {
+    upd_node->update->empty_per_stmt_heap();
+  }
 }

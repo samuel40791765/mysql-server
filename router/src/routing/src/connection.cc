@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,7 @@
 #include "mysql/harness/logging/logging.h"
 #include "mysql/harness/stdx/expected.h"
 #include "mysql/harness/tls_error.h"
+#include "mysqlrouter/utils.h"  // to_string
 
 IMPORT_LOG_FUNCTIONS()
 
@@ -46,7 +47,7 @@ stdx::expected<void, std::error_code> ConnectorBase::init_destination() {
     // no backends
     log_warning("%d: no connectable destinations :(", __LINE__);
     return stdx::make_unexpected(
-        make_error_code(std::errc::no_such_file_or_directory));
+        make_error_code(DestinationsErrc::kNoDestinations));
   }
 }
 
@@ -102,9 +103,7 @@ stdx::expected<void, std::error_code> ConnectorBase::connect_init() {
 stdx::expected<void, std::error_code> ConnectorBase::try_connect() {
 #if 0
   if (log_level_is_handled(mysql_harness::logging::LogLevel::kDebug)) {
-    log_debug("fd=%d: trying %s:%s (%s)", client_sock_.native_handle(),
-              endpoint.host_name().c_str(), endpoint.service_name().c_str(),
-              mysqlrouter::to_string(endpoint.endpoint()).c_str());
+    log_debug("trying %s", mysqlrouter::to_string(server_endpoint_).c_str());
   }
 #endif
 
@@ -219,6 +218,11 @@ stdx::expected<void, std::error_code> ConnectorBase::connect_finish() {
 stdx::expected<void, std::error_code> ConnectorBase::connected() {
   destination_id_ =
       endpoints_it_->host_name() + ":" + endpoints_it_->service_name();
+
+  if (on_connect_success_) {
+    on_connect_success_(endpoints_it_->host_name(),
+                        endpoints_it_->endpoint().port());
+  }
 
   return {};
 }

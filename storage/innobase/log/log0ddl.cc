@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -47,6 +47,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "dict0mem.h"
 #include "dict0stats.h"
 #include "ha_innodb.h"
+#include "log0chkp.h"
 #include "log0ddl.h"
 #include "mysql/plugin.h"
 #include "pars0pars.h"
@@ -643,7 +644,8 @@ dberr_t DDL_Log_Table::search_all(DDL_Records &records) {
       continue;
     }
 
-    offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &m_heap);
+    offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &m_heap);
 
     if (rec_get_deleted_flag(rec, dict_table_is_comp(m_table))) {
       continue;
@@ -703,7 +705,8 @@ dberr_t DDL_Log_Table::search_by_id(ulint id, dict_index_t *index,
       continue;
     }
 
-    offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED, &m_heap);
+    offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
+                              UT_LOCATION_HERE, &m_heap);
 
     if (cmp_dtuple_rec(m_tuple, rec, index, offsets) != 0) {
       break;
@@ -759,7 +762,7 @@ dberr_t DDL_Log_Table::remove(ulint id) {
   }
 
   offsets = rec_get_offsets(pcur.get_rec(), clust_index, nullptr,
-                            ULINT_UNDEFINED, &m_heap);
+                            ULINT_UNDEFINED, UT_LOCATION_HERE, &m_heap);
 
   row = row_build(ROW_COPY_DATA, clust_index, pcur.get_rec(), offsets, nullptr,
                   nullptr, nullptr, nullptr, m_heap);
@@ -861,7 +864,7 @@ dberr_t Log_DDL::write_free_tree_log(trx_t *trx, const dict_index_t *index,
 
   if (dict_index_get_online_status(index) != ONLINE_INDEX_COMPLETE) {
     /* To skip any previously aborted index. This is because this kind
-    of index should be already freed in previous post_ddl. It's inproper
+    of index should be already freed in previous post_ddl. It's improper
     to log it and may free it again later, which may trigger some
     double free page problem. */
     return (DB_SUCCESS);
@@ -1781,9 +1784,9 @@ dberr_t Log_DDL::replay_alter_encrypt_space_log(DDL_Record &record) {
   }
   ut_ad(record.get_thread_id() == ULINT_MAX);
 
-  /* We could have resume encrypiton execution one by one for each tablespace
+  /* We could have resume encryption execution one by one for each tablespace
   from here by calling SQL API to run the query. But then it would be blocking
-  server bootstrap. We need to resume ths encryption in BG thread so we need
+  server bootstrap. We need to resume this encryption in BG thread so we need
   to just make a note of this space and operation here and don't do any real
   operation. */
   ts_encrypt_ddl_records.push_back(&record);

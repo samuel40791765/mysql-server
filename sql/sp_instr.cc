@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2012, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,7 +29,6 @@
 #include <functional>
 
 #include "debug_sync.h"  // DEBUG_SYNC
-#include "m_ctype.h"
 #include "my_command.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
@@ -38,9 +37,11 @@
 #include "mysql/components/services/log_shared.h"
 #include "mysql/plugin.h"
 #include "mysql/psi/mysql_statement.h"
+#include "mysql/strings/m_ctype.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
 #include "prealloced_array.h"  // Prealloced_array
+#include "scope_guard.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"  // check_table_access
 #include "sql/binlog.h"            // mysql_bin_log
@@ -73,6 +74,7 @@
 #include "sql/transaction_info.h"
 #include "sql/trigger.h"  // Trigger
 #include "sql/trigger_def.h"
+#include "string_with_len.h"
 #include "unsafe_string_append.h"
 
 class Cmp_splocal_locations {
@@ -301,6 +303,82 @@ class SP_instr_error_handler : public Internal_error_handler {
   bool cts_table_exists_error = false;
 };
 
+/**
+  Execute an expression (e.g an IF) that is not a complete SQL statement.
+
+  Expressions that may be executed in this function:
+    IF, CASE, DECLARE, SET, RETURN
+
+  @param      thd    thread context
+  @param[out] nextp  next instruction pointer
+
+  @returns false if success, true if error
+*/
+bool sp_lex_instr::execute_expression(THD *thd, uint *nextp) {
+  auto execute_guard = create_scope_guard([&]() {
+    m_lex->cleanup(true);
+    if (thd->in_sub_stmt == 0) {
+      thd->get_stmt_da()->set_overwrite_status(true);
+      thd->is_error() ? trans_rollback_stmt(thd) : trans_commit_stmt(thd);
+      thd->get_stmt_da()->set_overwrite_status(false);
+    }
+    thd_proc_info(thd, "closing tables");
+    close_thread_tables(thd);
+    thd_proc_info(thd, nullptr);
+
+    if (thd->in_sub_stmt == 0) {
+      if (thd->transaction_rollback_request) {
+        trans_rollback_implicit(thd);
+        thd->mdl_context.release_transactional_locks();
+      } else if (!thd->in_multi_stmt_transaction_mode()) {
+        thd->mdl_context.release_transactional_locks();
+      } else {
+        thd->mdl_context.release_statement_locks();
+      }
+    }
+  });
+
+  /*
+    Check privileges for tables in expression, open and lock those tables,
+    bind data to expression so that it is ready for execution.
+
+    Notice that temporary tables must be opened before privilege checking.
+    This is because a session has all privileges for any temporary table that
+    it has created, however a table must be opened in order to identify it as
+    a temporary table.
+  */
+  if (m_lex->query_tables != nullptr) {
+    if (open_temporary_tables(thd, m_lex->query_tables)) {
+      return true;
+    }
+    if (check_table_access(thd, SELECT_ACL, m_lex->query_tables, false,
+                           UINT_MAX, false)) {
+      return true;
+    }
+  }
+  if (open_and_lock_tables(thd, m_lex->query_tables, 0)) {
+    return true;
+  }
+
+  m_lex->restore_cmd_properties();
+  bind_fields(m_arena.item_list());
+
+  /*
+    Trace the expression. This is not an SQL statement, but pretend it is
+    a SELECT query expression.
+  */
+  Opt_trace_start ots(thd, m_lex->query_tables, SQLCOM_SELECT, &m_lex->var_list,
+                      nullptr, 0, this, thd->variables.character_set_client);
+  const Opt_trace_object trace_command(&thd->opt_trace);
+  const Opt_trace_array trace_command_steps(&thd->opt_trace, "steps");
+
+  if (exec_core(thd, nextp)) {
+    return true;
+  }
+
+  return false;
+}
+
 bool sp_lex_instr::reset_lex_and_exec_core(THD *thd, uint *nextp,
                                            bool open_tables) {
   /*
@@ -309,7 +387,7 @@ bool sp_lex_instr::reset_lex_and_exec_core(THD *thd, uint *nextp,
     It's merged with the saved parent's value at the exit of this func.
   */
 
-  unsigned int parent_unsafe_rollback_flags =
+  const unsigned int parent_unsafe_rollback_flags =
       thd->get_transaction()->get_unsafe_rollback_flags(Transaction_ctx::STMT);
   thd->get_transaction()->reset_unsafe_rollback_flags(Transaction_ctx::STMT);
 
@@ -357,7 +435,7 @@ bool sp_lex_instr::reset_lex_and_exec_core(THD *thd, uint *nextp,
 
   /*
     In case a session state exists do not cache the SELECT stmt. If we
-    cache SELECT statment when session state information exists, then
+    cache SELECT statement when session state information exists, then
     the result sets of this SELECT are cached which contains changed
     session information. Next time when same query is executed when there
     is no change in session state, then result sets are picked from cache
@@ -376,66 +454,8 @@ bool sp_lex_instr::reset_lex_and_exec_core(THD *thd, uint *nextp,
 
   if (!error) {
     if (open_tables) {
-      // todo: break this block out into a separate function.
-      /*
-        IF, CASE, DECLARE, SET, RETURN, have 'open_tables' true; they may
-        have a subquery in parameter and are worth tracing. They don't
-        correspond to a SQL command so we pretend that they are SQLCOM_SELECT.
-      */
-      Opt_trace_start ots(thd, m_lex->query_tables, SQLCOM_SELECT,
-                          &m_lex->var_list, nullptr, 0, this,
-                          thd->variables.character_set_client);
-      Opt_trace_object trace_command(&thd->opt_trace);
-      Opt_trace_array trace_command_steps(&thd->opt_trace, "steps");
-
-      /*
-        Check whenever we have access to tables for this statement
-        and open and lock them before executing instructions core function.
-        If we are not opening any tables, we don't need to check permissions
-        either.
-      */
-      if (m_lex->query_tables)
-        error = (open_temporary_tables(thd, m_lex->query_tables) ||
-                 check_table_access(thd, SELECT_ACL, m_lex->query_tables, false,
-                                    UINT_MAX, false));
-
-      if (!error) error = open_and_lock_tables(thd, m_lex->query_tables, 0);
-
-      if (!error) {
-        m_lex->restore_cmd_properties();
-        bind_fields(m_arena.item_list());
-
-        error = exec_core(thd, nextp);
-        DBUG_PRINT("info", ("exec_core returned: %d", error));
-      }
-
-      /*
-        Call after unit->cleanup() to close open table
-        key read.
-      */
-
-      m_lex->cleanup(thd, true);
-
-      /* Here we also commit or rollback the current statement. */
-
-      if (!thd->in_sub_stmt) {
-        thd->get_stmt_da()->set_overwrite_status(true);
-        thd->is_error() ? trans_rollback_stmt(thd) : trans_commit_stmt(thd);
-        thd->get_stmt_da()->set_overwrite_status(false);
-      }
-      thd_proc_info(thd, "closing tables");
-      close_thread_tables(thd);
-      thd_proc_info(thd, nullptr);
-
-      if (!thd->in_sub_stmt) {
-        if (thd->transaction_rollback_request) {
-          trans_rollback_implicit(thd);
-          thd->mdl_context.release_transactional_locks();
-        } else if (!thd->in_multi_stmt_transaction_mode())
-          thd->mdl_context.release_transactional_locks();
-        else
-          thd->mdl_context.release_statement_locks();
-      }
+      error = execute_expression(thd, nextp);
+      DBUG_PRINT("info", ("exec_expression returned: %d", error));
     } else {
       DEBUG_SYNC(thd, "sp_lex_instr_before_exec_core");
       error = exec_core(thd, nextp);
@@ -476,14 +496,14 @@ bool sp_lex_instr::reset_lex_and_exec_core(THD *thd, uint *nextp,
     statement. To make sure that items are created in the statement mem_root,
     change state to STMT_INITIALIZED_FOR_SP.
 
-    When a "table exists" error occur for CREATE TABLE ... SELECT change state
+    When a "table exists" error occurs for CREATE TABLE ... SELECT change state
     to STMT_INITIALIZED_FOR_SP, as if statement must be reprepared.
 
       Why is this necessary? A useful pointer would be to note how
       PREPARE/EXECUTE uses functions like select_like_stmt_test to implement
       CREATE TABLE .... SELECT. The SELECT part of the DDL is resolved first.
       Then there is an attempt to create the table. So in the execution phase,
-      if "table exists" error occurs or flush table preceeds the execute, the
+      if "table exists" error occurs or flush table precedes the execute, the
       item tree of the select is re-created and followed by an attempt to create
       the table.
 
@@ -500,8 +520,9 @@ bool sp_lex_instr::reset_lex_and_exec_core(THD *thd, uint *nextp,
     STMT_EXECUTED means the statement has been prepared and executed before,
     but some error occurred during table open or execution).
   */
-  bool reprepare_error = error && thd->is_error() &&
-                         thd->get_stmt_da()->mysql_errno() == ER_NEED_REPREPARE;
+  const bool reprepare_error =
+      error && thd->is_error() &&
+      thd->get_stmt_da()->mysql_errno() == ER_NEED_REPREPARE;
 
   // Unless there is an error, execution must have started (and completed)
   assert(error || m_lex->is_exec_started());
@@ -574,7 +595,7 @@ LEX *sp_lex_instr::parse_expr(THD *thd, sp_head *sp) {
     initiated. Also set the statement query arena to the lex mem_root.
   */
   MEM_ROOT *execution_mem_root = thd->mem_root;
-  Query_arena parse_arena(&m_lex_mem_root, thd->stmt_arena->get_state());
+  const Query_arena parse_arena(&m_lex_mem_root, thd->stmt_arena->get_state());
 
   thd->mem_root = &m_lex_mem_root;
   thd->stmt_arena->set_query_arena(parse_arena);
@@ -593,7 +614,7 @@ LEX *sp_lex_instr::parse_expr(THD *thd, sp_head *sp) {
   Item *execution_item_list = thd->item_list();
   thd->reset_item_list();
 
-  // Create a new LEX and intialize it.
+  // Create a new LEX and initialize it.
 
   LEX *lex_saved = thd->lex;
 
@@ -722,7 +743,7 @@ bool sp_lex_instr::validate_lex_and_execute_core(THD *thd, uint *nextp,
 
     thd->push_reprepare_observer(stmt_reprepare_observer);
 
-    bool rc = reset_lex_and_exec_core(thd, nextp, open_tables);
+    const bool rc = reset_lex_and_exec_core(thd, nextp, open_tables);
 
     thd->pop_reprepare_observer();
 
@@ -741,9 +762,16 @@ bool sp_lex_instr::validate_lex_and_execute_core(THD *thd, uint *nextp,
           raise it to the user;
     */
     if (stmt_reprepare_observer == nullptr || thd->is_fatal_error() ||
-        thd->killed || thd->get_stmt_da()->mysql_errno() != ER_NEED_REPREPARE)
+        thd->killed || thd->get_stmt_da()->mysql_errno() != ER_NEED_REPREPARE) {
+      /*
+        If an error occurred before execution, make sure next execution is
+        started with a clean statement:
+      */
+      if (m_lex->is_metadata_used() && !m_lex->is_exec_started()) {
+        invalidate();
+      }
       return true;
-
+    }
     /*
       Reprepare_observer ensures that the statement is retried a maximum number
       of times, to avoid an endless loop.
@@ -805,7 +833,7 @@ void sp_lex_instr::cleanup_before_parsing(THD *thd) {
 }
 
 void sp_lex_instr::get_query(String *sql_query) const {
-  LEX_CSTRING expr_query = get_expr_query();
+  const LEX_CSTRING expr_query = get_expr_query();
 
   if (!expr_query.str) {
     sql_query->length(0);
@@ -909,7 +937,7 @@ bool sp_instr_stmt::execute(THD *thd, uint *nextp) {
       and therefore pass in a null-pointer instead of a pointer to
       state at the beginning of execution.
     */
-    log_slow_do(thd, nullptr);
+    log_slow_do(thd);
   }
 
   /*
@@ -961,7 +989,7 @@ bool sp_instr_stmt::exec_core(THD *thd, uint *nextp) {
 
   assert(lex->m_sql_cmd == nullptr || lex->m_sql_cmd->is_part_of_sp());
 
-  bool rc = mysql_execute_command(thd);
+  const bool rc = mysql_execute_command(thd);
 
   lex->set_sp_current_parsing_ctx(nullptr);
   lex->sphead = nullptr;
@@ -1036,7 +1064,7 @@ bool sp_instr_set_trigger_field::exec_core(THD *thd, uint *nextp) {
   */
   if (thd->is_strict_mode() && !thd->lex->is_ignore())
     thd->push_internal_handler(&strict_handler);
-  bool error = m_trigger_field->set_value(thd, &m_value_item);
+  const bool error = m_trigger_field->set_value(thd, &m_value_item);
   if (thd->is_strict_mode() && !thd->lex->is_ignore())
     thd->pop_internal_handler();
   return error;

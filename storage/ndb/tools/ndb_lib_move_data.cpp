@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -22,13 +22,14 @@
 
 #include "util/require.h"
 #include <ndb_global.h>
-#include "m_ctype.h"
+#include "mysql/strings/m_ctype.h"
 #include <NdbOut.hpp>
 #include <NdbApi.hpp>
 #include <NDBT.hpp>
 #include <ndb_limits.h>
 #include <ndb_lib_move_data.hpp>
 #include <ndb_rand.h>
+#include "portlib/NdbTick.h"
 
 #define CHK1(b) \
   if (!(b)) { \

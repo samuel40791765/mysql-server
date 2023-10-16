@@ -1,4 +1,4 @@
-/* Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2021, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -233,7 +233,8 @@ DEFINE_BOOL_METHOD(Keyring_aes_service_impl::encrypt,
                     size_t *out_length)) {
   if (check_service(internal_keyring_aes, AES_ENCRYPTION)) return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_aes->encrypt(
       data_id, auth_id, mode, block_size, iv, padding, data_buffer,
       data_buffer_length, out_buffer, out_buffer_length, out_length);
@@ -247,7 +248,8 @@ DEFINE_BOOL_METHOD(Keyring_aes_service_impl::decrypt,
                     size_t *out_length)) {
   if (check_service(internal_keyring_aes, AES_ENCRYPTION)) return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_aes->decrypt(
       data_id, auth_id, mode, block_size, iv, padding, data_buffer,
       data_buffer_length, out_buffer, out_buffer_length, out_length);
@@ -263,7 +265,8 @@ DEFINE_BOOL_METHOD(Keyring_generator_service_impl::generate,
   if (check_service(internal_keyring_generator, GENERATOR)) return true;
 
   DBUG_EXECUTE_IF("keyring_generate_fail", DBUG_SUICIDE(););
-  rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__,
+                                __LINE__);
   return internal_keyring_generator->generate(data_id, auth_id, data_type,
                                               data_size);
 }
@@ -280,7 +283,7 @@ DEFINE_BOOL_METHOD(Keyring_keys_metadata_iterator_service_impl::init,
   my_h_keyring_keys_metadata_iterator_server *local_object =
       new my_h_keyring_keys_metadata_iterator_server{nullptr, std::move(lock)};
   if (local_object == nullptr) return true;
-  bool retval =
+  const bool retval =
       internal_keyring_keys_metadata_iterator->init(&local_object->iterator_);
   if (retval == true) {
     delete local_object;
@@ -306,9 +309,9 @@ DEFINE_BOOL_METHOD(Keyring_keys_metadata_iterator_service_impl::deinit,
   /*
     Even if underlying keyring fails to deinitialize
     actual iterator, we will release the lock.
-    Otherwise, keyring wil remain in locked state
+    Otherwise, keyring will remain in locked state
   */
-  bool retval =
+  const bool retval =
       internal_keyring_keys_metadata_iterator->deinit(local_object->iterator_);
   local_object->iterator_ = nullptr;
 
@@ -395,7 +398,8 @@ DEFINE_BOOL_METHOD(Keyring_metadata_query_service_impl::init,
                     COMPONENT_METADATA_QUERY))
     return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_component_metadata_query->init(metadata_iterator);
 }
 
@@ -406,7 +410,8 @@ DEFINE_BOOL_METHOD(
                     COMPONENT_METADATA_QUERY))
     return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_component_metadata_query->deinit(metadata_iterator);
 }
 
@@ -417,7 +422,8 @@ DEFINE_BOOL_METHOD(
                     COMPONENT_METADATA_QUERY))
     return false;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_component_metadata_query->is_valid(metadata_iterator);
 }
 
@@ -428,7 +434,8 @@ DEFINE_BOOL_METHOD(
                     COMPONENT_METADATA_QUERY))
     return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_component_metadata_query->next(metadata_iterator);
 }
 
@@ -439,7 +446,8 @@ DEFINE_BOOL_METHOD(Keyring_metadata_query_service_impl::get_length,
                     COMPONENT_METADATA_QUERY))
     return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_component_metadata_query->get_length(
       metadata_iterator, key_buffer_length, value_buffer_length);
 }
@@ -452,7 +460,8 @@ DEFINE_BOOL_METHOD(Keyring_metadata_query_service_impl::get,
                     COMPONENT_METADATA_QUERY))
     return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, false, __FILE__,
+                                __LINE__);
   return internal_keyring_component_metadata_query->get(
       metadata_iterator, key_buffer, key_buffer_length, value_buffer,
       value_buffer_length);
@@ -469,7 +478,7 @@ DEFINE_BOOL_METHOD(Keyring_reader_service_impl::init,
       new my_h_keyring_reader_object_server{nullptr, std::move(lock)};
   if (local_object == nullptr) return true;
 
-  bool retval =
+  const bool retval =
       internal_keyring_reader->init(data_id, auth_id, &(local_object->object_));
   if (retval == true || local_object->object_ == nullptr) {
     delete local_object;
@@ -492,9 +501,9 @@ DEFINE_BOOL_METHOD(Keyring_reader_service_impl::deinit,
   /*
     Even if underlying keyring fails to deinitialize
     actual iterator, we will release the lock.
-    Otherwise, keyring wil remain in locked state
+    Otherwise, keyring will remain in locked state
   */
-  bool retval = internal_keyring_reader->deinit(local_object->object_);
+  const bool retval = internal_keyring_reader->deinit(local_object->object_);
   local_object->object_ = nullptr;
 
   /* This shall release the lock too */
@@ -539,7 +548,8 @@ DEFINE_BOOL_METHOD(Keyring_load_service_impl::load,
 
   if (check_service(internal_keyring_load, LOAD)) return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__,
+                                __LINE__);
   return internal_keyring_load->load(component_path, instance_path);
 }
 
@@ -553,7 +563,8 @@ DEFINE_BOOL_METHOD(Keyring_writer_service_impl::store,
 
   if (check_service(internal_keyring_writer, WRITER)) return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__,
+                                __LINE__);
   return internal_keyring_writer->store(data_id, auth_id, data, data_size,
                                         data_type);
 }
@@ -564,7 +575,8 @@ DEFINE_BOOL_METHOD(Keyring_writer_service_impl::remove,
 
   if (check_service(internal_keyring_writer, WRITER)) return true;
 
-  rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__, __LINE__);
+  const rwlock_scoped_lock lock(&LOCK_keyring_component, true, __FILE__,
+                                __LINE__);
   return internal_keyring_writer->remove(data_id, auth_id);
 }
 
@@ -785,7 +797,7 @@ void set_srv_keyring_implementation_as_default() {
       2. Move forward if current handle is pointing to
       keyring_reader.mysql_server
       3. If found, acquire all related services (writer, generator, forward
-      interator, status)
+      iterator, status)
       4. Set global handles to point to them
     */
     my_h_service_iterator iterator;
@@ -819,7 +831,7 @@ void set_srv_keyring_implementation_as_default() {
 
           Hence, we need to match service name and component name part.
 
-          This will fall apart if a clever implemention decides to register
+          This will fall apart if a clever implementation decides to register
           keyring_error_state service with name other than
           "keyring_error_state". To resolve that, we need iterator based on
           service type and not service name.
@@ -846,7 +858,7 @@ void set_srv_keyring_implementation_as_default() {
           &keyring_lockable::internal_keyring_writer);
     }
 
-    /* Initiliaze keyring */
+    /* Initialize keyring */
     if (keyring_lockable::internal_keyring_load != nullptr) {
       (void)keyring_lockable::internal_keyring_load->load(opt_plugin_dir,
                                                           mysql_real_data_home);

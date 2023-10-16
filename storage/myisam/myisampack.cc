@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,7 @@
 #include <time.h>
 #include <algorithm>
 
+#include "m_string.h"
 #include "my_byteorder.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
@@ -41,9 +42,11 @@
 #include "my_macros.h"
 #include "my_pointer_arithmetic.h"
 #include "my_tree.h"
+#include "mysql/strings/int2str.h"
 #include "mysys_err.h"
 #include "print_version.h"
 #include "sql/field.h"
+#include "sql/mysqld_cs.h"
 #include "storage/myisam/myisam_sys.h"
 #include "storage/myisam/myisamdef.h"
 #include "storage/myisam/queues.h"
@@ -125,7 +128,7 @@ struct PACK_MRG_INFO {
   MI_INFO **file, **current, **end;
   uint free_file;
   uint count;
-  uint min_pack_length; /* Theese is used by packed data */
+  uint min_pack_length; /* These are used by packed data */
   uint max_pack_length;
   uint ref_length;
   uint max_blob_length;
@@ -407,7 +410,7 @@ static MI_INFO *open_isam_file(char *name, int mode) {
       return nullptr;
     }
     if (verbose) puts("Recompressing already compressed table");
-    share->options &= ~HA_OPTION_READ_ONLY_DATA; /* We are modifing it */
+    share->options &= ~HA_OPTION_READ_ONLY_DATA; /* We are modifying it */
   }
   if (!force_pack && share->state.state.records != 0 &&
       (share->state.state.records <= 1 ||
@@ -1116,7 +1119,7 @@ static void check_counts(HUFF_COUNTS *huff_counts, uint trees,
         huff_counts->counts[0] = 0;
         goto found_pack;
       }
-      /* Remeber the number of significant spaces. */
+      /* Remember the number of significant spaces. */
       old_space_count = huff_counts->counts[static_cast<int>(' ')];
       /* Add all leading and trailing spaces. */
       huff_counts->counts[static_cast<int>(' ')] +=
@@ -1280,7 +1283,7 @@ static int test_space_compress(HUFF_COUNTS *huff_counts, my_off_t records,
   min_pos = -2;
   huff_counts->counts[(uint)' '] = space_count;
 
-  /* Test with allways space-count */
+  /* Test with always space-count */
   new_length = huff_counts->bytes_packed + length_bits * records / 8;
   if (new_length + 1 < min_pack) {
     min_pos = -1;
@@ -1607,7 +1610,7 @@ static my_off_t calc_packed_length(HUFF_COUNTS *huff_counts,
     table column. During the Huffman algorithm they are successively
     replaced by references to HUFF_ELEMENTs. This works, because
     HUFF_ELEMENTs have the incidence count at their beginning.
-    Regardless, wether the queue array contains references to counts of
+    Regardless, whether the queue array contains references to counts of
     type my_off_t or references to HUFF_ELEMENTs which have the count of
     type my_off_t at their beginning, it always points to a count of the
     same type.
@@ -2161,9 +2164,9 @@ static uint *make_offset_code_tree(HUFF_TREE *huff_tree, HUFF_ELEMENT *element,
     'a.leaf.null' takes the same place as 'a.nod.left'. If this is null,
     then there is no left child and, hence no right child either. This
     is a property of a binary tree. An element is either a node with two
-    childs, or a leaf without childs.
+    children, or a leaf without children.
 
-    The current element is always a node with two childs. Go left first.
+    The current element is always a node with two children. Go left first.
   */
   if (!element->a.nod.left->a.leaf.null) {
     /* Store the byte code or the index of the column value. */
@@ -2195,7 +2198,7 @@ static uint *make_offset_code_tree(HUFF_TREE *huff_tree, HUFF_ELEMENT *element,
   }
 }
 
-/* Get number of bits neaded to represent value */
+/* Get number of bits needed to represent value */
 
 static uint max_bit(uint value) {
   uint power = 1;

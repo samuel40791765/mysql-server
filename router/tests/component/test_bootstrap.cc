@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+  Copyright (c) 2017, 2023, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -39,6 +39,7 @@
 #include <rapidjson/document.h>
 #include <rapidjson/writer.h>
 
+#include "common.h"  // truncate_string
 #include "dim.h"
 #include "harness_assert.h"
 #include "keyring/keyring_manager.h"
@@ -120,7 +121,7 @@ router_id=1)";
   // require tons of escaping
   // user=mysql_router1_daxi69tk9btt
   const char *expected_config_gr_part2 =
-      R"(metadata_cluster=my-cluster
+      R"(metadata_cluster=mycluster
 ttl=0.5
 auth_cache_ttl=-1
 auth_cache_refresh_interval=2
@@ -129,28 +130,28 @@ use_gr_notifications=0
 [routing:bootstrap_rw]
 bind_address=0.0.0.0
 bind_port=6446
-destinations=metadata-cache://my-cluster/?role=PRIMARY
+destinations=metadata-cache://mycluster/?role=PRIMARY
 routing_strategy=first-available
 protocol=classic
 
 [routing:bootstrap_ro]
 bind_address=0.0.0.0
 bind_port=6447
-destinations=metadata-cache://my-cluster/?role=SECONDARY
+destinations=metadata-cache://mycluster/?role=SECONDARY
 routing_strategy=round-robin-with-fallback
 protocol=classic
 
 [routing:bootstrap_x_rw]
 bind_address=0.0.0.0
 bind_port=6448
-destinations=metadata-cache://my-cluster/?role=PRIMARY
+destinations=metadata-cache://mycluster/?role=PRIMARY
 routing_strategy=first-available
 protocol=x
 
 [routing:bootstrap_x_ro]
 bind_address=0.0.0.0
 bind_port=6449
-destinations=metadata-cache://my-cluster/?role=SECONDARY
+destinations=metadata-cache://mycluster/?role=SECONDARY
 routing_strategy=round-robin-with-fallback
 protocol=x)";
 
@@ -162,7 +163,7 @@ router_id=1)";
   // require tons of escaping
   // user=mysql_router1_ritc56yrjz42
   const char *expected_config_ar_part2 =
-      R"(metadata_cluster=my-cluster
+      R"(metadata_cluster=mycluster
 ttl=0.5
 auth_cache_ttl=-1
 auth_cache_refresh_interval=2
@@ -170,28 +171,28 @@ auth_cache_refresh_interval=2
 [routing:bootstrap_rw]
 bind_address=0.0.0.0
 bind_port=6446
-destinations=metadata-cache://my-cluster/?role=PRIMARY
+destinations=metadata-cache://mycluster/?role=PRIMARY
 routing_strategy=first-available
 protocol=classic
 
 [routing:bootstrap_ro]
 bind_address=0.0.0.0
 bind_port=6447
-destinations=metadata-cache://my-cluster/?role=SECONDARY
+destinations=metadata-cache://mycluster/?role=SECONDARY
 routing_strategy=round-robin-with-fallback
 protocol=classic
 
 [routing:bootstrap_x_rw]
 bind_address=0.0.0.0
 bind_port=6448
-destinations=metadata-cache://my-cluster/?role=PRIMARY
+destinations=metadata-cache://mycluster/?role=PRIMARY
 routing_strategy=first-available
 protocol=x
 
 [routing:bootstrap_x_ro]
 bind_address=0.0.0.0
 bind_port=6449
-destinations=metadata-cache://my-cluster/?role=SECONDARY
+destinations=metadata-cache://mycluster/?role=SECONDARY
 routing_strategy=round-robin-with-fallback
 protocol=x)";
 
@@ -254,7 +255,7 @@ void check_bind_port(const std::string &conf_file_content,
       "[routing:"s + route_name + "]\n"
       "bind_address=0.0.0.0\n" +
       "bind_port=" + std::to_string(expected_bind_port) + "\n" +
-      "destinations=metadata-cache://my-cluster/?role=" +  server_role + "\n" +
+      "destinations=metadata-cache://mycluster/?role=" +  server_role + "\n" +
       "routing_strategy=" + routing_strategy + "\n" +
       "protocol=" + protocol_name + "\n";
   // clang-format on
@@ -383,7 +384,7 @@ TEST_P(RouterBootstrapErrorBasePortTest, RouterBootstrapErrorBasePort) {
                  param.bs_params.end());
   auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
 
-  check_exit_code(router, EXIT_FAILURE, 5s);
+  check_exit_code(router, EXIT_FAILURE);
 
   // let's check if the expected error was reported:
   EXPECT_THAT(router.get_full_output(),
@@ -434,11 +435,6 @@ TEST_P(RouterReBootstrapOkBasePortTest, RouterReBootstrapOkBasePort) {
   const auto param = GetParam();
   const std::string tracefile = "bootstrap_gr.js";
 
-  std::vector<Config> mock_servers{
-      {"127.0.0.1", port_pool_.get_next_available(),
-       port_pool_.get_next_available(), get_data_dir().join(tracefile).str()},
-  };
-
   const uint16_t server_port = port_pool_.get_next_available();
   const std::string json_stmts = get_data_dir().join(tracefile).str();
   launch_mysql_server_mock(json_stmts, server_port, EXIT_SUCCESS, false);
@@ -453,13 +449,10 @@ TEST_P(RouterReBootstrapOkBasePortTest, RouterReBootstrapOkBasePort) {
                           param.first_bs_params.end());
 
   auto &router_bs1 = launch_router_for_bootstrap(cmdline_first_bs);
-  check_exit_code(router_bs1, EXIT_SUCCESS, 5s);
+  check_exit_code(router_bs1, EXIT_SUCCESS);
 
   const std::string conf_file2 =
       mysql_harness::Path(bootstrap_dir.name()).join("mysqlrouter.conf").str();
-
-  // let's check if the actual config file contains what we expect:
-  const std::string config_file_str2 = get_file_output(conf_file2);
 
   // do the second bootstrap using the same directory
   std::vector<std::string> cmdline_second_bs = {
@@ -470,7 +463,7 @@ TEST_P(RouterReBootstrapOkBasePortTest, RouterReBootstrapOkBasePort) {
                            param.second_bs_params.begin(),
                            param.second_bs_params.end());
   auto &router_bs2 = launch_router_for_bootstrap(cmdline_second_bs);
-  check_exit_code(router_bs2, EXIT_SUCCESS, 5s);
+  check_exit_code(router_bs2, EXIT_SUCCESS);
 
   const std::string conf_file =
       mysql_harness::Path(bootstrap_dir.name()).join("mysqlrouter.conf").str();
@@ -530,7 +523,7 @@ const ReBootstrapOkBasePortTestParam rebootstrap_ok_base_port_test_param[] = {
      /* expected_port_x_ro */ 4},
 
     // create a config with legacy defaults [6446, 6447, 64460, 64470]
-    // bootstrap again on top of that config with specifing conf-base-port
+    // bootstrap again on top of that config with specifying conf-base-port
     // parameter even though the existing conf uses legacy default we change
     // them because the user used conf-base-port, so we should not be using
     // defaults
@@ -965,23 +958,16 @@ class RouterBootstrapFailoverSuperReadonly
  */
 TEST_P(RouterBootstrapFailoverSuperReadonly, BootstrapFailoverSuperReadonly) {
   const auto param = GetParam();
-  const std::string cluster_type_specific_id =
-      param.cluster_type == ClusterType::RS_V2
-          ? "00000000-0000-0000-0000-0000000000c1"
-          : "00000000-0000-0000-0000-0000000000g1";
 
   std::vector<Config> config{
       {"127.0.0.1", port_pool_.get_next_available(),
        port_pool_.get_next_available(),
-       get_data_dir().join(param.trace_file).str(), /*unaccessible=*/false,
-       cluster_type_specific_id},
+       get_data_dir().join(param.trace_file).str()},
       {"127.0.0.1", port_pool_.get_next_available(),
        port_pool_.get_next_available(),
-       get_data_dir().join(param.trace_file2).str(), /*unaccessible=*/false,
-       cluster_type_specific_id},
+       get_data_dir().join(param.trace_file2).str()},
       {"127.0.0.1", port_pool_.get_next_available(),
-       port_pool_.get_next_available(), "", /*unaccessible=*/false,
-       cluster_type_specific_id},
+       port_pool_.get_next_available(), ""},
   };
 
   ASSERT_NO_FATAL_FAILURE(bootstrap_failover(config, param.cluster_type));
@@ -1030,26 +1016,20 @@ class RouterBootstrapFailoverSuperReadonly2ndNodeDead
 TEST_P(RouterBootstrapFailoverSuperReadonly2ndNodeDead,
        BootstrapFailoverSuperReadonly2ndNodeDead) {
   const auto param = GetParam();
-  const std::string cluster_type_specific_id =
-      param.cluster_type == ClusterType::RS_V2
-          ? "00000000-0000-0000-0000-0000000000c1"
-          : "00000000-0000-0000-0000-0000000000g1";
 
   const auto dead_port = port_pool_.get_next_available();
   std::vector<Config> config{
       // member-1, PRIMARY, fails at first write
       {"127.0.0.1", port_pool_.get_next_available(),
        port_pool_.get_next_available(),
-       get_data_dir().join(param.trace_file).str(), /*unaccessible=*/false,
-       cluster_type_specific_id},
+       get_data_dir().join(param.trace_file).str()},
       // member-2, unreachable
       {"127.0.0.1", dead_port, port_pool_.get_next_available(), "",
-       /*unaccessible=*/true, cluster_type_specific_id},
+       /*unaccessible=*/true},
       // member-3, succeeds
       {"127.0.0.1", port_pool_.get_next_available(),
        port_pool_.get_next_available(),
-       get_data_dir().join(param.trace_file2).str(), /*unaccessible=*/false,
-       cluster_type_specific_id},
+       get_data_dir().join(param.trace_file2).str()},
   };
 
   ASSERT_NO_FATAL_FAILURE(bootstrap_failover(
@@ -1241,7 +1221,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 /**
  * @test
- *       verify that bootstraping via a unix-socket fails over to the
+ *       verify that bootstrapping via a unix-socket fails over to the
  * IP-addresses of the members
  * @test
  *       Group Replication roles:
@@ -1337,7 +1317,7 @@ INSTANTIATE_TEST_SUITE_P(
 /**
  * @test
  * This test proves that bootstrap will not print out the success message
- * ("MySQL Router configured for the InnoDB cluster 'my-cluster'" and many lines
+ * ("MySQL Router configured for the InnoDB cluster 'mycluster'" and many lines
  *  that follow it) until entire bootstrap succeeds.
  *
  * At the time of writing, the last operation that bootstrap performs is
@@ -1383,7 +1363,7 @@ TEST_F(RouterBootstrapTest,
       bootstrap_directory.name(), "--report-host", "host.foo.bar"};
   auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
 
-  check_exit_code(router, EXIT_FAILURE, 5s);
+  check_exit_code(router, EXIT_FAILURE);
   // expect config write error
   EXPECT_THAT(router.get_full_output(),
               ::testing::ContainsRegex("Error: Could not create file "
@@ -1393,7 +1373,7 @@ TEST_F(RouterBootstrapTest,
   // displayed
   EXPECT_THAT(router.get_full_output(), ::testing::Not(::testing::HasSubstr(
                                             "MySQL Router configured for the "
-                                            "InnoDB cluster 'my-cluster'")));
+                                            "InnoDB cluster 'mycluster'")));
 
   server_mock.kill();
 }
@@ -1452,7 +1432,7 @@ class RouterBootstrapBootstrapNoGroupReplicationSetup
 
 /**
  * @test
- *       ensure a resonable error message if schema exists, but no
+ *       ensure a reasonable error message if schema exists, but no
  * group-replication is setup.
  */
 TEST_P(RouterBootstrapBootstrapNoGroupReplicationSetup,
@@ -1485,7 +1465,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 /**
  * @test
- *       ensure a resonable error message if metadata schema does not exist.
+ *       ensure a reasonable error message if metadata schema does not exist.
  */
 TEST_F(RouterBootstrapTest, BootstrapNoMetadataSchema) {
   std::vector<Config> config{
@@ -1637,9 +1617,8 @@ class ConfUseGrNotificationParamTest
  * file entry.
  */
 TEST_P(ConfUseGrNotificationParamTest, ConfUseGrNotificationParam) {
-  TempDirectory bootstrap_directory;
   const auto server_port = port_pool_.get_next_available();
-  const auto server_port2 = port_pool_.get_next_available();
+  const auto server_x_port = port_pool_.get_next_available();
   const auto http_port = port_pool_.get_next_available();
   const std::string json_stmts = get_data_dir().join("bootstrap_gr.js").str();
 
@@ -1647,17 +1626,26 @@ TEST_P(ConfUseGrNotificationParamTest, ConfUseGrNotificationParam) {
   auto &server_mock = launch_mysql_server_mock(json_stmts, server_port,
                                                EXIT_SUCCESS, false, http_port);
 
-  set_mock_bootstrap_data(
-      http_port, "test",
-      {{"localhost", server_port}, {"localhost", server_port2}},
-      GetParam().metadata_schema_version,
-      "00000000-0000-0000-0000-0000000000c1");
+  set_mock_bootstrap_data(http_port, "test", {{"localhost", server_port}},
+                          GetParam().metadata_schema_version,
+                          "cluster-specific-id");
 
-  const auto base_listening_port = port_pool_.get_next_available();
+  const auto router_port_rw = port_pool_.get_next_available();
+  const auto router_port_ro = port_pool_.get_next_available();
+  const auto router_port_x_rw = port_pool_.get_next_available();
+  const auto router_port_x_ro = port_pool_.get_next_available();
   std::vector<std::string> bootsrtap_params{
-      "--bootstrap=127.0.0.1:" + std::to_string(server_port), "-d",
-      bootstrap_directory.name(),
-      "--conf-base-port=" + std::to_string(base_listening_port)};
+      "--bootstrap=127.0.0.1:" + std::to_string(server_port),
+      "-d",
+      bootstrap_dir.name(),
+      "--conf-set-option=routing:bootstrap_rw.bind_port=" +
+          std::to_string(router_port_rw),
+      "--conf-set-option=routing:bootstrap_ro.bind_port=" +
+          std::to_string(router_port_ro),
+      "--conf-set-option=routing:bootstrap_x_rw.bind_port=" +
+          std::to_string(router_port_x_rw),
+      "--conf-set-option=routing:bootstrap_x_ro.bind_port=" +
+          std::to_string(router_port_x_ro)};
 
   bootsrtap_params.insert(bootsrtap_params.end(),
                           GetParam().bootstrap_params.begin(),
@@ -1668,8 +1656,7 @@ TEST_P(ConfUseGrNotificationParamTest, ConfUseGrNotificationParam) {
 
   check_exit_code(router, EXIT_SUCCESS);
 
-  const std::string conf_file =
-      bootstrap_directory.name() + "/mysqlrouter.conf";
+  const std::string conf_file = bootstrap_dir.name() + "/mysqlrouter.conf";
 
   // check if valid config option was added to the file
   auto conf_file_content = get_file_output(conf_file);
@@ -1689,10 +1676,12 @@ TEST_P(ConfUseGrNotificationParamTest, ConfUseGrNotificationParam) {
   // launch mock server that is our metadata server
   launch_mysql_server_mock(runtime_json_stmts, server_port, EXIT_SUCCESS, false,
                            http_port);
-  set_mock_metadata(http_port, "00000000-0000-0000-0000-0000000000g1",
-                    {server_port});
+  set_mock_metadata(http_port, "cluster-specific-id", {GRNode{server_port}}, 0,
+                    {ClusterNode{server_port, server_x_port}});
 
-  ASSERT_NO_FATAL_FAILURE(launch_router({"-c", conf_file}));
+  // check that the Router accepts the config file
+  auto &router2 = launch_router({"-c", conf_file});
+  router2.set_logging_path(bootstrap_dir.name() + "/log", "mysqlrouter.log");
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1999,7 +1988,7 @@ TEST_F(RouterBootstrapTest, BootstrapRouterDuplicateEntry) {
                            false, bootstrap_server_http_port);
   set_mock_bootstrap_data(bootstrap_server_http_port, "test",
                           {{"127.0.0.1", server_port}}, {2, 0, 3},
-                          "00000000-0000-0000-0000-0000000000c1");
+                          "cluster-specific-id");
 
   // launch the router in bootstrap mode
   auto &router = launch_router_for_bootstrap(
@@ -2035,7 +2024,7 @@ TEST_F(RouterBootstrapTest, CheckAuthBackendWhenOldMetadata) {
                            http_port);
 
   set_mock_bootstrap_data(http_port, "test", {{"localhost", server_port}},
-                          {1, 0, 0}, "00000000-0000-0000-0000-0000000000c1");
+                          {1, 0, 0}, "cluster-specific-id");
 
   const auto base_listening_port = port_pool_.get_next_available();
   std::vector<std::string> bootsrtap_params{
@@ -2080,7 +2069,7 @@ TEST_F(ConfSetOptionTest, ErrorIfNotBootstrap) {
 
   auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
 
-  check_exit_code(router, EXIT_FAILURE, 5s);
+  check_exit_code(router, EXIT_FAILURE);
 
   // let's check if the expected error was reported:
   EXPECT_THAT(
@@ -2205,7 +2194,7 @@ TEST_P(ConfSetOptionErrorTest, ErrorTest) {
   }
 
   auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
-  check_exit_code(router, EXIT_FAILURE, 5s);
+  check_exit_code(router, EXIT_FAILURE);
 
   // let's check if the expected error was reported:
   EXPECT_THAT(router.get_full_output(),
@@ -2283,7 +2272,12 @@ INSTANTIATE_TEST_SUITE_P(
         ConfSetOptionErrorTestParam{
             {"--conf-set-option=DEFAULT:aa.option=xx"},
             "Error: conf-set-option: DEFAULT section is not allowed to have a "
-            "key: 'DEFAULT:aa'"}));
+            "key: 'DEFAULT:aa'"},
+
+        ConfSetOptionErrorTestParam{
+            {"--conf-set-option=abc"},
+            "Error: conf-set-option: invalid option 'abc', should be "
+            "section.option_name=value"}));
 
 struct ConfSetOptionTestParam {
   std::vector<std::string> bootstrap_params;
@@ -2460,6 +2454,296 @@ INSTANTIATE_TEST_SUITE_P(
                                {"name=\"My Router\""}}
 
         ));
+
+/**
+ * @test
+ *       verify that using ssl options during the bootstrap creates the
+ * configuration file that is usable by the Router
+ */
+TEST_F(RouterBootstrapTest, SSLOptions) {
+  TempDirectory bootstrap_directory;
+  const auto server_port = port_pool_.get_next_available();
+  const auto server_port2 = port_pool_.get_next_available();
+  const auto http_port = port_pool_.get_next_available();
+  const std::string json_stmts = get_data_dir().join("bootstrap_gr.js").str();
+
+  // launch mock server that is our metadata server for the bootstrap
+  auto &server_mock = launch_mysql_server_mock(json_stmts, server_port,
+                                               EXIT_SUCCESS, false, http_port);
+
+  set_mock_bootstrap_data(
+      http_port, "test",
+      {{"localhost", server_port}, {"localhost", server_port2}}, {2, 1, 0},
+      "00000000-0000-0000-0000-0000000000g1");
+
+  const auto router_port_rw = port_pool_.get_next_available();
+  const auto router_port_ro = port_pool_.get_next_available();
+  const auto router_port_x_rw = port_pool_.get_next_available();
+  const auto router_port_x_ro = port_pool_.get_next_available();
+  std::vector<std::string> bootsrtap_params{
+      "--bootstrap=127.0.0.1:" + std::to_string(server_port),
+      "-d",
+      bootstrap_directory.name(),
+      "--conf-set-option=routing:bootstrap_rw.bind_port=" +
+          std::to_string(router_port_rw),
+      "--conf-set-option=routing:bootstrap_ro.bind_port=" +
+          std::to_string(router_port_ro),
+      "--conf-set-option=routing:bootstrap_x_rw.bind_port=" +
+          std::to_string(router_port_x_rw),
+      "--conf-set-option=routing:bootstrap_x_ro.bind_port=" +
+          std::to_string(router_port_x_ro),
+      "--ssl-mode=disabled",
+      "--ssl-cipher=some",
+      "--tls-version=TLSv1.2",
+      "--ssl-ca=some",
+      "--ssl-capath=some",
+      "--ssl-crl=some",
+      "--ssl-crlpath=some"};
+
+  // launch the router in bootstrap mode
+  auto &router = launch_router_for_bootstrap(bootsrtap_params);
+
+  check_exit_code(router, EXIT_SUCCESS);
+
+  const std::string conf_file =
+      bootstrap_directory.name() + "/mysqlrouter.conf";
+
+  std::vector<std::string> expected_config_lines{
+      "ssl_mode=disabled", "ssl_cipher=some", "tls_version=TLSv1.2",
+      "ssl_ca=some",       "ssl_capath=some", "ssl_crl=some",
+      "ssl_crlpath=some"};
+
+  // check if valid config options were added to the file
+  auto conf_file_content = get_file_output(conf_file);
+  auto conf_lines = mysql_harness::split_string(conf_file_content, '\n');
+  EXPECT_THAT(conf_lines, ::testing::IsSupersetOf(expected_config_lines));
+  server_mock.send_clean_shutdown_event();
+  EXPECT_NO_THROW(server_mock.wait_for_exit());
+
+  auto plugin_dir = mysql_harness::get_plugin_dir(get_origin().str());
+  ASSERT_TRUE(add_line_to_config_file(conf_file, "DEFAULT", "plugin_folder",
+                                      plugin_dir));
+
+  const std::string runtime_json_stmts =
+      get_data_dir().join("metadata_dynamic_nodes_v2_gr.js").str();
+
+  // launch mock server that is our metadata server
+  launch_mysql_server_mock(runtime_json_stmts, server_port, EXIT_SUCCESS, false,
+                           http_port);
+  set_mock_metadata(http_port, "00000000-0000-0000-0000-0000000000g1",
+                    {server_port}, 0, {server_port});
+
+  // check that the Router is running fine with this configuration file
+  ASSERT_NO_FATAL_FAILURE(launch_router({"-c", conf_file}));
+}
+
+/**
+ * @test
+ *       verify that Router can be re-bootstrapped using the same directory if
+ * the cluster name has changed in the meantime
+ */
+TEST_F(RouterComponentBootstrapTest, RouterReBootstrapClusetNameChange) {
+  const std::string tracefile = "bootstrap_gr.js";
+
+  const std::string kInitialClusterName = "initial_cluster_name";
+  const std::string kChangedClusterName = "changed_cluster_name";
+
+  const auto classic_port = port_pool_.get_next_available();
+  const auto http_port = port_pool_.get_next_available();
+  const std::string json_stmts = get_data_dir().join(tracefile).str();
+  launch_mysql_server_mock(json_stmts, classic_port, EXIT_SUCCESS, false,
+                           http_port);
+
+  set_mock_bootstrap_data(http_port, kInitialClusterName,
+                          {{"localhost", classic_port}}, {2, 1, 0}, "gr-uuid");
+
+  // do the first bootstrap
+  std::vector<std::string> cmdline_bs = {"--bootstrap=root:"s + kRootPassword +
+                                             "@localhost:"s +
+                                             std::to_string(classic_port),
+                                         "-d", bootstrap_dir.name()};
+
+  auto &router_bs1 = launch_router_for_bootstrap(cmdline_bs);
+  check_exit_code(router_bs1, EXIT_SUCCESS);
+
+  // change the cluster name
+  set_mock_bootstrap_data(http_port, kChangedClusterName,
+                          {{"localhost", classic_port}}, {2, 1, 0}, "gr-uuid");
+
+  // do the second bootstrap using the same directory
+  auto &router_bs2 = launch_router_for_bootstrap(cmdline_bs);
+  check_exit_code(router_bs2, EXIT_SUCCESS);
+}
+
+/**
+ * @test
+ *       verify that using --force-password-validation when bootstrapping works
+ * ok
+ */
+TEST_F(RouterComponentBootstrapTest, ForcePasswordValidation) {
+  const std::string tracefile = "bootstrap_gr_unhashed_passwd.js";
+
+  const auto classic_port = port_pool_.get_next_available();
+  const auto http_port = port_pool_.get_next_available();
+  const std::string json_stmts = get_data_dir().join(tracefile).str();
+  launch_mysql_server_mock(json_stmts, classic_port, EXIT_SUCCESS, false,
+                           http_port);
+
+  set_mock_bootstrap_data(http_port, "cluster-name",
+                          {{"localhost", classic_port}}, {2, 1, 0}, "gr-uuid");
+
+  // do the first bootstrap
+  std::vector<std::string> cmdline_bs = {
+      "--bootstrap=root:"s + kRootPassword + "@localhost:"s +
+          std::to_string(classic_port),
+      "--force-password-validation", "-d", bootstrap_dir.name()};
+
+  auto &router_bs = launch_router_for_bootstrap(cmdline_bs);
+  check_exit_code(router_bs, EXIT_SUCCESS);
+}
+
+TEST_F(RouterComponentBootstrapTest, ShowCipherInvalidResult) {
+  const std::string tracefile =
+      get_data_dir()
+          .join("bootstrap_show_cipher_status_invalid_result.js")
+          .str();
+  const auto mock_server_port = port_pool_.get_next_available();
+  const auto mock_http_port = port_pool_.get_next_available();
+
+  launch_mysql_server_mock(tracefile, mock_server_port, EXIT_SUCCESS, false,
+                           mock_http_port);
+  set_mock_bootstrap_data(mock_http_port, "cluster-name",
+                          {{"localhost", mock_server_port}}, {2, 1, 0},
+                          "gr-uuid");
+
+  std::vector<std::string> cmdline = {
+      "--bootstrap=127.0.0.1:" + std::to_string(mock_server_port), "-d",
+      bootstrap_dir.name()};
+
+  auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
+  check_exit_code(router, EXIT_FAILURE);
+
+  // let's check if the expected error was reported:
+  EXPECT_THAT(router.get_full_output(),
+              ::testing::HasSubstr(
+                  "Failed determining if metadata connection uses SSL: Error "
+                  "reading 'ssl_cipher' status variable"));
+}
+
+struct BootstrapErrorTestParam {
+  std::vector<std::string> bs_params;
+  std::string expected_error;
+};
+
+class BootstrapErrorTest
+    : public RouterComponentBootstrapTest,
+      public ::testing::WithParamInterface<BootstrapErrorTestParam> {};
+
+TEST_P(BootstrapErrorTest, Spec) {
+  std::vector<std::string> cmdline = {"-d", bootstrap_dir.name()};
+
+  for (const auto &param : GetParam().bs_params) {
+    cmdline.push_back(param);
+  }
+
+  auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
+  check_exit_code(router, EXIT_FAILURE);
+
+  // let's check if the expected error was reported:
+  EXPECT_THAT(router.get_full_output(),
+              ::testing::HasSubstr(GetParam().expected_error));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Spec, BootstrapErrorTest,
+    ::testing::Values(
+        BootstrapErrorTestParam{
+            {"-B=["},
+            "Error: invalid URI: expected to find IPv6 address, but failed at "
+            "position 9 for: mysql://[\n"},
+
+        BootstrapErrorTestParam{
+            {"-B=abc.nodomain.com#fragment"},
+            "Error: the bootstrap URI contains a #fragement, but shouldn't"},
+
+        BootstrapErrorTestParam{
+            {"-B=abc.nodomain.com?query=q"},
+            "Error: the bootstrap URI contains a ?query, but shouldn't"},
+
+        BootstrapErrorTestParam{
+            {"-B=abc.nodomain.com/path"},
+            "Error: the bootstrap URI contains a /path, but shouldn't"},
+
+        BootstrapErrorTestParam{
+            {"--bootstrap-socket=/mysock", "-B=abc.nodomain.com"},
+            "Error: --bootstrap-socket given, but --bootstrap option contains "
+            "a non-'localhost' hostname: abc.nodomain.com"}));
+
+class BootstrapErrorTestWithMock
+    : public RouterComponentBootstrapTest,
+      public ::testing::WithParamInterface<BootstrapErrorTestParam> {};
+
+TEST_P(BootstrapErrorTestWithMock, Spec) {
+  const std::string tracefile = get_data_dir().join("bootstrap_gr.js").str();
+  const auto mock_server_port = port_pool_.get_next_available();
+
+  launch_mysql_server_mock(tracefile, mock_server_port, EXIT_SUCCESS, false);
+
+  std::vector<std::string> cmdline = {"--bootstrap=root:"s + kRootPassword +
+                                          "@localhost:"s +
+                                          std::to_string(mock_server_port),
+                                      "-d", bootstrap_dir.name()};
+
+  for (const auto &param : GetParam().bs_params) {
+    cmdline.push_back(param);
+  }
+
+  auto &router = launch_router_for_bootstrap(cmdline, EXIT_FAILURE);
+  check_exit_code(router, EXIT_FAILURE);
+
+  // let's check if the expected error was reported:
+  EXPECT_THAT(router.get_full_output(),
+              ::testing::HasSubstr(GetParam().expected_error));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Spec, BootstrapErrorTestWithMock,
+    ::testing::Values(
+        BootstrapErrorTestParam{
+            {"--conf-target-cluster=primary"},
+            "The parameter 'target-cluster' is valid only for Cluster that "
+            "is part of the ClusterSet."},
+
+        BootstrapErrorTestParam{{"--conf-target-cluster-by-name=name"},
+                                "The parameter 'target-cluster-by-name' is "
+                                "valid only for Cluster that "
+                                "is part of the ClusterSet."},
+
+        BootstrapErrorTestParam{{"--conf-bind-address=.foo"},
+                                "Invalid --conf-bind-address value '.foo'"},
+
+        BootstrapErrorTestParam{
+            {"--name=name\n"},
+            "Router name 'name\n' contains invalid characters."},
+
+        BootstrapErrorTestParam{{"--name=system"},
+                                "Router name 'system' is reserved"},
+
+        BootstrapErrorTestParam{
+            {"--name=" + std::string(256, 'a')},
+            "Router name '" +
+                mysql_harness::truncate_string(std::string(256, 'a')) +
+                "' too long (max 255)."},
+
+        BootstrapErrorTestParam{
+            {"--password-retries=abc"},
+            "Configuration error: --password-retries needs value between 1 and "
+            "10000 inclusive, was 'abc'"},
+
+        BootstrapErrorTestParam{
+            {"--password-retries="},
+            "Configuration error: --password-retries needs value between 1 and "
+            "10000 inclusive, was ''"}));
 
 int main(int argc, char *argv[]) {
   init_windows_sockets();

@@ -2,12 +2,12 @@
 .\"     Title: ndbinfo_select_all
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 03/05/2022
+.\"      Date: 06/21/2023
 .\"    Manual: MySQL Database System
-.\"    Source: MySQL 8.0
+.\"    Source: MySQL 8.1
 .\"  Language: English
 .\"
-.TH "NDBINFO_SELECT_ALL" "1" "03/05/2022" "MySQL 8\&.0" "MySQL Database System"
+.TH "NDBINFO_SELECT_ALL" "1" "06/21/2023" "MySQL 8\&.1" "MySQL Database System"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -43,7 +43,7 @@ Not all
 ndbinfo
 tables available in the
 \fBmysql\fR
-client can be read by this program\&. In addition,
+client can be read by this program (see later in this section)\&. In addition,
 \fBndbinfo_select_all\fR
 can show information about some tables internal to
 ndbinfo
@@ -113,7 +113,7 @@ are shown in the following table\&. Additional descriptions follow the table\&.
 .nr an-no-space-flag 1
 .nr an-break-flag 1
 .br
-.B Table\ \&23.25.\ \&Command\-line options used with the program ndbinfo_select_all
+.B Table\ \&23.24.\ \&Command\-line options used with the program ndbinfo_select_all
 .TS
 allbox tab(:);
 lB lB lB.
@@ -143,19 +143,7 @@ lB l l
 lB l l
 lB l l
 lB l l
-lB l l
-lB l l
-lB l l
 lB l l.
-T{
-.PP
-\fB \fR\fB--character-sets-dir=path\fR\fB \fR
-T}:T{
-Directory containing character sets
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
 T{
 .PP
 \fB \fR\fB--connect-retries=#\fR\fB \fR
@@ -163,7 +151,7 @@ T}:T{
 Number of times to retry connection before giving up
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -172,7 +160,7 @@ T}:T{
 Number of seconds to wait between attempts to contact management server
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -183,16 +171,7 @@ T}:T{
 Same as --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--core-file\fR\fB \fR
-T}:T{
-Write core file on error; used in debugging
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -203,7 +182,7 @@ T}:T{
 Name of database where table is located
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -212,7 +191,7 @@ T}:T{
 Read given file after global files are read
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -221,7 +200,7 @@ T}:T{
 Read default options from given file only
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -230,7 +209,7 @@ T}:T{
 Also read groups with concat(group, suffix)
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -239,7 +218,7 @@ T}:T{
 Set delay in seconds between loops
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -250,7 +229,7 @@ T}:T{
 Display help text and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -259,7 +238,7 @@ T}:T{
 Read given path from login file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -270,7 +249,7 @@ T}:T{
 Set number of times to perform select
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -283,7 +262,7 @@ Set connect string for connecting to ndb_mgmd. Syntax:
               NDB_CONNECTSTRING and my.cnf
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -294,7 +273,7 @@ T}:T{
 Same as --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -303,7 +282,7 @@ T}:T{
 Set node ID for this node, overriding any ID set by --ndb-connectstring
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -312,18 +291,7 @@ T}:T{
 Do not read default options from any option file other than login file
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
-T}
-T{
-.PP
-\fB \fR\fB--ndb-optimized-node-selection\fR\fB \fR
-T}:T{
-Enable optimizations for selection of nodes for transactions. Enabled by
-              default; use --skip-ndb-optimized-node-selection to
-              disable
-T}:T{
-.PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -334,7 +302,7 @@ T}:T{
 Set degree of parallelism
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -343,7 +311,7 @@ T}:T{
 Print program argument list and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -354,7 +322,7 @@ T}:T{
 Display help text and exit; same as --help
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 T{
 .PP
@@ -365,7 +333,7 @@ T}:T{
 Display version information and exit
 T}:T{
 .PP
-(Supported in all NDB releases based on MySQL 8.0)
+(Supported in all NDB releases based on MySQL 8.1)
 T}
 .TE
 .sp 1
@@ -1010,10 +978,167 @@ T}
 .sp 1
 Display version information and exit\&.
 .RE
+.PP
+\fBndbinfo_select_all\fR
+is unable to read the following tables:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+arbitrator_validity_detail
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+arbitrator_validity_summary
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+cluster_locks
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+cluster_operations
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+cluster_transactions
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+disk_write_speed_aggregate_node
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+locks_per_fragment
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+memory_per_fragment
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+memoryusage
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+operations_per_fragment
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+server_locks
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+server_operations
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+server_transactions
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+table_info
+.RE
 .SH "COPYRIGHT"
 .br
 .PP
-Copyright \(co 1997, 2022, Oracle and/or its affiliates.
+Copyright \(co 1997, 2023, Oracle and/or its affiliates.
 .PP
 This documentation is free software; you can redistribute it and/or modify it only under the terms of the GNU General Public License as published by the Free Software Foundation; version 2 of the License.
 .PP

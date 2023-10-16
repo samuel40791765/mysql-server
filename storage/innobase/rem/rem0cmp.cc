@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2023, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -38,6 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "ha_prototypes.h"
 #include "handler0alter.h"
+#include "mysql/strings/m_ctype.h"
 #include "rem0cmp.h"
 #include "srv0srv.h"
 namespace dd {
@@ -285,7 +286,7 @@ static int cmp_geometry_field(ulint prtype,          /*!< in: precise type */
 /** Innobase uses this function to compare two gis data fields
  @return        1, 0, -1, if mode == PAGE_CUR_MBR_EQUAL. And return
  1, 0 for rest compare modes, depends on a and b qualifies the
- relationship (CONTAINT, WITHIN etc.) */
+ relationship (CONTAIN, WITHIN etc.) */
 static int cmp_gis_field(
     page_cur_mode_t mode,                    /*!< in: compare mode */
     const byte *a,                           /*!< in: data field */

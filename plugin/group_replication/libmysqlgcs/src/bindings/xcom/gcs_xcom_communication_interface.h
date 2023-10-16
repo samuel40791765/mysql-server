@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2021, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2023, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -39,6 +39,7 @@
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/gcs_xcom_proxy.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/gcs_xcom_state_exchange.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/gcs_xcom_statistics_interface.h"
+#include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/gcs_xcom_statistics_manager.h"
 
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/network/include/network_management_interface.h"
 
@@ -85,7 +86,7 @@ class Gcs_xcom_communication_interface : public Gcs_communication_interface {
     Buffer packets when a view is not installed yet and the state
     exchange phase is being executed.
 
-    Note that this method must be excuted by the same thread that
+    Note that this method must be executed by the same thread that
     processes global view messages and data message in order to
     avoid any concurrency issue.
 
@@ -101,7 +102,7 @@ class Gcs_xcom_communication_interface : public Gcs_communication_interface {
     installed so this is used to send any buffered packet to upper
     layers.
 
-    Note that this method must be excuted by the same thread that
+    Note that this method must be executed by the same thread that
     processes global view messages and data message in order to
     avoid any concurrency issue.
   */
@@ -114,7 +115,7 @@ class Gcs_xcom_communication_interface : public Gcs_communication_interface {
     new global view message was received triggering a new state
     exchange phase.
 
-    Note that this method must be excuted by the same thread that
+    Note that this method must be executed by the same thread that
     processes global view messages and data message in order to
     avoid any concurrency issue.
   */
@@ -124,7 +125,7 @@ class Gcs_xcom_communication_interface : public Gcs_communication_interface {
   /**
     Return the number of buffered packets.
 
-    Note that this method must be excuted by the same thread that
+    Note that this method must be executed by the same thread that
     processes global view messages and data message in order to
     avoid any concurrency issue.
   */
@@ -219,7 +220,7 @@ class Gcs_xcom_communication : public Gcs_xcom_communication_interface {
   */
 
   explicit Gcs_xcom_communication(
-      Gcs_xcom_statistics_updater *stats, Gcs_xcom_proxy *proxy,
+      Gcs_xcom_statistics_manager_interface *stats, Gcs_xcom_proxy *proxy,
       Gcs_xcom_view_change_control_interface *view_control,
       Gcs_xcom_engine *gcs_engine, Gcs_group_identifier const &group_id,
       std::unique_ptr<Network_provider_management_interface> comms_mgmt);
@@ -303,7 +304,7 @@ class Gcs_xcom_communication : public Gcs_xcom_communication_interface {
   std::map<int, const Gcs_communication_event_listener &> event_listeners;
 
   // Reference to the stats updater interface
-  Gcs_xcom_statistics_updater *stats;
+  Gcs_xcom_statistics_manager_interface *m_stats;
 
   // Reference to the xcom proxy interface
   Gcs_xcom_proxy *m_xcom_proxy;
